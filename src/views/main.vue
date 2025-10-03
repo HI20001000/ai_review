@@ -395,8 +395,26 @@ body,
     overflow: hidden;
 }
 
+.panelRail {
+    flex: 0 0 320px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+    background: #202020;
+    border: 1px solid #323232;
+    border-radius: 10px;
+    padding: 12px;
+    box-sizing: border-box;
+    overflow: hidden;
+    gap: 12px;
+}
+
+.panelRail__projects {
+    flex: 0 0 auto;
+}
+
 .projectPanel {
-    flex: 1 1 auto;
     background-color: #252526;
     border: 1px solid #3d3d3d;
     border-radius: 10px;
@@ -404,6 +422,8 @@ body,
     display: flex;
     flex-direction: column;
     min-height: 0;
+    max-height: 280px;
+    overflow: hidden;
 }
 
 /* project panel */
@@ -495,18 +515,12 @@ body,
     cursor: not-allowed;
 }
 
-.panelRail {
-    flex: 0 0 320px;
+
+.panelRail__content {
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    height: 100%;
-    background: #202020;
-    border: 1px solid #323232;
-    border-radius: 10px;
-    padding: 12px;
-    box-sizing: border-box;
-    overflow: hidden;
 }
 
 .treeArea {
@@ -520,6 +534,18 @@ body,
     flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
+}
+
+.emptyState {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #94a3b8;
+    text-align: center;
+    padding: 24px;
+    background: rgba(148, 163, 184, 0.08);
+    border-radius: 8px;
 }
 
 .aiArea :deep(.chatWindow) {
