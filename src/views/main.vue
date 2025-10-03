@@ -1,8 +1,7 @@
 <script setup>
 import { ref, watch, onMounted, computed } from "vue";
-import ToolRail from "../components/workspace/ToolRail.vue";
-import PanelRail from "../components/workspace/PanelRail.vue";
-import ProjectPanel from "../components/workspace/ProjectPanel.vue";
+import ChatAiWindow from "../components/ChatAiWindow.vue";
+import TreeNode from "../components/workspace/TreeNode.vue";
 import { usePreview } from "../scripts/composables/usePreview.js";
 import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
@@ -73,6 +72,15 @@ const { previewing } = preview;
 const activeTool = ref("project");
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
+const hasActiveProject = computed(() => {
+    const selectedId = selectedProjectId.value;
+    if (selectedId === null || selectedId === undefined) return false;
+
+    const list = projects.value;
+    if (!Array.isArray(list)) return false;
+
+    return list.some((project) => project.id === selectedId);
+});
 
 const middlePaneStyle = computed(() => ({
     flex: `0 0 ${middlePaneWidth.value}px`,
@@ -89,10 +97,52 @@ watch(activeTool, (tool) => {
     }
 });
 
+async function ensureActiveProject() {
+    const list = Array.isArray(projects.value) ? projects.value : [];
+    if (!list.length) return;
+
+    const selectedIdValue = selectedProjectId.value;
+    const current = list.find((project) => project.id === selectedIdValue);
+
+    if (current) {
+        if (!tree.value.length && !isLoadingTree.value) {
+            await openProject(current);
+        }
+        return;
+    }
+
+    if (activeTool.value !== "project") {
+        activeTool.value = "project";
+    }
+
+    await openProject(list[0]);
+}
+
+watch(
+    [projects, selectedProjectId],
+    async () => {
+        await ensureActiveProject();
+    },
+    { immediate: true }
+);
+
 function selectTool(tool) {
     if (activeTool.value !== tool) {
         activeTool.value = tool;
     }
+}
+
+async function handleToolButton(tool) {
+    selectTool(tool);
+    if (tool === "project") {
+        await ensureActiveProject();
+    }
+}
+
+function handleSelectProject(project) {
+    if (!project) return;
+    selectTool("project");
+    openProject(project);
 }
 
 function clamp(value, min, max) {
@@ -105,9 +155,15 @@ function startPreviewResize(event) {
 
     const startX = event.clientX;
     const startWidth = middlePaneWidth.value;
-    const containerWidth = mainContentRef.value?.getBoundingClientRect().width || window.innerWidth;
+    const containerEl = mainContentRef.value;
+    const workspaceEl = containerEl?.querySelector(".workSpace");
+    if (!workspaceEl) return;
+
     const minWidth = 260;
-    const maxWidth = Math.max(minWidth, containerWidth - 320);
+    const workspaceMinWidth = 320;
+    const workspaceRect = workspaceEl.getBoundingClientRect();
+    const maxAdditional = Math.max(0, workspaceRect.width - workspaceMinWidth);
+    const maxWidth = Math.max(minWidth, startWidth + maxAdditional);
 
     const handleMove = (pointerEvent) => {
         const delta = pointerEvent.clientX - startX;
@@ -165,117 +221,131 @@ onMounted(async () => {
             </div>
         </div>
 
-        <div class="mainContent">
-            <div class="projectPanel">
-                <div class="wsHeader">Projects</div>
-                <ul class="projectList">
-                    <li
-                        v-for="p in projects"
-                        :key="p.id"
-                        :class="['projectItem', { active: p.id === selectedProjectId }]"
-                    >
-                        <div class="projectHeader" @click="openProject(p)">
-                            <span class="projName">{{ p.name }}</span>
-                            <span class="rightSide">
-                                <span class="badge" :title="p.mode">{{ p.mode }}</span>
-                                <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
-                            </span>
-                        </div>
+        <div class="mainContent" ref="mainContentRef">
+            <aside class="toolColumn">
+                <div class="toolColumn__section toolColumn__switcher">
+                    <div class="toolColumn__header">工具</div>
+                    <div class="toolColumn__buttons">
+                        <button
+                            type="button"
+                            class="toolColumn__btn"
+                            :class="{ active: activeTool === 'project' }"
+                            @click="handleToolButton('project')"
+                        >
+                            Project
+                        </button>
+                        <button
+                            type="button"
+                            class="toolColumn__btn"
+                            :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
+                            @click="handleToolButton('ai')"
+                            :disabled="isChatLocked && activeTool !== 'ai'"
+                        >
+                            Chat AI
+                        </button>
+                    </div>
+                </div>
 
-                        <div v-if="p.id === selectedProjectId" class="projectBody">
-                            <div class="workspaceShell" ref="mainContentRef">
-                                <aside class="toolRail">
-                                    <button
-                                        type="button"
-                                        class="toolRail__btn"
-                                        :class="{ active: activeTool === 'project' }"
-                                        @click="selectTool('project')"
-                                    >
-                                        Projects
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="toolRail__btn"
-                                        :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
-                                        @click="selectTool('ai')"
-                                        :disabled="isChatLocked && activeTool !== 'ai'"
-                                    >
-                                        Chat AI
-                                    </button>
-                                </aside>
+                <div class="toolColumn__section projectSection">
+                    <div class="toolColumn__header">Projects</div>
+                    <template v-if="projects.length">
+                        <ul class="projectList">
+                            <li
+                                v-for="p in projects"
+                                :key="p.id"
+                                :class="['projectItem', { active: p.id === selectedProjectId }]"
+                            >
+                                <div class="projectHeader" @click="handleSelectProject(p)">
+                                    <span class="projName">{{ p.name }}</span>
+                                    <span class="rightSide">
+                                        <span class="badge" :title="p.mode">{{ p.mode }}</span>
+                                        <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
+                                    </span>
+                                </div>
+                            </li>
+                        </ul>
+                    </template>
+                    <p v-else class="emptyProjects">尚未匯入任何專案。</p>
+                </div>
+            </aside>
 
-                                <section class="panelRail" :style="middlePaneStyle">
-                                    <div v-if="activeTool === 'project'" class="treeArea">
-                                        <div v-if="isLoadingTree" class="loading">Loading...</div>
-                                        <ul v-else class="treeRoot">
-                                            <TreeNode
-                                                v-for="n in tree"
-                                                :key="n.path"
-                                                :node="n"
-                                                :active-path="activeTreePath"
-                                                @open="openNode"
-                                                @select="selectTreeNode"
-                                            />
-                                        </ul>
-                                    </div>
-                                    <div v-else class="aiArea">
-                                        <ChatAiWindow
-                                            :visible="activeTool === 'ai'"
-                                            :context-items="contextItems"
-                                            :messages="messages"
-                                            :loading="isProcessing"
-                                            :disabled="isChatLocked"
-                                            :connection="connection"
-                                            @add-active="handleAddActiveContext"
-                                            @clear-context="clearContext"
-                                            @remove-context="removeContext"
-                                            @send-message="handleSendMessage"
-                                        />
-                                    </div>
-                                </section>
+            <section class="contentColumn" :style="middlePaneStyle">
+                <div v-if="activeTool === 'project'" class="treeArea">
+                    <div class="treeArea__header">Project Files</div>
+                    <template v-if="hasActiveProject">
+                        <div v-if="isLoadingTree" class="loading">Loading...</div>
+                        <ul v-else class="treeRoot">
+                            <TreeNode
+                                v-for="n in tree"
+                                :key="n.path"
+                                :node="n"
+                                :active-path="activeTreePath"
+                                @open="openNode"
+                                @select="selectTreeNode"
+                            />
+                        </ul>
+                    </template>
+                    <div v-else class="emptyState">
+                        選擇一個專案以檢視其檔案結構。
+                    </div>
+                </div>
+                <div v-else class="aiArea">
+                    <ChatAiWindow
+                        :visible="activeTool === 'ai'"
+                        :context-items="contextItems"
+                        :messages="messages"
+                        :loading="isProcessing"
+                        :disabled="isChatLocked"
+                        :connection="connection"
+                        @add-active="handleAddActiveContext"
+                        @clear-context="clearContext"
+                        @remove-context="removeContext"
+                        @send-message="handleSendMessage"
+                    />
+                </div>
+            </section>
 
-                                <div class="paneDivider" @pointerdown="startPreviewResize"></div>
+            <div
+                v-if="hasActiveProject"
+                class="paneDivider"
+                @pointerdown="startPreviewResize"
+            ></div>
 
-                                <section class="workSpace">
-                                    <template v-if="previewing.kind && previewing.kind !== 'error'">
-                                        <div class="pvHeader">
-                                            <div class="pvName">{{ previewing.name }}</div>
-                                            <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
-                                        </div>
+            <section v-if="hasActiveProject" class="workSpace">
+                <template v-if="previewing.kind && previewing.kind !== 'error'">
+                    <div class="pvHeader">
+                        <div class="pvName">{{ previewing.name }}</div>
+                        <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
+                    </div>
 
-                                        <div v-if="previewing.kind === 'text'" class="pvBox">
-                                            <pre class="pvPre">{{ previewing.text }}</pre>
-                                        </div>
+                    <div v-if="previewing.kind === 'text'" class="pvBox">
+                        <pre class="pvPre">{{ previewing.text }}</pre>
+                    </div>
 
-                                        <div v-else-if="previewing.kind === 'image'" class="pvBox imgBox">
-                                            <img :src="previewing.url" :alt="previewing.name" />
-                                        </div>
+                    <div v-else-if="previewing.kind === 'image'" class="pvBox imgBox">
+                        <img :src="previewing.url" :alt="previewing.name" />
+                    </div>
 
-                                        <div v-else-if="previewing.kind === 'pdf'" class="pvBox pdfBox">
-                                            <iframe :src="previewing.url" title="PDF Preview" style="width:100%;height:100%;border:none;"></iframe>
-                                        </div>
+                    <div v-else-if="previewing.kind === 'pdf'" class="pvBox pdfBox">
+                        <iframe :src="previewing.url" title="PDF Preview" style="width:100%;height:100%;border:none;"></iframe>
+                    </div>
 
-                                        <div v-else class="pvBox">
-                                            <a class="btn" :href="previewing.url" download>Download file</a>
-                                            <a class="btn outline" :href="previewing.url" target="_blank">Open in new window</a>
-                                        </div>
-                                    </template>
+                    <div v-else class="pvBox">
+                        <a class="btn" :href="previewing.url" download>Download file</a>
+                        <a class="btn outline" :href="previewing.url" target="_blank">Open in new window</a>
+                    </div>
+                </template>
 
-                                    <template v-else-if="previewing.kind === 'error'">
-                                        <div class="pvError">
-                                            Cannot preview: {{ previewing.error }}
-                                        </div>
-                                    </template>
+                <template v-else-if="previewing.kind === 'error'">
+                    <div class="pvError">
+                        Cannot preview: {{ previewing.error }}
+                    </div>
+                </template>
 
-                                    <template v-else>
-                                        <div class="pvPlaceholder">Select a file to see its preview here.</div>
-                                    </template>
-                                </section>
-                            </div>
-                        </div>
-                    </li>
-                </ul>
-            </div>
+                <template v-else>
+                    <div class="pvPlaceholder">Select a file to see its preview here.</div>
+                </template>
+            </section>
         </div>
 
         <div v-if="showUploadModal" class="modalBackdrop" @click.self="showUploadModal = false">
@@ -376,32 +446,57 @@ body,
     overflow: hidden;
 }
 
-.projectPanel {
-    flex: 1 1 auto;
-    background-color: #252526;
-    border: 1px solid #3d3d3d;
-    border-radius: 10px;
-    padding: 0;
+.toolColumn {
+    flex: 0 0 280px;
     display: flex;
     flex-direction: column;
+    gap: 16px;
+    height: 100%;
+    background: #202020;
+    border: 1px solid #323232;
+    border-radius: 10px;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+.toolColumn__section {
+    background: #252526;
+    border: 1px solid #3d3d3d;
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     min-height: 0;
 }
 
-/* project panel */
-.wsHeader {
-    padding: 10px 12px;
+.toolColumn__header {
     font-weight: 700;
     color: #cbd5e1;
-    border-bottom: 1px solid #3d3d3d;
+}
+
+.toolColumn__switcher {
+    flex: 0 0 auto;
+}
+
+.toolColumn__buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.projectSection {
+    flex: 1 1 auto;
+    overflow: hidden;
 }
 
 .projectList {
     list-style: none;
     margin: 0;
-    padding: 14px;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 10px;
     overflow: auto;
     min-height: 0;
     flex: 1 1 auto;
@@ -410,12 +505,112 @@ body,
 .projectItem {
     display: flex;
     flex-direction: column;
+    border-radius: 10px;
+    border: 1px solid #303134;
+    background: #1f1f1f;
+    transition: border-color .2s ease, background-color .2s ease;
+}
+
+.projectItem.active {
+    border-color: #0284c7;
+    background: rgba(14, 165, 233, 0.12);
+}
+
+.projectHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 12px;
     padding: 12px;
-    border-radius: 12px;
-    border: 1px solid #303134;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: background .2s ease;
+}
+
+.projName {
+    font-weight: 600;
+    color: #e2e8f0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.rightSide {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.badge {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(96, 165, 250, 0.25);
+    color: #bae6fd;
+}
+
+.delBtn {
+    background: transparent;
+    border: none;
+    color: #f87171;
+    cursor: pointer;
+    font-size: 14px;
+    transition: transform .2s ease, color .2s ease;
+}
+
+.delBtn:hover {
+    transform: scale(1.1);
+    color: #ef4444;
+}
+
+.toolColumn__btn {
+    border: none;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #2a2a2a;
+    color: #cbd5e1;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .2s ease, color .2s ease, transform .2s ease;
+    text-align: left;
+    width: 100%;
+}
+
+.toolColumn__btn:hover:not(.disabled):not(:disabled) {
+    background: #334155;
+    color: #f8fafc;
+    transform: translateY(-1px);
+}
+
+.toolColumn__btn.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, .3), rgba(14, 165, 233, .3));
+    color: #e0f2fe;
+}
+
+.toolColumn__btn.disabled,
+.toolColumn__btn:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+}
+
+.emptyProjects {
+    margin: 0;
+    font-size: 14px;
+    color: #94a3b8;
+}
+
+.contentColumn {
+    flex: 0 0 360px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
     background: #202020;
-    transition: border-color .2s ease, background-color .2s ease;
+    border: 1px solid #323232;
+    border-radius: 10px;
+    padding: 16px;
+    box-sizing: border-box;
+    overflow: hidden;
 }
 
 .mainContent > * {
@@ -434,84 +629,21 @@ body,
     background: rgba(255, 255, 255, 0.05);
 }
 
-.projectBody {
-    padding: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-}
 
-.workspaceShell {
-    display: flex;
-    gap: 16px;
-    min-height: 0;
-    flex: 1 1 auto;
-    padding: 16px;
-    box-sizing: border-box;
-    height: 100%;
-}
-
-.toolRail {
-    flex: 0 0 72px;
+.treeArea {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    padding: 12px;
-    background: #202020;
-    border: 1px solid #323232;
-    border-radius: 10px;
-    overflow: auto;
-}
-
-.toolRail__btn {
-    border: none;
-    border-radius: 8px;
-    padding: 10px 12px;
-    background: #2a2a2a;
-    color: #cbd5e1;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background .2s ease, color .2s ease, transform .2s ease;
-    text-align: left;
-    width: 100%;
-}
-
-.toolRail__btn:hover:not(.disabled):not(:disabled) {
-    background: #334155;
-    color: #f8fafc;
-    transform: translateY(-1px);
-}
-
-.toolRail__btn.active {
-    background: linear-gradient(135deg, rgba(59, 130, 246, .3), rgba(14, 165, 233, .3));
-    color: #e0f2fe;
-}
-
-.toolRail__btn.disabled,
-.toolRail__btn:disabled {
-    opacity: .6;
-    cursor: not-allowed;
-}
-
-.panelRail {
-    flex: 0 0 320px;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    height: 100%;
-    background: #202020;
-    border: 1px solid #323232;
-    border-radius: 10px;
-    padding: 12px;
-    box-sizing: border-box;
-    overflow: hidden;
-}
-
-.treeArea {
     flex: 1 1 auto;
+    min-height: 0;
     min-width: 0;
     padding-right: 8px;
     overflow: auto;
+}
+
+.treeArea__header {
+    font-weight: 700;
+    color: #cbd5e1;
 }
 
 .aiArea {
@@ -520,16 +652,20 @@ body,
     overflow: hidden;
 }
 
-.aiArea :deep(.chatWindow) {
-    height: 100%;
+.emptyState {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #94a3b8;
+    text-align: center;
+    padding: 24px;
+    background: rgba(148, 163, 184, 0.08);
+    border-radius: 8px;
 }
 
-.paneDivider {
-    flex: 0 0 6px;
-    cursor: col-resize;
-    background: linear-gradient(180deg, rgba(59, 130, 246, .25), rgba(14, 165, 233, 0));
-    border-radius: 8px;
-    align-self: stretch;
+.aiArea :deep(.chatWindow) {
+    height: 100%;
 }
 
 .paneDivider:hover {
@@ -540,8 +676,8 @@ body,
     .mainContent {
         flex-direction: column;
     }
-    .toolRail,
-    .panelRail,
+    .toolColumn,
+    .contentColumn,
     .workSpace {
         width: 100%;
         flex: 1 1 auto;
@@ -556,29 +692,6 @@ body,
     list-style: none;
     margin: 0;
     padding: 0 8px 8px 0;
-}
-
-.treeChildren {
-    list-style: none;
-    margin: 0;
-    padding-left: 16px;
-}
-
-.treeRow {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    padding: 2px 0;
-    cursor: pointer;
-}
-.treeRow.active {
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
-}
-
-.treeRow .icon {
-    width: 20px;
-    text-align: center;
 }
 
 .workSpace {
