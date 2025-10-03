@@ -492,16 +492,18 @@ body,
     white-space: nowrap;
 }
 
-.toolRail {
-    flex: 0 0 72px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding: 12px;
-    background: #202020;
-    border: 1px solid #323232;
-    border-radius: 10px;
-    overflow: auto;
+.delBtn {
+    background: transparent;
+    border: none;
+    color: #f87171;
+    cursor: pointer;
+    font-size: 14px;
+    transition: transform .2s ease, color .2s ease;
+}
+
+.delBtn:hover {
+    transform: scale(1.1);
+    color: #ef4444;
 }
 
 .toolColumn__btn {
@@ -625,29 +627,6 @@ body,
     list-style: none;
     margin: 0;
     padding: 0 8px 8px 0;
-}
-
-.treeChildren {
-    list-style: none;
-    margin: 0;
-    padding-left: 16px;
-}
-
-.treeRow {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    padding: 2px 0;
-    cursor: pointer;
-}
-.treeRow.active {
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
-}
-
-.treeRow .icon {
-    width: 20px;
-    text-align: center;
 }
 
 .workSpace {
