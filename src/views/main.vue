@@ -796,8 +796,6 @@ body,
     .mainContent {
         flex-direction: column;
     }
-    .toolColumn,
-    .contentColumn,
     .workSpace {
         width: 100%;
         flex: 1 1 auto;
