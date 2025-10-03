@@ -39,10 +39,6 @@ const props = defineProps({
         type: Function,
         required: true
     },
-    selectTreeNode: {
-        type: Function,
-        required: true
-    },
     showProjectOverview: {
         type: Boolean,
         default: true
