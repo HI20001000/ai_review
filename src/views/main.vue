@@ -1,8 +1,5 @@
 <script setup>
 import { ref, watch, onMounted, computed } from "vue";
-import ToolRail from "../components/workspace/ToolRail.vue";
-import PanelRail from "../components/workspace/PanelRail.vue";
-import ProjectPanel from "../components/workspace/ProjectPanel.vue";
 import { usePreview } from "../scripts/composables/usePreview.js";
 import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
@@ -73,6 +70,15 @@ const { previewing } = preview;
 const activeTool = ref("project");
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
+const hasActiveProject = computed(() => {
+    const selectedId = selectedProjectId.value;
+    if (selectedId === null || selectedId === undefined) return false;
+
+    const list = projects.value;
+    if (!Array.isArray(list)) return false;
+
+    return list.some((project) => project.id === selectedId);
+});
 
 const middlePaneStyle = computed(() => ({
     flex: `0 0 ${middlePaneWidth.value}px`,
@@ -105,9 +111,15 @@ function startPreviewResize(event) {
 
     const startX = event.clientX;
     const startWidth = middlePaneWidth.value;
-    const containerWidth = mainContentRef.value?.getBoundingClientRect().width || window.innerWidth;
+    const containerEl = mainContentRef.value;
+    const workspaceEl = containerEl?.querySelector(".workSpace");
+    if (!workspaceEl) return;
+
     const minWidth = 260;
-    const maxWidth = Math.max(minWidth, containerWidth - 320);
+    const workspaceMinWidth = 320;
+    const workspaceRect = workspaceEl.getBoundingClientRect();
+    const maxAdditional = Math.max(0, workspaceRect.width - workspaceMinWidth);
+    const maxWidth = Math.max(minWidth, startWidth + maxAdditional);
 
     const handleMove = (pointerEvent) => {
         const delta = pointerEvent.clientX - startX;
@@ -165,7 +177,7 @@ onMounted(async () => {
             </div>
         </div>
 
-        <div class="mainContent">
+        <div class="mainContent" ref="mainContentRef">
             <div class="projectPanel">
                 <div class="wsHeader">Projects</div>
                 <ul class="projectList">
@@ -181,101 +193,108 @@ onMounted(async () => {
                                 <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
                             </span>
                         </div>
-
-                        <div v-if="p.id === selectedProjectId" class="projectBody">
-                            <div class="workspaceShell" ref="mainContentRef">
-                                <aside class="toolRail">
-                                    <button
-                                        type="button"
-                                        class="toolRail__btn"
-                                        :class="{ active: activeTool === 'project' }"
-                                        @click="selectTool('project')"
-                                    >
-                                        Projects
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="toolRail__btn"
-                                        :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
-                                        @click="selectTool('ai')"
-                                        :disabled="isChatLocked && activeTool !== 'ai'"
-                                    >
-                                        Chat AI
-                                    </button>
-                                </aside>
-
-                                <section class="panelRail" :style="middlePaneStyle">
-                                    <div v-if="activeTool === 'project'" class="treeArea">
-                                        <div v-if="isLoadingTree" class="loading">Loading...</div>
-                                        <ul v-else class="treeRoot">
-                                            <TreeNode
-                                                v-for="n in tree"
-                                                :key="n.path"
-                                                :node="n"
-                                                :active-path="activeTreePath"
-                                                @open="openNode"
-                                                @select="selectTreeNode"
-                                            />
-                                        </ul>
-                                    </div>
-                                    <div v-else class="aiArea">
-                                        <ChatAiWindow
-                                            :visible="activeTool === 'ai'"
-                                            :context-items="contextItems"
-                                            :messages="messages"
-                                            :loading="isProcessing"
-                                            :disabled="isChatLocked"
-                                            :connection="connection"
-                                            @add-active="handleAddActiveContext"
-                                            @clear-context="clearContext"
-                                            @remove-context="removeContext"
-                                            @send-message="handleSendMessage"
-                                        />
-                                    </div>
-                                </section>
-
-                                <div class="paneDivider" @pointerdown="startPreviewResize"></div>
-
-                                <section class="workSpace">
-                                    <template v-if="previewing.kind && previewing.kind !== 'error'">
-                                        <div class="pvHeader">
-                                            <div class="pvName">{{ previewing.name }}</div>
-                                            <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
-                                        </div>
-
-                                        <div v-if="previewing.kind === 'text'" class="pvBox">
-                                            <pre class="pvPre">{{ previewing.text }}</pre>
-                                        </div>
-
-                                        <div v-else-if="previewing.kind === 'image'" class="pvBox imgBox">
-                                            <img :src="previewing.url" :alt="previewing.name" />
-                                        </div>
-
-                                        <div v-else-if="previewing.kind === 'pdf'" class="pvBox pdfBox">
-                                            <iframe :src="previewing.url" title="PDF Preview" style="width:100%;height:100%;border:none;"></iframe>
-                                        </div>
-
-                                        <div v-else class="pvBox">
-                                            <a class="btn" :href="previewing.url" download>Download file</a>
-                                            <a class="btn outline" :href="previewing.url" target="_blank">Open in new window</a>
-                                        </div>
-                                    </template>
-
-                                    <template v-else-if="previewing.kind === 'error'">
-                                        <div class="pvError">
-                                            Cannot preview: {{ previewing.error }}
-                                        </div>
-                                    </template>
-
-                                    <template v-else>
-                                        <div class="pvPlaceholder">Select a file to see its preview here.</div>
-                                    </template>
-                                </section>
-                            </div>
-                        </div>
                     </li>
                 </ul>
             </div>
+
+            <aside
+                v-if="hasActiveProject"
+                class="toolRail"
+            >
+                <button
+                    type="button"
+                    class="toolRail__btn"
+                    :class="{ active: activeTool === 'project' }"
+                    @click="selectTool('project')"
+                >
+                    Projects
+                </button>
+                <button
+                    type="button"
+                    class="toolRail__btn"
+                    :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
+                    @click="selectTool('ai')"
+                    :disabled="isChatLocked && activeTool !== 'ai'"
+                >
+                    Chat AI
+                </button>
+            </aside>
+
+            <section
+                v-if="hasActiveProject"
+                class="panelRail"
+                :style="middlePaneStyle"
+            >
+                <div v-if="activeTool === 'project'" class="treeArea">
+                    <div v-if="isLoadingTree" class="loading">Loading...</div>
+                    <ul v-else class="treeRoot">
+                        <TreeNode
+                            v-for="n in tree"
+                            :key="n.path"
+                            :node="n"
+                            :active-path="activeTreePath"
+                            @open="openNode"
+                            @select="selectTreeNode"
+                        />
+                    </ul>
+                </div>
+                <div v-else class="aiArea">
+                    <ChatAiWindow
+                        :visible="activeTool === 'ai'"
+                        :context-items="contextItems"
+                        :messages="messages"
+                        :loading="isProcessing"
+                        :disabled="isChatLocked"
+                        :connection="connection"
+                        @add-active="handleAddActiveContext"
+                        @clear-context="clearContext"
+                        @remove-context="removeContext"
+                        @send-message="handleSendMessage"
+                    />
+                </div>
+            </section>
+
+            <div
+                v-if="hasActiveProject"
+                class="paneDivider"
+                @pointerdown="startPreviewResize"
+            ></div>
+
+            <section v-if="hasActiveProject" class="workSpace">
+                <template v-if="previewing.kind && previewing.kind !== 'error'">
+                    <div class="pvHeader">
+                        <div class="pvName">{{ previewing.name }}</div>
+                        <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
+                    </div>
+
+                    <div v-if="previewing.kind === 'text'" class="pvBox">
+                        <pre class="pvPre">{{ previewing.text }}</pre>
+                    </div>
+
+                    <div v-else-if="previewing.kind === 'image'" class="pvBox imgBox">
+                        <img :src="previewing.url" :alt="previewing.name" />
+                    </div>
+
+                    <div v-else-if="previewing.kind === 'pdf'" class="pvBox pdfBox">
+                        <iframe :src="previewing.url" title="PDF Preview" style="width:100%;height:100%;border:none;"></iframe>
+                    </div>
+
+                    <div v-else class="pvBox">
+                        <a class="btn" :href="previewing.url" download>Download file</a>
+                        <a class="btn outline" :href="previewing.url" target="_blank">Open in new window</a>
+                    </div>
+                </template>
+
+                <template v-else-if="previewing.kind === 'error'">
+                    <div class="pvError">
+                        Cannot preview: {{ previewing.error }}
+                    </div>
+                </template>
+
+                <template v-else>
+                    <div class="pvPlaceholder">Select a file to see its preview here.</div>
+                </template>
+            </section>
         </div>
 
         <div v-if="showUploadModal" class="modalBackdrop" @click.self="showUploadModal = false">
@@ -432,23 +451,6 @@ body,
 
 .projectItem:not(.active) .projectHeader:hover {
     background: rgba(255, 255, 255, 0.05);
-}
-
-.projectBody {
-    padding: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-}
-
-.workspaceShell {
-    display: flex;
-    gap: 16px;
-    min-height: 0;
-    flex: 1 1 auto;
-    padding: 16px;
-    box-sizing: border-box;
-    height: 100%;
 }
 
 .toolRail {
