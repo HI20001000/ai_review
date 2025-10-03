@@ -405,6 +405,7 @@ onBeforeUnmount(() => {
 
             <PanelRail
                 :style-width="middlePaneStyle"
+                :active-tool="activeTool"
                 :projects="projects"
                 :selected-project-id="selectedProjectId"
                 :on-select-project="handleSelectProject"
@@ -414,6 +415,15 @@ onBeforeUnmount(() => {
                 :is-loading-tree="isLoadingTree"
                 :open-node="openNode"
                 :select-tree-node="selectTreeNode"
+                :context-items="contextItems"
+                :messages="messages"
+                :is-processing="isProcessing"
+                :is-chat-locked="isChatLocked"
+                :connection="connection"
+                :on-add-active-context="handleAddActiveContext"
+                :on-remove-context="removeContext"
+                :on-clear-context="clearContext"
+                :on-send-message="handleSendMessage"
                 :show-project-overview="showProjectOverview"
             />
 
@@ -668,14 +678,8 @@ body,
 
 .toolColumn__section {
     border: 1px solid #303134;
-    border-radius: 12px;
-    padding: 16px 12px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
     background: #1f1f1f;
-    transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .toolColumn__btn {
@@ -733,55 +737,6 @@ body,
     flex: 1 1 auto;
     display: flex;
     align-items: center;
-    justify-content: center;
-    color: #94a3b8;
-    text-align: center;
-    padding: 24px;
-    background: rgba(148, 163, 184, 0.08);
-    border-radius: 8px;
-}
-
-.paneDivider:hover {
-    background: linear-gradient(180deg, rgba(59, 130, 246, .45), rgba(14, 165, 233, .15));
-}
-
-.chatFloating {
-    position: fixed;
-    z-index: 40;
-    background: #1f1f1f;
-    border: 1px solid #2f2f2f;
-    border-radius: 14px;
-    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    min-width: 320px;
-    min-height: 320px;
-}
-
-.chatFloating__header {
-    padding: 10px 12px;
-    background: #262626;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    cursor: grab;
-    user-select: none;
-}
-
-.chatFloating__header:active {
-    cursor: grabbing;
-}
-
-.chatFloating__title {
-    font-weight: 600;
-    letter-spacing: 0.01em;
-}
-
-.chatFloating__actions {
-    display: flex;
-    align-items: center;
     gap: 8px;
 }
 
@@ -799,52 +754,8 @@ body,
     transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
-.chatFloating__iconBtn svg {
-    width: 18px;
-    height: 18px;
-    pointer-events: none;
-}
-
-.chatFloating__iconBtn:hover {
-    background: #343434;
-    border-color: #4b5563;
-}
-
-.chatFloating__iconBtn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.chatFloating__body {
-    flex: 1 1 auto;
-    min-height: 0;
-}
-
-.chatFloating__body :deep(.chatWindow) {
-    height: 100%;
-    border-radius: 0;
-}
-
-.chatFloating__resizeHandle {
-    position: absolute;
-    width: 18px;
-    height: 18px;
-    right: 4px;
-    bottom: 4px;
-    cursor: nwse-resize;
-    border-radius: 6px;
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.4), rgba(14, 165, 233, 0.2));
-}
-
-.chatFloating__resizeHandle::after {
-    content: "";
-    position: absolute;
-    right: 5px;
-    bottom: 5px;
-    width: 8px;
-    height: 8px;
-    border-right: 2px solid rgba(148, 163, 184, 0.8);
-    border-bottom: 2px solid rgba(148, 163, 184, 0.8);
+.paneDivider:hover {
+    background: linear-gradient(180deg, rgba(59, 130, 246, .45), rgba(14, 165, 233, .15));
 }
 
 @media (max-width: 900px) {
