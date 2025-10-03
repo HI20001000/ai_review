@@ -180,6 +180,14 @@ function selectTool(tool) {
     }
 }
 
+function toggleProjectTool() {
+    if (activeTool.value === "project") {
+        activeTool.value = null;
+        return;
+    }
+    selectTool("project");
+}
+
 function handleSelectProject(project) {
     if (!project) return;
     const wasOverviewOpen = showProjectOverview.value;
@@ -436,7 +444,7 @@ onBeforeUnmount(() => {
             />
 
             <div
-                v-if="hasActiveProject"
+                v-if="hasActiveProject && activeTool === 'project'"
                 class="paneDivider"
                 @pointerdown="startPreviewResize"
             ></div>
