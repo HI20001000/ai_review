@@ -5,6 +5,7 @@ import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
 import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
+import PanelRail from "../components/workspace/PanelRail.vue";
 
 const preview = usePreview();
 
@@ -235,25 +236,6 @@ onMounted(async () => {
         </div>
 
         <div class="mainContent" ref="mainContentRef">
-            <div class="projectPanel">
-                <div class="wsHeader">Projects</div>
-                <ul class="projectList">
-                    <li
-                        v-for="p in projects"
-                        :key="p.id"
-                        :class="['projectItem', { active: p.id === selectedProjectId }]"
-                    >
-                        <div class="projectHeader" @click="handleSelectProject(p)">
-                            <span class="projName">{{ p.name }}</span>
-                            <span class="rightSide">
-                                <span class="badge" :title="p.mode">{{ p.mode }}</span>
-                                <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
-                            </span>
-                        </div>
-                    </li>
-                </ul>
-            </div>
-
             <aside
                 v-if="hasActiveProject"
                 class="toolColumn__section"
@@ -277,39 +259,29 @@ onMounted(async () => {
                 </button>
             </aside>
 
-            <section
-                v-if="hasActiveProject"
-                class="panelRail"
-                :style="middlePaneStyle"
-            >
-                <div v-if="activeTool === 'project'" class="treeArea">
-                    <div v-if="isLoadingTree" class="loading">Loading...</div>
-                    <ul v-else class="treeRoot">
-                        <TreeNode
-                            v-for="n in tree"
-                            :key="n.path"
-                            :node="n"
-                            :active-path="activeTreePath"
-                            @open="openNode"
-                            @select="selectTreeNode"
-                        />
-                    </ul>
-                </div>
-                <div v-else class="aiArea">
-                    <ChatAiWindow
-                        :visible="activeTool === 'ai'"
-                        :context-items="contextItems"
-                        :messages="messages"
-                        :loading="isProcessing"
-                        :disabled="isChatLocked"
-                        :connection="connection"
-                        @add-active="handleAddActiveContext"
-                        @clear-context="clearContext"
-                        @remove-context="removeContext"
-                        @send-message="handleSendMessage"
-                    />
-                </div>
-            </section>
+            <PanelRail
+                :style-width="middlePaneStyle"
+                :active-tool="activeTool"
+                :projects="projects"
+                :selected-project-id="selectedProjectId"
+                :on-select-project="handleSelectProject"
+                :on-delete-project="deleteProject"
+                :tree="tree"
+                :active-tree-path="activeTreePath"
+                :is-loading-tree="isLoadingTree"
+                :open-node="openNode"
+                :select-tree-node="selectTreeNode"
+                :context-items="contextItems"
+                :messages="messages"
+                :is-processing="isProcessing"
+                :is-chat-locked="isChatLocked"
+                :connection="connection"
+                :on-add-active-context="handleAddActiveContext"
+                :on-remove-context="removeContext"
+                :on-clear-context="clearContext"
+                :on-send-message="handleSendMessage"
+                :show-project-overview="showProjectOverview"
+            />
 
             <div
                 v-if="hasActiveProject"
@@ -452,38 +424,6 @@ body,
     overflow: hidden;
 }
 
-.panelRail {
-    flex: 0 0 320px;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    height: 100%;
-    background: #202020;
-    border: 1px solid #323232;
-    border-radius: 10px;
-    padding: 12px;
-    box-sizing: border-box;
-    overflow: hidden;
-    gap: 12px;
-}
-
-.panelRail__projects {
-    flex: 0 0 auto;
-}
-
-.projectPanel {
-    background-color: #252526;
-    border: 1px solid #3d3d3d;
-    border-radius: 10px;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-height: 0;
-    max-height: 280px;
-    overflow: hidden;
-}
-
 .toolColumn__section:first-of-type {
     flex: 1 1 auto;
     overflow: hidden;
@@ -498,18 +438,6 @@ body,
     flex: 0 0 auto;
 }
 
-.projectList {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    overflow: auto;
-    min-height: 0;
-    flex: 1 1 auto;
-}
-
 .toolColumn__section {
     background: #252526;
     border: 1px solid #3d3d3d;
@@ -520,45 +448,7 @@ body,
     border-radius: 10px;
     border: 1px solid #303134;
     background: #1f1f1f;
-    transition: border-color .2s ease, background-color .2s ease;
-}
-
-.projectItem.active {
-    border-color: #0284c7;
-    background: rgba(14, 165, 233, 0.12);
-}
-
-.projectHeader {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px;
-    cursor: pointer;
-    border-radius: 8px;
-    transition: background .2s ease;
-}
-
-.projName {
-    font-weight: 600;
-    color: #e2e8f0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.delBtn {
-    background: transparent;
-    border: none;
-    color: #f87171;
-    cursor: pointer;
-    font-size: 14px;
-    transition: transform .2s ease, color .2s ease;
-}
-
-.delBtn:hover {
-    transform: scale(1.1);
-    color: #ef4444;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .toolColumn__btn {
@@ -592,13 +482,6 @@ body,
 }
 
 
-.panelRail__content {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-}
-
 .mainContent > * {
     min-height: 0;
 }
@@ -611,33 +494,6 @@ body,
     transition: background .2s ease;
 }
 
-.projectItem:not(.active) .projectHeader:hover {
-    background: rgba(255, 255, 255, 0.05);
-}
-
-
-.treeArea {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    flex: 1 1 auto;
-    min-height: 0;
-    min-width: 0;
-    padding-right: 8px;
-    overflow: auto;
-}
-
-.treeArea__header {
-    font-weight: 700;
-    color: #cbd5e1;
-}
-
-.aiArea {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
-}
-
 .emptyState {
     flex: 1 1 auto;
     display: flex;
@@ -648,14 +504,6 @@ body,
     padding: 24px;
     background: rgba(148, 163, 184, 0.08);
     border-radius: 8px;
-}
-
-.aiArea :deep(.chatWindow) {
-    height: 100%;
-}
-
-.aiArea :deep(.chatWindow) {
-    height: 100%;
 }
 
 .paneDivider:hover {
