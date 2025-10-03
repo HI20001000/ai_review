@@ -1,7 +1,5 @@
 <script setup>
 import { ref, watch, onMounted, computed } from "vue";
-import ChatAiWindow from "../components/ChatAiWindow.vue";
-import TreeNode from "../components/workspace/TreeNode.vue";
 import { usePreview } from "../scripts/composables/usePreview.js";
 import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
@@ -132,13 +130,6 @@ function selectTool(tool) {
     }
 }
 
-async function handleToolButton(tool) {
-    selectTool(tool);
-    if (tool === "project") {
-        await ensureActiveProject();
-    }
-}
-
 function handleSelectProject(project) {
     if (!project) return;
     selectTool("project");
@@ -222,72 +213,65 @@ onMounted(async () => {
         </div>
 
         <div class="mainContent" ref="mainContentRef">
-            <aside class="toolColumn">
-                <div class="toolColumn__section toolColumn__switcher">
-                    <div class="toolColumn__header">工具</div>
-                    <div class="toolColumn__buttons">
-                        <button
-                            type="button"
-                            class="toolColumn__btn"
-                            :class="{ active: activeTool === 'project' }"
-                            @click="handleToolButton('project')"
-                        >
-                            Project
-                        </button>
-                        <button
-                            type="button"
-                            class="toolColumn__btn"
-                            :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
-                            @click="handleToolButton('ai')"
-                            :disabled="isChatLocked && activeTool !== 'ai'"
-                        >
-                            Chat AI
-                        </button>
-                    </div>
-                </div>
+            <div class="projectPanel">
+                <div class="wsHeader">Projects</div>
+                <ul class="projectList">
+                    <li
+                        v-for="p in projects"
+                        :key="p.id"
+                        :class="['projectItem', { active: p.id === selectedProjectId }]"
+                    >
+                        <div class="projectHeader" @click="openProject(p)">
+                            <span class="projName">{{ p.name }}</span>
+                            <span class="rightSide">
+                                <span class="badge" :title="p.mode">{{ p.mode }}</span>
+                                <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
+                            </span>
+                        </div>
+                    </li>
+                </ul>
+            </div>
 
-                <div class="toolColumn__section projectSection">
-                    <div class="toolColumn__header">Projects</div>
-                    <template v-if="projects.length">
-                        <ul class="projectList">
-                            <li
-                                v-for="p in projects"
-                                :key="p.id"
-                                :class="['projectItem', { active: p.id === selectedProjectId }]"
-                            >
-                                <div class="projectHeader" @click="handleSelectProject(p)">
-                                    <span class="projName">{{ p.name }}</span>
-                                    <span class="rightSide">
-                                        <span class="badge" :title="p.mode">{{ p.mode }}</span>
-                                        <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
-                                    </span>
-                                </div>
-                            </li>
-                        </ul>
-                    </template>
-                    <p v-else class="emptyProjects">尚未匯入任何專案。</p>
-                </div>
+            <aside
+                v-if="hasActiveProject"
+                class="toolRail"
+            >
+                <button
+                    type="button"
+                    class="toolRail__btn"
+                    :class="{ active: activeTool === 'project' }"
+                    @click="selectTool('project')"
+                >
+                    Projects
+                </button>
+                <button
+                    type="button"
+                    class="toolRail__btn"
+                    :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
+                    @click="selectTool('ai')"
+                    :disabled="isChatLocked && activeTool !== 'ai'"
+                >
+                    Chat AI
+                </button>
             </aside>
 
-            <section class="contentColumn" :style="middlePaneStyle">
+            <section
+                v-if="hasActiveProject"
+                class="panelRail"
+                :style="middlePaneStyle"
+            >
                 <div v-if="activeTool === 'project'" class="treeArea">
-                    <div class="treeArea__header">Project Files</div>
-                    <template v-if="hasActiveProject">
-                        <div v-if="isLoadingTree" class="loading">Loading...</div>
-                        <ul v-else class="treeRoot">
-                            <TreeNode
-                                v-for="n in tree"
-                                :key="n.path"
-                                :node="n"
-                                :active-path="activeTreePath"
-                                @open="openNode"
-                                @select="selectTreeNode"
-                            />
-                        </ul>
-                    </template>
-                    <div v-else class="emptyState">
-                        選擇一個專案以檢視其檔案結構。
-                    </div>
+                    <div v-if="isLoadingTree" class="loading">Loading...</div>
+                    <ul v-else class="treeRoot">
+                        <TreeNode
+                            v-for="n in tree"
+                            :key="n.path"
+                            :node="n"
+                            :active-path="activeTreePath"
+                            @open="openNode"
+                            @select="selectTreeNode"
+                        />
+                    </ul>
                 </div>
                 <div v-else class="aiArea">
                     <ChatAiWindow
@@ -446,21 +430,27 @@ body,
     overflow: hidden;
 }
 
-.toolColumn {
-    flex: 0 0 280px;
+.panelRail {
+    flex: 0 0 320px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    min-height: 0;
     height: 100%;
     background: #202020;
     border: 1px solid #323232;
     border-radius: 10px;
-    padding: 16px;
+    padding: 12px;
     box-sizing: border-box;
+    overflow: hidden;
+    gap: 12px;
 }
 
-.toolColumn__section {
-    background: #252526;
+.panelRail__projects {
+    flex: 0 0 auto;
+}
+
+.projectPanel {
+    background-color: #252526;
     border: 1px solid #3d3d3d;
     border-radius: 10px;
     padding: 12px;
@@ -468,6 +458,13 @@ body,
     flex-direction: column;
     gap: 12px;
     min-height: 0;
+    max-height: 280px;
+    overflow: hidden;
+}
+
+.toolColumn__section:first-of-type {
+    flex: 1 1 auto;
+    overflow: hidden;
 }
 
 .toolColumn__header {
@@ -475,19 +472,8 @@ body,
     color: #cbd5e1;
 }
 
-.toolColumn__switcher {
+.aiShortcut {
     flex: 0 0 auto;
-}
-
-.toolColumn__buttons {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.projectSection {
-    flex: 1 1 auto;
-    overflow: hidden;
 }
 
 .projectList {
@@ -535,20 +521,6 @@ body,
     white-space: nowrap;
 }
 
-.rightSide {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.badge {
-    font-size: 12px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: rgba(96, 165, 250, 0.25);
-    color: #bae6fd;
-}
-
 .delBtn {
     background: transparent;
     border: none;
@@ -593,24 +565,12 @@ body,
     cursor: not-allowed;
 }
 
-.emptyProjects {
-    margin: 0;
-    font-size: 14px;
-    color: #94a3b8;
-}
 
-.contentColumn {
-    flex: 0 0 360px;
+.panelRail__content {
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    height: 100%;
-    background: #202020;
-    border: 1px solid #323232;
-    border-radius: 10px;
-    padding: 16px;
-    box-sizing: border-box;
-    overflow: hidden;
 }
 
 .mainContent > * {
@@ -662,6 +622,10 @@ body,
     padding: 24px;
     background: rgba(148, 163, 184, 0.08);
     border-radius: 8px;
+}
+
+.aiArea :deep(.chatWindow) {
+    height: 100%;
 }
 
 .aiArea :deep(.chatWindow) {
