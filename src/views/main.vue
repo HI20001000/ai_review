@@ -153,6 +153,7 @@ onMounted(async () => {
             <div class="topBar_left">
                 <h1 class="topBar_title">Workspace</h1>
             </div>
+            <div class="topBar_spacer"></div>
             <div class="topBar_right">
                 <div class="topBar_addProject" @click="showUploadModal = true">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
@@ -163,8 +164,60 @@ onMounted(async () => {
             </div>
         </div>
 
-        <div class="mainContent">
-            <div class="workSpace">
+        <div class="mainContent" ref="mainContentRef">
+            <aside class="toolRail">
+                <button
+                    type="button"
+                    class="toolRail__btn"
+                    :class="{ active: activeTool === 'project' }"
+                    @click="selectTool('project')"
+                >
+                    Projects
+                </button>
+                <button
+                    type="button"
+                    class="toolRail__btn"
+                    :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
+                    @click="selectTool('ai')"
+                    :disabled="isChatLocked && activeTool !== 'ai'"
+                >
+                    Chat AI
+                </button>
+            </aside>
+
+            <section class="panelRail" :style="middlePaneStyle">
+                <div v-if="activeTool === 'project'" class="treeArea">
+                    <div v-if="isLoadingTree" class="loading">Loading...</div>
+                    <ul v-else class="treeRoot">
+                        <TreeNode
+                            v-for="n in tree"
+                            :key="n.path"
+                            :node="n"
+                            :active-path="activeTreePath"
+                            @open="openNode"
+                            @select="selectTreeNode"
+                        />
+                    </ul>
+                </div>
+                <div v-else class="aiArea">
+                    <ChatAiWindow
+                        :visible="activeTool === 'ai'"
+                        :context-items="contextItems"
+                        :messages="messages"
+                        :loading="isProcessing"
+                        :disabled="isChatLocked"
+                        :connection="connection"
+                        @add-active="handleAddActiveContext"
+                        @clear-context="clearContext"
+                        @remove-context="removeContext"
+                        @send-message="handleSendMessage"
+                    />
+                </div>
+            </section>
+
+            <div class="paneDivider" @pointerdown="startPreviewResize"></div>
+
+            <div class="projectPanel">
                 <div class="wsHeader">Projects</div>
                 <ul class="projectList">
                     <li
@@ -181,90 +234,37 @@ onMounted(async () => {
                         </div>
 
                         <div v-if="p.id === selectedProjectId" class="projectBody">
-                            <div class="workspaceShell" ref="mainContentRef">
-                                <aside class="toolRail">
-                                    <button
-                                        type="button"
-                                        class="toolRail__btn"
-                                        :class="{ active: activeTool === 'project' }"
-                                        @click="selectTool('project')"
-                                    >
-                                        Projects
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="toolRail__btn"
-                                        :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
-                                        @click="selectTool('ai')"
-                                        :disabled="isChatLocked && activeTool !== 'ai'"
-                                    >
-                                        Chat AI
-                                    </button>
-                                </aside>
-
-                                <section class="panelArea" :style="middlePaneStyle">
-                                    <div v-if="activeTool === 'project'" class="treeArea">
-                                        <div v-if="isLoadingTree" class="loading">Loading...</div>
-                                        <ul v-else class="treeRoot">
-                                            <TreeNode
-                                                v-for="n in tree"
-                                                :key="n.path"
-                                                :node="n"
-                                                :active-path="activeTreePath"
-                                                @open="openNode"
-                                                @select="selectTreeNode"
-                                            />
-                                        </ul>
-                                    </div>
-                                    <ChatAiWindow
-                                        v-else
-                                        :visible="activeTool === 'ai'"
-                                        :context-items="contextItems"
-                                        :messages="messages"
-                                        :loading="isProcessing"
-                                        :disabled="isChatLocked"
-                                        :connection="connection"
-                                        @add-active="handleAddActiveContext"
-                                        @clear-context="clearContext"
-                                        @remove-context="removeContext"
-                                        @send-message="handleSendMessage"
-                                    />
-                                </section>
-
-                                <div class="paneDivider" @pointerdown="startPreviewResize"></div>
-
-                                <section class="previewArea">
-                                    <template v-if="previewing.kind && previewing.kind !== 'error'">
-                                        <div class="pvHeader">
-                                            <div class="pvName">{{ previewing.name }}</div>
-                                            <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
-                                        </div>
-
-                                        <div v-if="previewing.kind === 'text'" class="pvBox">
-                                            <pre class="pvPre">{{ previewing.text }}</pre>
-                                        </div>
-
-                                        <div v-else-if="previewing.kind === 'image'" class="pvBox imgBox">
-                                            <img :src="previewing.url" :alt="previewing.name" />
-                                        </div>
-
-                                        <div v-else-if="previewing.kind === 'pdf'" class="pvBox pdfBox">
-                                            <iframe :src="previewing.url" title="PDF Preview" style="width:100%;height:100%;border:none;"></iframe>
-                                        </div>
-
-                                        <div v-else class="pvBox">
-                                            <a class="btn" :href="previewing.url" download>Download file</a>
-                                            <a class="btn outline" :href="previewing.url" target="_blank">Open in new window</a>
-                                        </div>
-                                    </template>
-
-                                    <div v-else-if="previewing.kind === 'error'" class="pvError">
-                                        Cannot preview: {{ previewing.error }}
+                            <section class="workSpace">
+                                <template v-if="previewing.kind && previewing.kind !== 'error'">
+                                    <div class="pvHeader">
+                                        <div class="pvName">{{ previewing.name }}</div>
+                                        <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
                                     </div>
 
-                                    <div v-else class="pvPlaceholder">Select a file to see its preview here.</div>
-                                </section>
-                            </div>
+                                    <div v-if="previewing.kind === 'text'" class="pvBox">
+                                        <pre class="pvPre">{{ previewing.text }}</pre>
+                                    </div>
+
+                                    <div v-else-if="previewing.kind === 'image'" class="pvBox imgBox">
+                                        <img :src="previewing.url" :alt="previewing.name" />
+                                    </div>
+
+                                    <div v-else-if="previewing.kind === 'pdf'" class="pvBox pdfBox">
+                                        <iframe :src="previewing.url" title="PDF Preview" style="width:100%;height:100%;border:none;"></iframe>
+                                    </div>
+
+                                    <div v-else class="pvBox">
+                                        <a class="btn" :href="previewing.url" download>Download file</a>
+                                        <a class="btn outline" :href="previewing.url" target="_blank">Open in new window</a>
+                                    </div>
+                                </template>
+
+                                <div v-else-if="previewing.kind === 'error'" class="pvError">
+                                    Cannot preview: {{ previewing.error }}
+                                </div>
+
+                                <div v-else class="pvPlaceholder">Select a file to see its preview here.</div>
+                            </section>
                         </div>
                     </li>
                 </ul>
@@ -315,8 +315,11 @@ body,
     border-bottom: 1px solid #3d3d3d;
     display: flex;
     align-items: center;
-    justify-content: space-between;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.topBar_spacer {
+    flex: 1 1 auto;
 }
 
 .topBar_addProject {
@@ -410,29 +413,37 @@ body,
     transform: scale(0.96);
 }
 
+
 .mainContent {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 16px;
     flex: 1 1 auto;
     min-height: 0;
     background-color: #1e1e1e;
-    padding: 0 16px 16px;
-    overflow: auto;
+    padding: 16px;
+    overflow: hidden;
 }
 
-.workSpace {
+.mainContent > * {
+    min-height: 0;
+}
+
+.projectPanel {
     flex: 1 1 auto;
     background-color: #252526;
     border: 1px solid #3d3d3d;
     border-radius: 10px;
-    margin: 16px auto;
-    max-width: 960px;
-    width: 100%;
+    padding: 0;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
 }
 
-/* workSpace */
+/* project panel */
 .wsHeader {
     padding: 10px 12px;
     font-weight: 700;
@@ -447,6 +458,9 @@ body,
     display: flex;
     flex-direction: column;
     gap: 14px;
+    overflow: auto;
+    min-height: 0;
+    flex: 1 1 auto;
 }
 
 .projectItem {
@@ -481,45 +495,121 @@ body,
     background: rgba(255, 255, 255, 0.05);
 }
 
-.workspaceShell {
-    display: flex;
-    gap: 16px;
-    min-height: 360px;
-    height: 100%;
-}
-
-
 .projectBody {
     padding: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
-.panelArea {
+.toolRail {
+    flex: 0 0 72px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    background: #202020;
+    border: 1px solid #323232;
+    border-radius: 10px;
+    overflow: auto;
+}
+
+.toolRail__btn {
+    border: none;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #2a2a2a;
+    color: #cbd5e1;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .2s ease, color .2s ease, transform .2s ease;
+    text-align: left;
+    width: 100%;
+}
+
+.toolRail__btn:hover:not(.disabled):not(:disabled) {
+    background: #334155;
+    color: #f8fafc;
+    transform: translateY(-1px);
+}
+
+.toolRail__btn.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, .3), rgba(14, 165, 233, .3));
+    color: #e0f2fe;
+}
+
+.toolRail__btn.disabled,
+.toolRail__btn:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+}
+
+.panelRail {
     flex: 0 0 320px;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    height: 100%;
+    background: #202020;
+    border: 1px solid #323232;
+    border-radius: 10px;
+    padding: 12px;
+    box-sizing: border-box;
+    overflow: hidden;
 }
 
 .treeArea {
     flex: 1 1 auto;
     min-width: 0;
-    padding: 12px;
+    padding-right: 8px;
     overflow: auto;
-    background: #252526;
+}
+
+.aiArea {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.aiArea :deep(.chatWindow) {
+    height: 100%;
+}
+
+.paneDivider {
+    flex: 0 0 6px;
+    cursor: col-resize;
+    background: linear-gradient(180deg, rgba(59, 130, 246, .25), rgba(14, 165, 233, 0));
     border-radius: 8px;
-    border: 1px solid #323232;
+    align-self: stretch;
+}
+
+.paneDivider:hover {
+    background: linear-gradient(180deg, rgba(59, 130, 246, .45), rgba(14, 165, 233, .15));
 }
 
 @media (max-width: 900px) {
-    .workspaceShell {
+    .mainContent {
         flex-direction: column;
-        height: auto;
     }
-    .panelArea {
+
+    .toolRail {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 8px;
         width: 100%;
+        flex: 0 0 auto;
+        overflow-x: auto;
     }
-    .previewArea {
+
+    .panelRail {
+        width: 100% !important;
+        flex: 1 1 auto !important;
+    }
+
+    .paneDivider {
+        display: none;
+    }
+
+    .workSpace {
         width: 100%;
     }
 }
@@ -528,7 +618,12 @@ body,
     opacity: .8;
 }
 
-.treeRoot,
+.treeRoot {
+    list-style: none;
+    margin: 0;
+    padding: 0 8px 8px 0;
+}
+
 .treeChildren {
     list-style: none;
     margin: 0;
@@ -552,10 +647,10 @@ body,
     text-align: center;
 }
 
-.previewArea {
+.workSpace {
     flex: 1 1 320px;
     min-width: 0;
-    min-height: 240px;
+    min-height: 0;
     background: #252526;
     border-radius: 8px;
     border: 1px solid #323232;
@@ -563,6 +658,7 @@ body,
     display: flex;
     flex-direction: column;
     gap: 12px;
+    overflow: auto;
 }
 
 .pvHeader {
