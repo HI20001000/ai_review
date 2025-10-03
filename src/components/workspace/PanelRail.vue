@@ -1,13 +1,8 @@
 <script setup>
-import { computed, toRefs } from "vue";
-import ChatAiWindow from "../ChatAiWindow.vue";
+import { computed } from "vue";
 import TreeNode from "./TreeNode.vue";
 
 const props = defineProps({
-    activeTool: {
-        type: String,
-        required: true
-    },
     styleWidth: {
         type: Object,
         required: true
@@ -44,60 +39,16 @@ const props = defineProps({
         type: Function,
         required: true
     },
-    selectTreeNode: {
-        type: Function,
-        required: true
-    },
-    contextItems: {
-        type: Array,
-        default: () => []
-    },
-    messages: {
-        type: Array,
-        default: () => []
-    },
-    isProcessing: {
-        type: Boolean,
-        default: false
-    },
-    isChatLocked: {
-        type: Boolean,
-        default: false
-    },
-    connection: {
-        type: Object,
-        default: null
-    },
-    onAddActiveContext: {
-        type: Function,
-        required: true
-    },
-    onRemoveContext: {
-        type: Function,
-        required: true
-    },
-    onClearContext: {
-        type: Function,
-        required: true
-    },
-    onSendMessage: {
-        type: Function,
-        required: true
-    },
     showProjectOverview: {
         type: Boolean,
         default: true
     }
 });
 
-const { activeTool, showProjectOverview } = toRefs(props);
-
-const isProjectTab = computed(() => activeTool.value === "project");
-const isAiTab = computed(() => activeTool.value === "ai");
 const hasProjects = computed(() => (props.projects || []).length > 0);
 const hasSelectedProject = computed(() => props.selectedProjectId !== null && props.selectedProjectId !== undefined);
 const shouldShowTree = computed(() => {
-    if (showProjectOverview.value) return false;
+    if (props.showProjectOverview) return false;
 
     return (
         hasSelectedProject.value &&
@@ -105,74 +56,58 @@ const shouldShowTree = computed(() => {
     );
 });
 const shouldShowTreePlaceholder = computed(
-    () => !showProjectOverview.value && hasSelectedProject.value && !shouldShowTree.value
+    () => !props.showProjectOverview && hasSelectedProject.value && !shouldShowTree.value
 );
 </script>
 
 <template>
     <section class="panelRail" :style="styleWidth">
-        <template v-if="isProjectTab">
-            <div class="projectPanel">
-                <div class="panelHeader">Projects</div>
-                <template v-if="hasProjects">
-                    <ul class="projectList">
-                        <li
-                            v-for="p in projects"
-                            :key="p.id"
-                            :class="['projectItem', { active: p.id === selectedProjectId }]"
-                        >
-                            <div class="projectHeader" @click="onSelectProject(p)">
-                                <span class="projName">{{ p.name }}</span>
-                                <span class="rightSide">
-                                    <span class="badge" :title="p.mode">{{ p.mode }}</span>
-                                    <button
-                                        class="delBtn"
-                                        title="Delete project (DB only)"
-                                        @click.stop="onDeleteProject($event, p)"
-                                    >
-                                        ❌
-                                    </button>
-                                </span>
-                            </div>
-                        </li>
-                    </ul>
-                </template>
-                <p v-else class="emptyProjects">尚未匯入任何專案。</p>
-            </div>
-
-            <div v-if="shouldShowTree" class="treeArea">
-                <div class="panelHeader">Project Files</div>
-                <div v-if="isLoadingTree" class="loading">Loading...</div>
-                <ul v-else class="treeRoot">
-                    <TreeNode
-                        v-for="n in tree"
-                        :key="n.path"
-                        :node="n"
-                        :active-path="activeTreePath"
-                        @open="openNode"
-                        @select="selectTreeNode"
-                    />
+        <div class="projectPanel">
+            <div class="panelHeader">Projects</div>
+            <template v-if="hasProjects">
+                <ul class="projectList">
+                    <li
+                        v-for="p in projects"
+                        :key="p.id"
+                        :class="['projectItem', { active: p.id === selectedProjectId }]"
+                    >
+                        <div class="projectHeader" @click="onSelectProject(p)">
+                            <span class="projName">{{ p.name }}</span>
+                            <span class="rightSide">
+                                <span class="badge" :title="p.mode">{{ p.mode }}</span>
+                                <button
+                                    class="delBtn"
+                                    title="Delete project (DB only)"
+                                    @click.stop="onDeleteProject($event, p)"
+                                >
+                                    ❌
+                                </button>
+                            </span>
+                        </div>
+                    </li>
                 </ul>
-            </div>
+            </template>
+            <p v-else class="emptyProjects">尚未匯入任何專案。</p>
+        </div>
 
-            <div v-else-if="shouldShowTreePlaceholder" class="treePlaceholder">
-                <div class="panelHeader">Project Files</div>
-                <p class="emptyTree">載入專案中...</p>
-            </div>
-        </template>
-        <div v-else-if="isAiTab" class="aiArea">
-            <ChatAiWindow
-                :visible="true"
-                :context-items="contextItems"
-                :messages="messages"
-                :loading="isProcessing"
-                :disabled="isChatLocked"
-                :connection="connection"
-                @add-active="onAddActiveContext"
-                @clear-context="onClearContext"
-                @remove-context="onRemoveContext"
-                @send-message="onSendMessage"
-            />
+        <div v-if="shouldShowTree" class="treeArea">
+            <div class="panelHeader">Project Files</div>
+            <div v-if="isLoadingTree" class="loading">Loading...</div>
+            <ul v-else class="treeRoot">
+                <TreeNode
+                    v-for="n in tree"
+                    :key="n.path"
+                    :node="n"
+                    :active-path="activeTreePath"
+                    @open="openNode"
+                    @select="selectTreeNode"
+                />
+            </ul>
+        </div>
+
+        <div v-else-if="shouldShowTreePlaceholder" class="treePlaceholder">
+            <div class="panelHeader">Project Files</div>
+            <p class="emptyTree">載入專案中...</p>
         </div>
     </section>
 </template>
@@ -319,16 +254,6 @@ const shouldShowTreePlaceholder = computed(
     margin: 0;
     padding: 0 8px 8px 0;
     overflow: auto;
-}
-
-.aiArea {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
-}
-
-.aiArea :deep(.chatWindow) {
-    height: 100%;
 }
 
 :deep(.treeChildren) {

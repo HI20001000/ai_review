@@ -1,10 +1,11 @@
 <script setup>
-import { ref, watch, onMounted, computed } from "vue";
+import { ref, reactive, watch, onMounted, onBeforeUnmount, computed, nextTick } from "vue";
 import { usePreview } from "../scripts/composables/usePreview.js";
 import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
 import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
+import PanelRail from "../components/workspace/PanelRail.vue";
 
 const preview = usePreview();
 
@@ -51,8 +52,8 @@ const {
 } = treeStore;
 
 const {
-    open,
-    close,
+    open: openAssistantSession,
+    close: closeAssistantSession,
     contextItems,
     messages,
     addActiveNode,
@@ -71,6 +72,17 @@ const activeTool = ref("project");
 const showProjectOverview = ref(true);
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
+const isChatWindowOpen = ref(false);
+const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
+const chatDragState = reactive({ active: false, offsetX: 0, offsetY: 0 });
+const chatResizeState = reactive({
+    active: false,
+    startX: 0,
+    startY: 0,
+    startWidth: 0,
+    startHeight: 0
+});
+const hasInitializedChatWindow = ref(false);
 const hasActiveProject = computed(() => {
     const selectedId = selectedProjectId.value;
     if (selectedId === null || selectedId === undefined) return false;
@@ -86,13 +98,34 @@ const middlePaneStyle = computed(() => ({
     width: `${middlePaneWidth.value}px`
 }));
 
-watch(activeTool, (tool) => {
-    if (tool === "ai") {
-        open();
+const chatWindowStyle = computed(() => ({
+    width: `${chatWindowState.width}px`,
+    height: `${chatWindowState.height}px`,
+    left: `${chatWindowState.x}px`,
+    top: `${chatWindowState.y}px`
+}));
+
+const isChatToggleDisabled = computed(() => isChatLocked.value && !isChatWindowOpen.value);
+
+watch(isChatWindowOpen, (visible) => {
+    if (visible) {
+        openAssistantSession();
         const shouldForce = connection.value.status === "error";
         retryHandshake({ force: shouldForce });
+        if (!hasInitializedChatWindow.value) {
+            chatWindowState.width = 420;
+            chatWindowState.height = 520;
+            chatWindowState.x = Math.max(20, window.innerWidth - chatWindowState.width - 40);
+            chatWindowState.y = 80;
+            hasInitializedChatWindow.value = true;
+        } else {
+            ensureChatWindowInView();
+        }
+        nextTick(() => {
+            ensureChatWindowInView();
+        });
     } else {
-        close();
+        closeAssistantSession();
     }
 });
 
@@ -140,9 +173,8 @@ watch(
 );
 
 function selectTool(tool) {
-    if (tool === "project") {
-        showProjectOverview.value = true;
-    }
+    if (tool !== "project") return;
+    showProjectOverview.value = true;
     if (activeTool.value !== tool) {
         activeTool.value = tool;
     }
@@ -197,21 +229,119 @@ function startPreviewResize(event) {
 async function handleAddActiveContext() {
     const added = await addActiveNode();
     if (added) {
-        selectTool("ai");
+        openChatWindow();
     }
 }
 
 async function handleSendMessage(content) {
     const text = (content || "").trim();
     if (!text) return;
-    selectTool("ai");
+    openChatWindow();
     await sendUserMessage(text);
+}
+
+function openChatWindow() {
+    if (!isChatWindowOpen.value) {
+        isChatWindowOpen.value = true;
+    }
+}
+
+function closeChatWindow() {
+    if (isChatWindowOpen.value) {
+        isChatWindowOpen.value = false;
+        stopChatDrag();
+        stopChatResize();
+    }
+}
+
+function toggleChatWindow() {
+    if (isChatWindowOpen.value) {
+        closeChatWindow();
+    } else {
+        if (!isChatToggleDisabled.value) {
+            openChatWindow();
+        }
+    }
+}
+
+function ensureChatWindowInView() {
+    const maxX = Math.max(0, window.innerWidth - chatWindowState.width);
+    const maxY = Math.max(0, window.innerHeight - chatWindowState.height);
+    chatWindowState.x = clamp(chatWindowState.x, 0, maxX);
+    chatWindowState.y = clamp(chatWindowState.y, 0, maxY);
+}
+
+function startChatDrag(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    chatDragState.active = true;
+    chatDragState.offsetX = event.clientX - chatWindowState.x;
+    chatDragState.offsetY = event.clientY - chatWindowState.y;
+    window.addEventListener("pointermove", handleChatDrag);
+    window.addEventListener("pointerup", stopChatDrag);
+    window.addEventListener("pointercancel", stopChatDrag);
+}
+
+function handleChatDrag(event) {
+    if (!chatDragState.active) return;
+    event.preventDefault();
+    const maxX = Math.max(0, window.innerWidth - chatWindowState.width);
+    const maxY = Math.max(0, window.innerHeight - chatWindowState.height);
+    chatWindowState.x = clamp(event.clientX - chatDragState.offsetX, 0, maxX);
+    chatWindowState.y = clamp(event.clientY - chatDragState.offsetY, 0, maxY);
+}
+
+function stopChatDrag() {
+    chatDragState.active = false;
+    window.removeEventListener("pointermove", handleChatDrag);
+    window.removeEventListener("pointerup", stopChatDrag);
+    window.removeEventListener("pointercancel", stopChatDrag);
+}
+
+function startChatResize(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    chatResizeState.active = true;
+    chatResizeState.startX = event.clientX;
+    chatResizeState.startY = event.clientY;
+    chatResizeState.startWidth = chatWindowState.width;
+    chatResizeState.startHeight = chatWindowState.height;
+    window.addEventListener("pointermove", handleChatResize);
+    window.addEventListener("pointerup", stopChatResize);
+    window.addEventListener("pointercancel", stopChatResize);
+}
+
+function handleChatResize(event) {
+    if (!chatResizeState.active) return;
+    event.preventDefault();
+    const deltaX = event.clientX - chatResizeState.startX;
+    const deltaY = event.clientY - chatResizeState.startY;
+    const minWidth = 320;
+    const minHeight = 320;
+    const maxWidth = Math.max(minWidth, window.innerWidth - chatWindowState.x);
+    const maxHeight = Math.max(minHeight, window.innerHeight - chatWindowState.y);
+    chatWindowState.width = clamp(chatResizeState.startWidth + deltaX, minWidth, maxWidth);
+    chatWindowState.height = clamp(chatResizeState.startHeight + deltaY, minHeight, maxHeight);
+}
+
+function stopChatResize() {
+    chatResizeState.active = false;
+    window.removeEventListener("pointermove", handleChatResize);
+    window.removeEventListener("pointerup", stopChatResize);
+    window.removeEventListener("pointercancel", stopChatResize);
 }
 
 onMounted(async () => {
     await cleanupLegacyHandles();
     updateCapabilityFlags();
     await loadProjectsFromDB();
+    window.addEventListener("resize", ensureChatWindowInView);
+});
+
+onBeforeUnmount(() => {
+    window.removeEventListener("resize", ensureChatWindowInView);
+    stopChatDrag();
+    stopChatResize();
 });
 </script>
 
@@ -225,6 +355,23 @@ onMounted(async () => {
             </div>
             <div class="topBar_spacer"></div>
             <div class="topBar_right">
+                <button
+                    type="button"
+                    class="topBar_iconBtn"
+                    :class="{ active: isChatWindowOpen }"
+                    :disabled="isChatToggleDisabled"
+                    @click="toggleChatWindow"
+                    title="Chat AI"
+                    aria-label="Chat AI"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
+                        <path
+                            d="M8.5 8h7c.83 0 1.5.67 1.5 1.5v3c0 .83-.67 1.5-1.5 1.5h-.94l-1.8 1.88c-.31.33-.76.12-.76-.32V14.5h-3.5c-.83 0-1.5-.67-1.5-1.5v-3C7 8.67 7.67 8 8.5 8Z"
+                            fill="currentColor"
+                        />
+                    </svg>
+                </button>
                 <div class="topBar_addProject" @click="showUploadModal = true">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
                         <path d="M256,0C114.6,0,0,114.6,0,256s114.6,256,256,256s256-114.6,256-256S397.4,0,256,0z M405.3,277.3c0,11.8-9.5,21.3-21.3,21.3h-85.3V384c0,11.8-9.5,21.3-21.3,21.3h-42.7c-11.8,0-21.3-9.6-21.3-21.3v-85.3H128c-11.8,0-21.3-9.6-21.3-21.3v-42.7c0-11.8,9.5-21.3,21.3-21.3h85.3V128c0-11.8,9.5-21.3,21.3-21.3h42.7c11.8,0,21.3,9.6,21.3,21.3v85.3H384c11.8,0,21.3,9.6,21.3,21.3V277.3z" />
@@ -235,25 +382,6 @@ onMounted(async () => {
         </div>
 
         <div class="mainContent" ref="mainContentRef">
-            <div class="projectPanel">
-                <div class="wsHeader">Projects</div>
-                <ul class="projectList">
-                    <li
-                        v-for="p in projects"
-                        :key="p.id"
-                        :class="['projectItem', { active: p.id === selectedProjectId }]"
-                    >
-                        <div class="projectHeader" @click="handleSelectProject(p)">
-                            <span class="projName">{{ p.name }}</span>
-                            <span class="rightSide">
-                                <span class="badge" :title="p.mode">{{ p.mode }}</span>
-                                <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
-                            </span>
-                        </div>
-                    </li>
-                </ul>
-            </div>
-
             <aside
                 v-if="hasActiveProject"
                 class="toolColumn__section"
@@ -263,53 +391,31 @@ onMounted(async () => {
                     class="toolColumn__btn"
                     :class="{ active: activeTool === 'project' }"
                     @click="selectTool('project')"
+                    aria-label="Projects"
                 >
-                    Projects
-                </button>
-                <button
-                    type="button"
-                    class="toolColumn__btn"
-                    :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
-                    @click="selectTool('ai')"
-                    :disabled="isChatLocked && activeTool !== 'ai'"
-                >
-                    Chat AI
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
+                        <path
+                            d="M8 7h8a1 1 0 0 1 .94.66l1.56 4.36a1 1 0 0 1-.94 1.34H13l-.72 2.17a1 1 0 0 1-1.9-.04L9.4 13.36 6 13a1 1 0 0 1-.92-1.38l1.58-4.31A1 1 0 0 1 8 7Z"
+                            fill="currentColor"
+                        />
+                    </svg>
                 </button>
             </aside>
 
-            <section
-                v-if="hasActiveProject"
-                class="panelRail"
-                :style="middlePaneStyle"
-            >
-                <div v-if="activeTool === 'project'" class="treeArea">
-                    <div v-if="isLoadingTree" class="loading">Loading...</div>
-                    <ul v-else class="treeRoot">
-                        <TreeNode
-                            v-for="n in tree"
-                            :key="n.path"
-                            :node="n"
-                            :active-path="activeTreePath"
-                            @open="openNode"
-                            @select="selectTreeNode"
-                        />
-                    </ul>
-                </div>
-                <div v-else class="aiArea">
-                    <ChatAiWindow
-                        :visible="activeTool === 'ai'"
-                        :context-items="contextItems"
-                        :messages="messages"
-                        :loading="isProcessing"
-                        :disabled="isChatLocked"
-                        :connection="connection"
-                        @add-active="handleAddActiveContext"
-                        @clear-context="clearContext"
-                        @remove-context="removeContext"
-                        @send-message="handleSendMessage"
-                    />
-                </div>
-            </section>
+            <PanelRail
+                :style-width="middlePaneStyle"
+                :projects="projects"
+                :selected-project-id="selectedProjectId"
+                :on-select-project="handleSelectProject"
+                :on-delete-project="deleteProject"
+                :tree="tree"
+                :active-tree-path="activeTreePath"
+                :is-loading-tree="isLoadingTree"
+                :open-node="openNode"
+                :select-tree-node="selectTreeNode"
+                :show-project-overview="showProjectOverview"
+            />
 
             <div
                 v-if="hasActiveProject"
@@ -353,6 +459,57 @@ onMounted(async () => {
                 </template>
             </section>
         </div>
+
+        <Teleport to="body">
+            <div
+                v-if="isChatWindowOpen"
+                class="chatFloating"
+                :style="chatWindowStyle"
+                role="dialog"
+                aria-modal="false"
+                aria-label="Chat AI"
+            >
+                <div class="chatFloating__header" @pointerdown="startChatDrag">
+                    <div class="chatFloating__title">Chat AI</div>
+                    <div class="chatFloating__actions">
+                        <button
+                            type="button"
+                            class="chatFloating__iconBtn"
+                            title="Add active file"
+                            @click="handleAddActiveContext"
+                            :disabled="isChatLocked || isProcessing"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                                <path
+                                    d="M12 3a1 1 0 0 1 1 1v4.268l3.536 2.04a1 1 0 0 1 .464.848V13a1 1 0 0 1-1 1h-2.5l-.5 6-1-2-1 2-.5-6H8a1 1 0 0 1-1-1v-1.844a1 1 0 0 1 .464-.848L11 8.268V4a1 1 0 0 1 1-1Z"
+                                    fill="currentColor"
+                                />
+                            </svg>
+                        </button>
+                        <button type="button" class="chatFloating__iconBtn" title="Close" @click="closeChatWindow">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M7 7l10 10m0-10-10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="chatFloating__body">
+                    <ChatAiWindow
+                        :visible="true"
+                        :context-items="contextItems"
+                        :messages="messages"
+                        :loading="isProcessing"
+                        :disabled="isChatLocked"
+                        :connection="connection"
+                        @add-active="handleAddActiveContext"
+                        @clear-context="clearContext"
+                        @remove-context="removeContext"
+                        @send-message="handleSendMessage"
+                    />
+                </div>
+                <div class="chatFloating__resizeHandle" @pointerdown="startChatResize"></div>
+            </div>
+        </Teleport>
 
         <div v-if="showUploadModal" class="modalBackdrop" @click.self="showUploadModal = false">
             <div class="modalCard">
@@ -405,6 +562,49 @@ body,
     flex: 1 1 auto;
 }
 
+.topBar_right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.topBar_iconBtn {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    border: 1px solid #3d3d3d;
+    background: #2b2b2b;
+    color: #cbd5f5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.topBar_iconBtn svg {
+    width: 20px;
+    height: 20px;
+}
+
+.topBar_iconBtn:hover:not(:disabled) {
+    background: #343434;
+    border-color: #4b5563;
+    color: #e0f2fe;
+    transform: translateY(-1px);
+}
+
+.topBar_iconBtn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.topBar_iconBtn.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.3), rgba(14, 165, 233, 0.3));
+    border-color: rgba(14, 165, 233, 0.6);
+    color: #e0f2fe;
+}
+
 .topBar_addProject {
     display: flex;
     align-items: center;
@@ -452,38 +652,6 @@ body,
     overflow: hidden;
 }
 
-.panelRail {
-    flex: 0 0 320px;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    height: 100%;
-    background: #202020;
-    border: 1px solid #323232;
-    border-radius: 10px;
-    padding: 12px;
-    box-sizing: border-box;
-    overflow: hidden;
-    gap: 12px;
-}
-
-.panelRail__projects {
-    flex: 0 0 auto;
-}
-
-.projectPanel {
-    background-color: #252526;
-    border: 1px solid #3d3d3d;
-    border-radius: 10px;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-height: 0;
-    max-height: 280px;
-    overflow: hidden;
-}
-
 .toolColumn__section:first-of-type {
     flex: 1 1 auto;
     overflow: hidden;
@@ -498,74 +666,24 @@ body,
     flex: 0 0 auto;
 }
 
-.projectList {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    overflow: auto;
-    min-height: 0;
-    flex: 1 1 auto;
-}
-
 .toolColumn__section {
-    background: #252526;
-    border: 1px solid #3d3d3d;
-    border-radius: 10px;
-    padding: 12px;
+    border: 1px solid #303134;
+    border-radius: 12px;
+    padding: 16px 12px;
     display: flex;
     flex-direction: column;
-    border-radius: 10px;
-    border: 1px solid #303134;
-    background: #1f1f1f;
-    transition: border-color .2s ease, background-color .2s ease;
-}
-
-.projectItem.active {
-    border-color: #0284c7;
-    background: rgba(14, 165, 233, 0.12);
-}
-
-.projectHeader {
-    display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px;
-    cursor: pointer;
-    border-radius: 8px;
-    transition: background .2s ease;
-}
-
-.projName {
-    font-weight: 600;
-    color: #e2e8f0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.delBtn {
-    background: transparent;
-    border: none;
-    color: #f87171;
-    cursor: pointer;
-    font-size: 14px;
-    transition: transform .2s ease, color .2s ease;
-}
-
-.delBtn:hover {
-    transform: scale(1.1);
-    color: #ef4444;
+    gap: 16px;
+    background: #1f1f1f;
+    transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .toolColumn__btn {
-    border: none;
-    border-radius: 10px;
-    padding: 12px;
-    background: #2a2a2a;
+    border: 1px solid #303134;
+    border-radius: 14px;
+    width: 56px;
+    height: 56px;
+    background: #222;
     color: #cbd5e1;
     cursor: pointer;
     transition: background .2s ease, color .2s ease, transform .2s ease;
@@ -574,14 +692,21 @@ body,
     justify-content: center;
 }
 
+.toolColumn__btn svg {
+    width: 26px;
+    height: 26px;
+    pointer-events: none;
+}
+
 .toolColumn__btn:hover:not(.disabled):not(:disabled) {
-    background: #334155;
+    background: #2f3746;
     color: #f8fafc;
     transform: translateY(-1px);
 }
 
 .toolColumn__btn.active {
-    background: linear-gradient(135deg, rgba(59, 130, 246, .3), rgba(14, 165, 233, .3));
+    background: linear-gradient(135deg, rgba(59, 130, 246, .35), rgba(14, 165, 233, .35));
+    border-color: rgba(59, 130, 246, .6);
     color: #e0f2fe;
 }
 
@@ -591,13 +716,6 @@ body,
     cursor: not-allowed;
 }
 
-
-.panelRail__content {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-}
 
 .mainContent > * {
     min-height: 0;
@@ -609,33 +727,6 @@ body,
     background: linear-gradient(180deg, rgba(59, 130, 246, .25), rgba(14, 165, 233, 0));
     border-radius: 8px;
     transition: background .2s ease;
-}
-
-.projectItem:not(.active) .projectHeader:hover {
-    background: rgba(255, 255, 255, 0.05);
-}
-
-
-.treeArea {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    flex: 1 1 auto;
-    min-height: 0;
-    min-width: 0;
-    padding-right: 8px;
-    overflow: auto;
-}
-
-.treeArea__header {
-    font-weight: 700;
-    color: #cbd5e1;
-}
-
-.aiArea {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
 }
 
 .emptyState {
@@ -650,16 +741,110 @@ body,
     border-radius: 8px;
 }
 
-.aiArea :deep(.chatWindow) {
-    height: 100%;
-}
-
-.aiArea :deep(.chatWindow) {
-    height: 100%;
-}
-
 .paneDivider:hover {
     background: linear-gradient(180deg, rgba(59, 130, 246, .45), rgba(14, 165, 233, .15));
+}
+
+.chatFloating {
+    position: fixed;
+    z-index: 40;
+    background: #1f1f1f;
+    border: 1px solid #2f2f2f;
+    border-radius: 14px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 320px;
+    min-height: 320px;
+}
+
+.chatFloating__header {
+    padding: 10px 12px;
+    background: #262626;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: grab;
+    user-select: none;
+}
+
+.chatFloating__header:active {
+    cursor: grabbing;
+}
+
+.chatFloating__title {
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.chatFloating__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.chatFloating__iconBtn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid #3d3d3d;
+    background: #2b2b2b;
+    color: #e2e8f0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.chatFloating__iconBtn svg {
+    width: 18px;
+    height: 18px;
+    pointer-events: none;
+}
+
+.chatFloating__iconBtn:hover {
+    background: #343434;
+    border-color: #4b5563;
+}
+
+.chatFloating__iconBtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.chatFloating__body {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.chatFloating__body :deep(.chatWindow) {
+    height: 100%;
+    border-radius: 0;
+}
+
+.chatFloating__resizeHandle {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    right: 4px;
+    bottom: 4px;
+    cursor: nwse-resize;
+    border-radius: 6px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.4), rgba(14, 165, 233, 0.2));
+}
+
+.chatFloating__resizeHandle::after {
+    content: "";
+    position: absolute;
+    right: 5px;
+    bottom: 5px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid rgba(148, 163, 184, 0.8);
+    border-bottom: 2px solid rgba(148, 163, 184, 0.8);
 }
 
 @media (max-width: 900px) {
