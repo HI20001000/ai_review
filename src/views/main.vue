@@ -68,7 +68,6 @@ const {
 
 const { previewing } = preview;
 
-const activeTool = ref("project");
 const showProjectOverview = ref(true);
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
@@ -157,10 +156,6 @@ async function ensureActiveProject() {
         return;
     }
 
-    if (activeTool.value !== "project") {
-        selectTool("project");
-    }
-
     await openProject(list[0]);
 }
 
@@ -190,9 +185,7 @@ function toggleProjectTool() {
 
 function handleSelectProject(project) {
     if (!project) return;
-    const wasOverviewOpen = showProjectOverview.value;
-    selectTool("project");
-    if (wasOverviewOpen) {
+    if (showProjectOverview.value) {
         showProjectOverview.value = false;
     }
     openProject(project);
