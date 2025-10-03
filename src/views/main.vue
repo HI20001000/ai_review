@@ -488,7 +488,11 @@ body,
     flex: 1 1 auto;
 }
 
-.projectItem {
+.toolColumn__section {
+    background: #252526;
+    border: 1px solid #3d3d3d;
+    border-radius: 10px;
+    padding: 12px;
     display: flex;
     flex-direction: column;
     border-radius: 10px;
@@ -537,15 +541,15 @@ body,
 
 .toolColumn__btn {
     border: none;
-    border-radius: 8px;
-    padding: 10px 12px;
+    border-radius: 10px;
+    padding: 12px;
     background: #2a2a2a;
     color: #cbd5e1;
-    font-weight: 600;
     cursor: pointer;
     transition: background .2s ease, color .2s ease, transform .2s ease;
-    text-align: left;
-    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .toolColumn__btn:hover:not(.disabled):not(:disabled) {
