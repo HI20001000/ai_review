@@ -153,6 +153,7 @@ onMounted(async () => {
             <div class="topBar_left">
                 <h1 class="topBar_title">Workspace</h1>
             </div>
+            <div class="topBar_spacer"></div>
             <div class="topBar_right">
                 <div class="topBar_addProject" @click="showUploadModal = true">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
@@ -216,19 +217,20 @@ onMounted(async () => {
                                             />
                                         </ul>
                                     </div>
-                                    <ChatAiWindow
-                                        v-else
-                                        :visible="activeTool === 'ai'"
-                                        :context-items="contextItems"
-                                        :messages="messages"
-                                        :loading="isProcessing"
-                                        :disabled="isChatLocked"
-                                        :connection="connection"
-                                        @add-active="handleAddActiveContext"
-                                        @clear-context="clearContext"
-                                        @remove-context="removeContext"
-                                        @send-message="handleSendMessage"
-                                    />
+                                    <div v-else class="aiArea">
+                                        <ChatAiWindow
+                                            :visible="activeTool === 'ai'"
+                                            :context-items="contextItems"
+                                            :messages="messages"
+                                            :loading="isProcessing"
+                                            :disabled="isChatLocked"
+                                            :connection="connection"
+                                            @add-active="handleAddActiveContext"
+                                            @clear-context="clearContext"
+                                            @remove-context="removeContext"
+                                            @send-message="handleSendMessage"
+                                        />
+                                    </div>
                                 </section>
 
                                 <div class="paneDivider" @pointerdown="startPreviewResize"></div>
@@ -315,8 +317,11 @@ body,
     border-bottom: 1px solid #3d3d3d;
     display: flex;
     align-items: center;
-    justify-content: space-between;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.topBar_spacer {
+    flex: 1 1 auto;
 }
 
 .topBar_addProject {
@@ -410,14 +415,15 @@ body,
     transform: scale(0.96);
 }
 
+
 .mainContent {
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
     min-height: 0;
     background-color: #1e1e1e;
-    padding: 0 16px 16px;
-    overflow: auto;
+    padding: 16px;
+    overflow: hidden;
 }
 
 .workSpace {
@@ -425,11 +431,10 @@ body,
     background-color: #252526;
     border: 1px solid #3d3d3d;
     border-radius: 10px;
-    margin: 16px auto;
-    max-width: 960px;
-    width: 100%;
+    padding: 0;
     display: flex;
     flex-direction: column;
+    min-height: 0;
 }
 
 /* workSpace */
@@ -447,6 +452,9 @@ body,
     display: flex;
     flex-direction: column;
     gap: 14px;
+    overflow: auto;
+    min-height: 0;
+    flex: 1 1 auto;
 }
 
 .projectItem {
@@ -481,16 +489,63 @@ body,
     background: rgba(255, 255, 255, 0.05);
 }
 
+.projectBody {
+    padding: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 .workspaceShell {
     display: flex;
     gap: 16px;
-    min-height: 360px;
+    min-height: 0;
+    flex: 1 1 auto;
+    padding: 16px;
+    box-sizing: border-box;
     height: 100%;
 }
 
+.toolRail {
+    flex: 0 0 72px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    background: #202020;
+    border: 1px solid #323232;
+    border-radius: 10px;
+    overflow: auto;
+}
 
-.projectBody {
-    padding: 0;
+.toolRail__btn {
+    border: none;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #2a2a2a;
+    color: #cbd5e1;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .2s ease, color .2s ease, transform .2s ease;
+    text-align: left;
+    width: 100%;
+}
+
+.toolRail__btn:hover:not(.disabled):not(:disabled) {
+    background: #334155;
+    color: #f8fafc;
+    transform: translateY(-1px);
+}
+
+.toolRail__btn.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, .3), rgba(14, 165, 233, .3));
+    color: #e0f2fe;
+}
+
+.toolRail__btn.disabled,
+.toolRail__btn:disabled {
+    opacity: .6;
+    cursor: not-allowed;
 }
 
 .panelArea {
@@ -499,16 +554,41 @@ body,
     flex-direction: column;
     min-height: 0;
     height: 100%;
+    background: #202020;
+    border: 1px solid #323232;
+    border-radius: 10px;
+    padding: 12px;
+    box-sizing: border-box;
+    overflow: hidden;
 }
 
 .treeArea {
     flex: 1 1 auto;
     min-width: 0;
-    padding: 12px;
+    padding-right: 8px;
     overflow: auto;
-    background: #252526;
+}
+
+.aiArea {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.aiArea :deep(.chatWindow) {
+    height: 100%;
+}
+
+.paneDivider {
+    flex: 0 0 6px;
+    cursor: col-resize;
+    background: linear-gradient(180deg, rgba(59, 130, 246, .25), rgba(14, 165, 233, 0));
     border-radius: 8px;
-    border: 1px solid #323232;
+    align-self: stretch;
+}
+
+.paneDivider:hover {
+    background: linear-gradient(180deg, rgba(59, 130, 246, .45), rgba(14, 165, 233, .15));
 }
 
 @media (max-width: 900px) {
@@ -516,11 +596,11 @@ body,
         flex-direction: column;
         height: auto;
     }
-    .panelArea {
-        width: 100%;
-    }
+    .toolRail,
+    .panelArea,
     .previewArea {
         width: 100%;
+        flex: 1 1 auto;
     }
 }
 .loading {
@@ -528,7 +608,12 @@ body,
     opacity: .8;
 }
 
-.treeRoot,
+.treeRoot {
+    list-style: none;
+    margin: 0;
+    padding: 0 8px 8px 0;
+}
+
 .treeChildren {
     list-style: none;
     margin: 0;
@@ -555,7 +640,7 @@ body,
 .previewArea {
     flex: 1 1 320px;
     min-width: 0;
-    min-height: 240px;
+    min-height: 0;
     background: #252526;
     border-radius: 8px;
     border: 1px solid #323232;
@@ -563,6 +648,7 @@ body,
     display: flex;
     flex-direction: column;
     gap: 12px;
+    overflow: auto;
 }
 
 .pvHeader {
