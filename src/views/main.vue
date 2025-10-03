@@ -194,6 +194,14 @@ function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
 }
 
+function shouldIgnoreMouseEvent(event) {
+    return (
+        event?.type === "mousedown" &&
+        typeof window !== "undefined" &&
+        "PointerEvent" in window
+    );
+}
+
 function startPreviewResize(event) {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -754,8 +762,26 @@ body,
     transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
-.paneDivider:hover {
-    background: linear-gradient(180deg, rgba(59, 130, 246, .45), rgba(14, 165, 233, .15));
+.chatFloating__resizeHandle {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    right: 4px;
+    bottom: 4px;
+    cursor: nwse-resize;
+    border-radius: 6px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.4), rgba(14, 165, 233, 0.2));
+}
+
+.chatFloating__resizeHandle::after {
+    content: "";
+    position: absolute;
+    right: 5px;
+    bottom: 5px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid rgba(148, 163, 184, 0.8);
+    border-bottom: 2px solid rgba(148, 163, 184, 0.8);
 }
 
 @media (max-width: 900px) {
