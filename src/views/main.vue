@@ -165,7 +165,7 @@ onMounted(async () => {
         </div>
 
         <div class="mainContent">
-            <div class="workSpace">
+            <div class="projectPanel">
                 <div class="wsHeader">Projects</div>
                 <ul class="projectList">
                     <li
@@ -203,7 +203,7 @@ onMounted(async () => {
                                     </button>
                                 </aside>
 
-                                <section class="panelArea" :style="middlePaneStyle">
+                                <section class="panelRail" :style="middlePaneStyle">
                                     <div v-if="activeTool === 'project'" class="treeArea">
                                         <div v-if="isLoadingTree" class="loading">Loading...</div>
                                         <ul v-else class="treeRoot">
@@ -235,7 +235,7 @@ onMounted(async () => {
 
                                 <div class="paneDivider" @pointerdown="startPreviewResize"></div>
 
-                                <section class="previewArea">
+                                <section class="workSpace">
                                     <template v-if="previewing.kind && previewing.kind !== 'error'">
                                         <div class="pvHeader">
                                             <div class="pvName">{{ previewing.name }}</div>
@@ -426,7 +426,7 @@ body,
     overflow: hidden;
 }
 
-.workSpace {
+.projectPanel {
     flex: 1 1 auto;
     background-color: #252526;
     border: 1px solid #3d3d3d;
@@ -437,7 +437,7 @@ body,
     min-height: 0;
 }
 
-/* workSpace */
+/* project panel */
 .wsHeader {
     padding: 10px 12px;
     font-weight: 700;
@@ -548,7 +548,7 @@ body,
     cursor: not-allowed;
 }
 
-.panelArea {
+.panelRail {
     flex: 0 0 320px;
     display: flex;
     flex-direction: column;
@@ -597,8 +597,8 @@ body,
         height: auto;
     }
     .toolRail,
-    .panelArea,
-    .previewArea {
+    .panelRail,
+    .workSpace {
         width: 100%;
         flex: 1 1 auto;
     }
@@ -637,7 +637,7 @@ body,
     text-align: center;
 }
 
-.previewArea {
+.workSpace {
     flex: 1 1 320px;
     min-width: 0;
     min-height: 0;
