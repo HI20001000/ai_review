@@ -256,11 +256,11 @@ onMounted(async () => {
 
             <aside
                 v-if="hasActiveProject"
-                class="toolRail"
+                class="toolColumn__section"
             >
                 <button
                     type="button"
-                    class="toolRail__btn"
+                    class="toolColumn__btn"
                     :class="{ active: activeTool === 'project' }"
                     @click="selectTool('project')"
                 >
@@ -268,7 +268,7 @@ onMounted(async () => {
                 </button>
                 <button
                     type="button"
-                    class="toolRail__btn"
+                    class="toolColumn__btn"
                     :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
                     @click="selectTool('ai')"
                     :disabled="isChatLocked && activeTool !== 'ai'"
