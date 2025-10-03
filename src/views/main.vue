@@ -1,7 +1,5 @@
 <script setup>
 import { ref, watch, onMounted, computed } from "vue";
-import ChatAiWindow from "../components/ChatAiWindow.vue";
-import TreeNode from "../scripts/components/TreeNode.js";
 import { usePreview } from "../scripts/composables/usePreview.js";
 import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
@@ -186,59 +184,65 @@ onMounted(async () => {
         </div>
 
         <div class="mainContent" ref="mainContentRef">
-            <aside class="toolColumn">
-                <div class="toolColumn__section">
-                    <div class="toolColumn__header">Projects</div>
-                    <ul class="projectList">
-                        <li
-                            v-for="p in projects"
-                            :key="p.id"
-                            :class="['projectItem', { active: p.id === selectedProjectId }]"
-                        >
-                            <div class="projectHeader" @click="handleSelectProject(p)">
-                                <span class="projName">{{ p.name }}</span>
-                                <span class="rightSide">
-                                    <span class="badge" :title="p.mode">{{ p.mode }}</span>
-                                    <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
-                                </span>
-                            </div>
-                        </li>
-                    </ul>
-                </div>
-
-                <div class="toolColumn__section aiShortcut">
-                    <div class="toolColumn__header">Assistant</div>
-                    <button
-                        type="button"
-                        class="toolColumn__btn"
-                        :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
-                        @click="selectTool('ai')"
-                        :disabled="isChatLocked && activeTool !== 'ai'"
+            <div class="projectPanel">
+                <div class="wsHeader">Projects</div>
+                <ul class="projectList">
+                    <li
+                        v-for="p in projects"
+                        :key="p.id"
+                        :class="['projectItem', { active: p.id === selectedProjectId }]"
                     >
-                        Chat AI
-                    </button>
-                </div>
+                        <div class="projectHeader" @click="openProject(p)">
+                            <span class="projName">{{ p.name }}</span>
+                            <span class="rightSide">
+                                <span class="badge" :title="p.mode">{{ p.mode }}</span>
+                                <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
+                            </span>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+
+            <aside
+                v-if="hasActiveProject"
+                class="toolRail"
+            >
+                <button
+                    type="button"
+                    class="toolRail__btn"
+                    :class="{ active: activeTool === 'project' }"
+                    @click="selectTool('project')"
+                >
+                    Projects
+                </button>
+                <button
+                    type="button"
+                    class="toolRail__btn"
+                    :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
+                    @click="selectTool('ai')"
+                    :disabled="isChatLocked && activeTool !== 'ai'"
+                >
+                    Chat AI
+                </button>
             </aside>
 
-            <section class="contentColumn" :style="middlePaneStyle">
+            <section
+                v-if="hasActiveProject"
+                class="panelRail"
+                :style="middlePaneStyle"
+            >
                 <div v-if="activeTool === 'project'" class="treeArea">
-                    <div class="treeArea__header">Project Files</div>
-                    <template v-if="hasActiveProject">
-                        <div v-if="isLoadingTree" class="loading">Loading...</div>
-                        <ul v-else class="treeRoot">
-                            <TreeNode
-                                v-for="n in tree"
-                                :key="n.path"
-                                :node="n"
-                                :active-path="activeTreePath"
-                                @open="openNode"
-                                @select="selectTreeNode"
-                            />
-                        </ul>
-                    </template>
-                    <div v-else class="emptyState">
-                        選擇一個專案以檢視其檔案結構。
-                    </div>
+                    <div v-if="isLoadingTree" class="loading">Loading...</div>
+                    <ul v-else class="treeRoot">
+                        <TreeNode
+                            v-for="n in tree"
+                            :key="n.path"
+                            :node="n"
+                            :active-path="activeTreePath"
+                            @open="openNode"
+                            @select="selectTreeNode"
+                        />
+                    </ul>
                 </div>
                 <div v-else class="aiArea">
                     <ChatAiWindow
@@ -397,21 +401,27 @@ body,
     overflow: hidden;
 }
 
-.toolColumn {
-    flex: 0 0 280px;
+.panelRail {
+    flex: 0 0 320px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    min-height: 0;
     height: 100%;
     background: #202020;
     border: 1px solid #323232;
     border-radius: 10px;
-    padding: 16px;
+    padding: 12px;
     box-sizing: border-box;
+    overflow: hidden;
+    gap: 12px;
 }
 
-.toolColumn__section {
-    background: #252526;
+.panelRail__projects {
+    flex: 0 0 auto;
+}
+
+.projectPanel {
+    background-color: #252526;
     border: 1px solid #3d3d3d;
     border-radius: 10px;
     padding: 12px;
@@ -419,6 +429,8 @@ body,
     flex-direction: column;
     gap: 12px;
     min-height: 0;
+    max-height: 280px;
+    overflow: hidden;
 }
 
 .toolColumn__section:first-of-type {
@@ -480,32 +492,16 @@ body,
     white-space: nowrap;
 }
 
-.rightSide {
+.toolRail {
+    flex: 0 0 72px;
     display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.badge {
-    font-size: 12px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: rgba(96, 165, 250, 0.25);
-    color: #bae6fd;
-}
-
-.delBtn {
-    background: transparent;
-    border: none;
-    color: #f87171;
-    cursor: pointer;
-    font-size: 14px;
-    transition: transform .2s ease, color .2s ease;
-}
-
-.delBtn:hover {
-    transform: scale(1.1);
-    color: #ef4444;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    background: #202020;
+    border: 1px solid #323232;
+    border-radius: 10px;
+    overflow: auto;
 }
 
 .toolColumn__btn {
@@ -538,18 +534,12 @@ body,
     cursor: not-allowed;
 }
 
-.contentColumn {
-    flex: 0 0 360px;
+
+.panelRail__content {
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    height: 100%;
-    background: #202020;
-    border: 1px solid #323232;
-    border-radius: 10px;
-    padding: 16px;
-    box-sizing: border-box;
-    overflow: hidden;
 }
 
 .mainContent > * {
@@ -601,6 +591,10 @@ body,
     padding: 24px;
     background: rgba(148, 163, 184, 0.08);
     border-radius: 8px;
+}
+
+.aiArea :deep(.chatWindow) {
+    height: 100%;
 }
 
 .aiArea :deep(.chatWindow) {
