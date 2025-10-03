@@ -2,10 +2,15 @@
     <div
         v-if="visible"
         class="chatFloating"
-        :style="floatingStyle"
+        :style="[floatingStyle, resizeCursorStyle]"
         role="dialog"
         aria-modal="false"
         aria-label="Chat AI"
+        @pointerdown.capture="handleResizePointerDown"
+        @pointermove="handleResizePointerMove"
+        @pointerleave="clearResizeHover"
+        @mousedown.capture="handleResizePointerDown"
+        @mousemove="handleResizePointerMove"
     >
         <div
             class="chatFloating__header"
@@ -14,20 +19,6 @@
         >
             <div class="chatFloating__title">Chat AI</div>
             <div class="chatFloating__actions">
-                <button
-                    type="button"
-                    class="chatFloating__iconBtn"
-                    title="Add active file"
-                    :disabled="controlsDisabled"
-                    @click="emit('add-active')"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
-                        <path
-                            d="M12 3a1 1 0 0 1 1 1v4.268l3.536 2.04a1 1 0 0 1 .464.848V13a1 1 0 0 1-1 1h-2.5l-.5 6-1-2-1 2-.5-6H8a1 1 0 0 1-1-1v-1.844a1 1 0 0 1 .464-.848L11 8.268V4a1 1 0 0 1 1-1Z"
-                            fill="currentColor"
-                        />
-                    </svg>
-                </button>
                 <button
                     type="button"
                     class="chatFloating__iconBtn"
@@ -138,11 +129,6 @@
             </div>
         </div>
 
-        <div
-            class="chatFloating__resizeHandle"
-            @pointerdown="emit('resize-start', $event)"
-            @mousedown="emit('resize-start', $event)"
-        ></div>
     </div>
 </template>
 
@@ -174,6 +160,10 @@ const emit = defineEmits([
 const draft = ref("");
 const messagesRef = ref(null);
 const textareaRef = ref(null);
+const resizeCursor = ref("");
+const isResizing = ref(false);
+
+const resizeCursorStyle = computed(() => (resizeCursor.value ? { cursor: resizeCursor.value } : {}));
 
 const statusText = computed(() => props.connection?.message || DEFAULT_STATUS_MESSAGE);
 const statusStyle = computed(() => {
@@ -201,6 +191,9 @@ watch(
         if (visible) {
             focusInput();
             scrollToBottom();
+        } else {
+            isResizing.value = false;
+            resizeCursor.value = "";
         }
     },
     { immediate: true }
@@ -219,6 +212,96 @@ function focusInput() {
     nextTick(() => {
         textareaRef.value?.focus();
     });
+}
+
+function handleResizePointerDown(event) {
+    if (event.button !== 0) return;
+    const hit = detectResizeEdges(event);
+    if (!hit) return;
+
+    const isHeaderTarget = event.target?.closest?.(".chatFloating__header");
+    if (isHeaderTarget && hit.edges.top && !hit.edges.left && !hit.edges.right) {
+        return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const cursor = getCursorForEdges(hit.edges);
+    if (cursor) {
+        resizeCursor.value = cursor;
+    }
+
+    isResizing.value = true;
+    const stop = () => {
+        isResizing.value = false;
+        clearResizeHover();
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+    };
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+
+    emit("resize-start", { originalEvent: event, edges: hit.edges });
+}
+
+function handleResizePointerMove(event) {
+    if (isResizing.value) return;
+    const hit = detectResizeEdges(event);
+    if (!hit) {
+        clearResizeHover();
+        return;
+    }
+
+    const cursor = getCursorForEdges(hit.edges);
+    if (cursor) {
+        resizeCursor.value = cursor;
+    } else {
+        clearResizeHover();
+    }
+}
+
+function clearResizeHover() {
+    if (isResizing.value) return;
+    resizeCursor.value = "";
+}
+
+function detectResizeEdges(event) {
+    const el = event.currentTarget;
+    if (!(el instanceof HTMLElement)) return null;
+    const rect = el.getBoundingClientRect();
+    const threshold = 12;
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    const edges = {
+        left: x <= threshold,
+        right: rect.width - x <= threshold,
+        top: y <= threshold,
+        bottom: rect.height - y <= threshold
+    };
+
+    if (!edges.left && !edges.right && !edges.top && !edges.bottom) {
+        return null;
+    }
+
+    return { edges };
+}
+
+function getCursorForEdges(edges) {
+    if ((edges.left && edges.top) || (edges.right && edges.bottom)) {
+        return "nwse-resize";
+    }
+    if ((edges.right && edges.top) || (edges.left && edges.bottom)) {
+        return "nesw-resize";
+    }
+    if (edges.left || edges.right) {
+        return "ew-resize";
+    }
+    if (edges.top || edges.bottom) {
+        return "ns-resize";
+    }
+    return "";
 }
 
 function send() {
@@ -319,28 +402,6 @@ function formatTime(value) {
 .chatFloating__body .chatWindow {
     height: 100%;
     border-radius: 0;
-}
-
-.chatFloating__resizeHandle {
-    position: absolute;
-    width: 18px;
-    height: 18px;
-    right: 4px;
-    bottom: 4px;
-    cursor: nwse-resize;
-    border-radius: 6px;
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.4), rgba(14, 165, 233, 0.2));
-}
-
-.chatFloating__resizeHandle::after {
-    content: "";
-    position: absolute;
-    right: 5px;
-    bottom: 5px;
-    width: 8px;
-    height: 8px;
-    border-right: 2px solid rgba(148, 163, 184, 0.8);
-    border-bottom: 2px solid rgba(148, 163, 184, 0.8);
 }
 
 .chatWindow {

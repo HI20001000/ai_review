@@ -79,7 +79,15 @@ const chatResizeState = reactive({
     startX: 0,
     startY: 0,
     startWidth: 0,
-    startHeight: 0
+    startHeight: 0,
+    startLeft: 0,
+    startTop: 0,
+    edges: {
+        left: false,
+        right: false,
+        top: false,
+        bottom: false
+    }
 });
 const hasInitializedChatWindow = ref(false);
 const hasActiveProject = computed(() => {
@@ -275,15 +283,26 @@ function stopChatDrag() {
     window.removeEventListener("pointercancel", stopChatDrag);
 }
 
-function startChatResize(event) {
-    if (shouldIgnoreMouseEvent(event)) return;
+function startChatResize(payload) {
+    const event = payload?.originalEvent ?? payload;
+    const edges = payload?.edges ?? { right: true, bottom: true };
+    if (!event || shouldIgnoreMouseEvent(event)) return;
     if (event.button !== 0) return;
+    if (!edges.left && !edges.right && !edges.top && !edges.bottom) return;
+
     event.preventDefault();
     chatResizeState.active = true;
     chatResizeState.startX = event.clientX;
     chatResizeState.startY = event.clientY;
     chatResizeState.startWidth = chatWindowState.width;
     chatResizeState.startHeight = chatWindowState.height;
+    chatResizeState.startLeft = chatWindowState.x;
+    chatResizeState.startTop = chatWindowState.y;
+    chatResizeState.edges.left = !!edges.left;
+    chatResizeState.edges.right = !!edges.right;
+    chatResizeState.edges.top = !!edges.top;
+    chatResizeState.edges.bottom = !!edges.bottom;
+
     window.addEventListener("pointermove", handleChatResize);
     window.addEventListener("pointerup", stopChatResize);
     window.addEventListener("pointercancel", stopChatResize);
@@ -296,14 +315,44 @@ function handleChatResize(event) {
     const deltaY = event.clientY - chatResizeState.startY;
     const minWidth = 320;
     const minHeight = 320;
-    const maxWidth = Math.max(minWidth, window.innerWidth - chatWindowState.x);
-    const maxHeight = Math.max(minHeight, window.innerHeight - chatWindowState.y);
-    chatWindowState.width = clamp(chatResizeState.startWidth + deltaX, minWidth, maxWidth);
-    chatWindowState.height = clamp(chatResizeState.startHeight + deltaY, minHeight, maxHeight);
+
+    if (chatResizeState.edges.left) {
+        const proposedLeft = chatResizeState.startLeft + deltaX;
+        const maxLeft = chatResizeState.startLeft + chatResizeState.startWidth - minWidth;
+        const clampedLeft = clamp(proposedLeft, 0, Math.max(0, maxLeft));
+        const widthFromLeft = chatResizeState.startWidth + (chatResizeState.startLeft - clampedLeft);
+        const maxWidthFromViewport = Math.max(minWidth, window.innerWidth - clampedLeft);
+        chatWindowState.x = clampedLeft;
+        chatWindowState.width = clamp(widthFromLeft, minWidth, maxWidthFromViewport);
+    }
+
+    if (chatResizeState.edges.top) {
+        const proposedTop = chatResizeState.startTop + deltaY;
+        const maxTop = chatResizeState.startTop + chatResizeState.startHeight - minHeight;
+        const clampedTop = clamp(proposedTop, 0, Math.max(0, maxTop));
+        const heightFromTop = chatResizeState.startHeight + (chatResizeState.startTop - clampedTop);
+        const maxHeightFromViewport = Math.max(minHeight, window.innerHeight - clampedTop);
+        chatWindowState.y = clampedTop;
+        chatWindowState.height = clamp(heightFromTop, minHeight, maxHeightFromViewport);
+    }
+
+    if (chatResizeState.edges.right) {
+        const maxWidth = Math.max(minWidth, window.innerWidth - chatWindowState.x);
+        chatWindowState.width = clamp(chatResizeState.startWidth + deltaX, minWidth, maxWidth);
+    }
+
+    if (chatResizeState.edges.bottom) {
+        const maxHeight = Math.max(minHeight, window.innerHeight - chatWindowState.y);
+        chatWindowState.height = clamp(chatResizeState.startHeight + deltaY, minHeight, maxHeight);
+    }
 }
 
 function stopChatResize() {
     chatResizeState.active = false;
+    chatResizeState.edges.left = false;
+    chatResizeState.edges.right = false;
+    chatResizeState.edges.top = false;
+    chatResizeState.edges.bottom = false;
     window.removeEventListener("pointermove", handleChatResize);
     window.removeEventListener("pointerup", stopChatResize);
     window.removeEventListener("pointercancel", stopChatResize);
