@@ -96,6 +96,20 @@ watch(activeTool, (tool) => {
     }
 });
 
+watch(
+    selectedProjectId,
+    (newId, oldId) => {
+        if (Object.is(newId, oldId)) return;
+
+        if (newId === null || newId === undefined) {
+            showProjectOverview.value = true;
+            return;
+        }
+
+        showProjectOverview.value = false;
+    }
+);
+
 async function ensureActiveProject() {
     const list = Array.isArray(projects.value) ? projects.value : [];
     if (!list.length) return;
@@ -111,7 +125,7 @@ async function ensureActiveProject() {
     }
 
     if (activeTool.value !== "project") {
-        activeTool.value = "project";
+        selectTool("project");
     }
 
     await openProject(list[0]);
@@ -126,6 +140,9 @@ watch(
 );
 
 function selectTool(tool) {
+    if (tool === "project") {
+        showProjectOverview.value = true;
+    }
     if (activeTool.value !== tool) {
         activeTool.value = tool;
     }
@@ -133,7 +150,11 @@ function selectTool(tool) {
 
 function handleSelectProject(project) {
     if (!project) return;
+    const wasOverviewOpen = showProjectOverview.value;
     selectTool("project");
+    if (wasOverviewOpen) {
+        showProjectOverview.value = false;
+    }
     openProject(project);
 }
 
@@ -222,7 +243,7 @@ onMounted(async () => {
                         :key="p.id"
                         :class="['projectItem', { active: p.id === selectedProjectId }]"
                     >
-                        <div class="projectHeader" @click="openProject(p)">
+                        <div class="projectHeader" @click="handleSelectProject(p)">
                             <span class="projName">{{ p.name }}</span>
                             <span class="rightSide">
                                 <span class="badge" :title="p.mode">{{ p.mode }}</span>
