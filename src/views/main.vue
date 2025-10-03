@@ -261,26 +261,17 @@ onMounted(async () => {
                                         </div>
                                     </template>
 
-                                    <div v-else-if="previewing.kind === 'error'" class="pvError">
-                                        Cannot preview: {{ previewing.error }}
-                                    </div>
+                                    <template v-else-if="previewing.kind === 'error'">
+                                        <div class="pvError">
+                                            Cannot preview: {{ previewing.error }}
+                                        </div>
+                                    </template>
 
-                                    <div v-else-if="previewing.kind === 'pdf'" class="pvBox pdfBox">
-                                        <iframe :src="previewing.url" title="PDF Preview" style="width:100%;height:100%;border:none;"></iframe>
-                                    </div>
-
-                                    <div v-else class="pvBox">
-                                        <a class="btn" :href="previewing.url" download>Download file</a>
-                                        <a class="btn outline" :href="previewing.url" target="_blank">Open in new window</a>
-                                    </div>
-                                </template>
-
-                                <div v-else-if="previewing.kind === 'error'" class="pvError">
-                                    Cannot preview: {{ previewing.error }}
-                                </div>
-
-                                <div v-else class="pvPlaceholder">Select a file to see its preview here.</div>
-                            </section>
+                                    <template v-else>
+                                        <div class="pvPlaceholder">Select a file to see its preview here.</div>
+                                    </template>
+                                </section>
+                            </div>
                         </div>
                     </li>
                 </ul>
@@ -646,10 +637,6 @@ body,
     color: #d1d5db;
 }
 
-    .paneDivider {
-        display: none;
-    }
-}
 .modalBackdrop {
     position: fixed;
     inset: 0;
