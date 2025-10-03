@@ -6,7 +6,6 @@ import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
 import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
-import ChatAiWindow from "../components/ChatAiWindow.vue";
 
 const preview = usePreview();
 
@@ -289,7 +288,6 @@ function ensureChatWindowInView() {
 }
 
 function startChatDrag(event) {
-    if (shouldIgnoreMouseEvent(event)) return;
     if (event.button !== 0) return;
     event.preventDefault();
     chatDragState.active = true;
@@ -317,7 +315,6 @@ function stopChatDrag() {
 }
 
 function startChatResize(event) {
-    if (shouldIgnoreMouseEvent(event)) return;
     if (event.button !== 0) return;
     event.preventDefault();
     chatResizeState.active = true;
@@ -409,24 +406,22 @@ onBeforeUnmount(() => {
                     type="button"
                     class="toolColumn__btn"
                     :class="{ active: activeTool === 'project' }"
-                    @click="toggleProjectTool"
+                    @click="selectTool('project')"
                     aria-label="Projects"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
                         <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
-                        <path d="M6 7.5A2.5 2.5 0 0 1 8.5 5H12l1.5 1.5H18A2.5 2.5 0 0 1 20.5 9v7.5A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5V7.5Z" fill="currentColor" />
                         <path
-                            d="M5 11h14v1H5z"
+                            d="M8 7h8a1 1 0 0 1 .94.66l1.56 4.36a1 1 0 0 1-.94 1.34H13l-.72 2.17a1 1 0 0 1-1.9-.04L9.4 13.36 6 13a1 1 0 0 1-.92-1.38l1.58-4.31A1 1 0 0 1 8 7Z"
                             fill="currentColor"
-                            opacity="0.45"
                         />
                     </svg>
                 </button>
             </aside>
 
             <PanelRail
-                v-if="activeTool === 'project'"
                 :style-width="middlePaneStyle"
+                :active-tool="activeTool"
                 :projects="projects"
                 :selected-project-id="selectedProjectId"
                 :on-select-project="handleSelectProject"
@@ -436,6 +431,15 @@ onBeforeUnmount(() => {
                 :is-loading-tree="isLoadingTree"
                 :open-node="openNode"
                 :select-tree-node="selectTreeNode"
+                :context-items="contextItems"
+                :messages="messages"
+                :is-processing="isProcessing"
+                :is-chat-locked="isChatLocked"
+                :connection="connection"
+                :on-add-active-context="handleAddActiveContext"
+                :on-remove-context="removeContext"
+                :on-clear-context="clearContext"
+                :on-send-message="handleSendMessage"
                 :show-project-overview="showProjectOverview"
             />
 
@@ -483,22 +487,54 @@ onBeforeUnmount(() => {
         </div>
 
         <Teleport to="body">
-            <ChatAiWindow
-                :visible="isChatWindowOpen"
-                :floating-style="chatWindowStyle"
-                :context-items="contextItems"
-                :messages="messages"
-                :loading="isProcessing"
-                :disabled="isChatLocked"
-                :connection="connection"
-                @add-active="handleAddActiveContext"
-                @clear-context="clearContext"
-                @remove-context="removeContext"
-                @send-message="handleSendMessage"
-                @close="closeChatWindow"
-                @drag-start="startChatDrag"
-                @resize-start="startChatResize"
-            />
+            <div
+                v-if="isChatWindowOpen"
+                class="chatFloating"
+                :style="chatWindowStyle"
+                role="dialog"
+                aria-modal="false"
+                aria-label="Chat AI"
+            >
+                <div class="chatFloating__header" @pointerdown="startChatDrag">
+                    <div class="chatFloating__title">Chat AI</div>
+                    <div class="chatFloating__actions">
+                        <button
+                            type="button"
+                            class="chatFloating__iconBtn"
+                            title="Add active file"
+                            @click="handleAddActiveContext"
+                            :disabled="isChatLocked || isProcessing"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                                <path
+                                    d="M12 3a1 1 0 0 1 1 1v4.268l3.536 2.04a1 1 0 0 1 .464.848V13a1 1 0 0 1-1 1h-2.5l-.5 6-1-2-1 2-.5-6H8a1 1 0 0 1-1-1v-1.844a1 1 0 0 1 .464-.848L11 8.268V4a1 1 0 0 1 1-1Z"
+                                    fill="currentColor"
+                                />
+                            </svg>
+                        </button>
+                        <button type="button" class="chatFloating__iconBtn" title="Close" @click="closeChatWindow">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M7 7l10 10m0-10-10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="chatFloating__body">
+                    <ChatAiWindow
+                        :visible="true"
+                        :context-items="contextItems"
+                        :messages="messages"
+                        :loading="isProcessing"
+                        :disabled="isChatLocked"
+                        :connection="connection"
+                        @add-active="handleAddActiveContext"
+                        @clear-context="clearContext"
+                        @remove-context="removeContext"
+                        @send-message="handleSendMessage"
+                    />
+                </div>
+                <div class="chatFloating__resizeHandle" @pointerdown="startChatResize"></div>
+            </div>
         </Teleport>
 
         <div v-if="showUploadModal" class="modalBackdrop" @click.self="showUploadModal = false">
@@ -647,16 +683,19 @@ body,
     overflow: hidden;
 }
 
+.toolColumn__header {
+    font-weight: 700;
+    color: #cbd5e1;
+}
+
+.aiShortcut {
+    flex: 0 0 auto;
+}
+
 .toolColumn__section {
     border: 1px solid #303134;
-    border-radius: 12px;
-    padding: 16px 12px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
     background: #1f1f1f;
-    transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .toolColumn__btn {
@@ -710,8 +749,47 @@ body,
     transition: background .2s ease;
 }
 
-.paneDivider:hover {
-    background: linear-gradient(180deg, rgba(59, 130, 246, .45), rgba(14, 165, 233, .15));
+.emptyState {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.chatFloating__iconBtn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid #3d3d3d;
+    background: #2b2b2b;
+    color: #e2e8f0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.chatFloating__resizeHandle {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    right: 4px;
+    bottom: 4px;
+    cursor: nwse-resize;
+    border-radius: 6px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.4), rgba(14, 165, 233, 0.2));
+}
+
+.chatFloating__resizeHandle::after {
+    content: "";
+    position: absolute;
+    right: 5px;
+    bottom: 5px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid rgba(148, 163, 184, 0.8);
+    border-bottom: 2px solid rgba(148, 163, 184, 0.8);
 }
 
 @media (max-width: 900px) {
