@@ -39,25 +39,21 @@ const props = defineProps({
         type: Function,
         required: true
     },
-    showProjectOverview: {
-        type: Boolean,
-        default: true
+    selectTreeNode: {
+        type: Function,
+        required: true
     }
 });
 
 const hasProjects = computed(() => (props.projects || []).length > 0);
 const hasSelectedProject = computed(() => props.selectedProjectId !== null && props.selectedProjectId !== undefined);
 const shouldShowTree = computed(() => {
-    if (props.showProjectOverview) return false;
-
     return (
         hasSelectedProject.value &&
         (props.isLoadingTree || (Array.isArray(props.tree) && props.tree.length > 0))
     );
 });
-const shouldShowTreePlaceholder = computed(
-    () => !props.showProjectOverview && hasSelectedProject.value && !shouldShowTree.value
-);
+const shouldShowTreePlaceholder = computed(() => hasSelectedProject.value && !shouldShowTree.value);
 </script>
 
 <template>
