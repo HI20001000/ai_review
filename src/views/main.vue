@@ -6,7 +6,6 @@ import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
 import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
-import ChatAiWindow from "../components/ChatAiWindow.vue";
 
 const preview = usePreview();
 
@@ -289,7 +288,6 @@ function ensureChatWindowInView() {
 }
 
 function startChatDrag(event) {
-    if (shouldIgnoreMouseEvent(event)) return;
     if (event.button !== 0) return;
     event.preventDefault();
     chatDragState.active = true;
@@ -317,7 +315,6 @@ function stopChatDrag() {
 }
 
 function startChatResize(event) {
-    if (shouldIgnoreMouseEvent(event)) return;
     if (event.button !== 0) return;
     event.preventDefault();
     chatResizeState.active = true;
@@ -409,24 +406,22 @@ onBeforeUnmount(() => {
                     type="button"
                     class="toolColumn__btn"
                     :class="{ active: activeTool === 'project' }"
-                    @click="toggleProjectTool"
+                    @click="selectTool('project')"
                     aria-label="Projects"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
                         <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
-                        <path d="M6 7.5A2.5 2.5 0 0 1 8.5 5H12l1.5 1.5H18A2.5 2.5 0 0 1 20.5 9v7.5A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5V7.5Z" fill="currentColor" />
                         <path
-                            d="M5 11h14v1H5z"
+                            d="M8 7h8a1 1 0 0 1 .94.66l1.56 4.36a1 1 0 0 1-.94 1.34H13l-.72 2.17a1 1 0 0 1-1.9-.04L9.4 13.36 6 13a1 1 0 0 1-.92-1.38l1.58-4.31A1 1 0 0 1 8 7Z"
                             fill="currentColor"
-                            opacity="0.45"
                         />
                     </svg>
                 </button>
             </aside>
 
             <PanelRail
-                v-if="activeTool === 'project'"
                 :style-width="middlePaneStyle"
+                :active-tool="activeTool"
                 :projects="projects"
                 :selected-project-id="selectedProjectId"
                 :on-select-project="handleSelectProject"
@@ -436,6 +431,15 @@ onBeforeUnmount(() => {
                 :is-loading-tree="isLoadingTree"
                 :open-node="openNode"
                 :select-tree-node="selectTreeNode"
+                :context-items="contextItems"
+                :messages="messages"
+                :is-processing="isProcessing"
+                :is-chat-locked="isChatLocked"
+                :connection="connection"
+                :on-add-active-context="handleAddActiveContext"
+                :on-remove-context="removeContext"
+                :on-clear-context="clearContext"
+                :on-send-message="handleSendMessage"
                 :show-project-overview="showProjectOverview"
             />
 
@@ -491,11 +495,7 @@ onBeforeUnmount(() => {
                 aria-modal="false"
                 aria-label="Chat AI"
             >
-                <div
-                    class="chatFloating__header"
-                    @pointerdown="startChatDrag"
-                    @mousedown="startChatDrag"
-                >
+                <div class="chatFloating__header" @pointerdown="startChatDrag">
                     <div class="chatFloating__title">Chat AI</div>
                     <div class="chatFloating__actions">
                         <button
@@ -521,7 +521,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="chatFloating__body">
                     <ChatAiWindow
-                        :visible="isChatWindowOpen"
+                        :visible="true"
                         :context-items="contextItems"
                         :messages="messages"
                         :loading="isProcessing"
@@ -533,11 +533,7 @@ onBeforeUnmount(() => {
                         @send-message="handleSendMessage"
                     />
                 </div>
-                <div
-                    class="chatFloating__resizeHandle"
-                    @pointerdown="startChatResize"
-                    @mousedown="startChatResize"
-                ></div>
+                <div class="chatFloating__resizeHandle" @pointerdown="startChatResize"></div>
             </div>
         </Teleport>
 
@@ -698,14 +694,8 @@ body,
 
 .toolColumn__section {
     border: 1px solid #303134;
-    border-radius: 12px;
-    padding: 16px 12px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
     background: #1f1f1f;
-    transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .toolColumn__btn {
@@ -763,55 +753,6 @@ body,
     flex: 1 1 auto;
     display: flex;
     align-items: center;
-    justify-content: center;
-    color: #94a3b8;
-    text-align: center;
-    padding: 24px;
-    background: rgba(148, 163, 184, 0.08);
-    border-radius: 8px;
-}
-
-.paneDivider:hover {
-    background: linear-gradient(180deg, rgba(59, 130, 246, .45), rgba(14, 165, 233, .15));
-}
-
-.chatFloating {
-    position: fixed;
-    z-index: 40;
-    background: #1f1f1f;
-    border: 1px solid #2f2f2f;
-    border-radius: 14px;
-    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    min-width: 320px;
-    min-height: 320px;
-}
-
-.chatFloating__header {
-    padding: 10px 12px;
-    background: #262626;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    cursor: grab;
-    user-select: none;
-}
-
-.chatFloating__header:active {
-    cursor: grabbing;
-}
-
-.chatFloating__title {
-    font-weight: 600;
-    letter-spacing: 0.01em;
-}
-
-.chatFloating__actions {
-    display: flex;
-    align-items: center;
     gap: 8px;
 }
 
@@ -827,32 +768,6 @@ body,
     justify-content: center;
     cursor: pointer;
     transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-}
-
-.chatFloating__iconBtn svg {
-    width: 18px;
-    height: 18px;
-    pointer-events: none;
-}
-
-.chatFloating__iconBtn:hover {
-    background: #343434;
-    border-color: #4b5563;
-}
-
-.chatFloating__iconBtn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.chatFloating__body {
-    flex: 1 1 auto;
-    min-height: 0;
-}
-
-.chatFloating__body :deep(.chatWindow) {
-    height: 100%;
-    border-radius: 0;
 }
 
 .chatFloating__resizeHandle {
