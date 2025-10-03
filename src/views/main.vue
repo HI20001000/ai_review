@@ -264,9 +264,22 @@ onMounted(async () => {
                                         Cannot preview: {{ previewing.error }}
                                     </div>
 
-                                    <div v-else class="pvPlaceholder">Select a file to see its preview here.</div>
-                                </section>
-                            </div>
+                                    <div v-else-if="previewing.kind === 'pdf'" class="pvBox pdfBox">
+                                        <iframe :src="previewing.url" title="PDF Preview" style="width:100%;height:100%;border:none;"></iframe>
+                                    </div>
+
+                                    <div v-else class="pvBox">
+                                        <a class="btn" :href="previewing.url" download>Download file</a>
+                                        <a class="btn outline" :href="previewing.url" target="_blank">Open in new window</a>
+                                    </div>
+                                </template>
+
+                                <div v-else-if="previewing.kind === 'error'" class="pvError">
+                                    Cannot preview: {{ previewing.error }}
+                                </div>
+
+                                <div v-else class="pvPlaceholder">Select a file to see its preview here.</div>
+                            </section>
                         </div>
                     </li>
                 </ul>
@@ -418,7 +431,9 @@ body,
 
 .mainContent {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 16px;
     flex: 1 1 auto;
     min-height: 0;
     background-color: #1e1e1e;
@@ -592,9 +607,8 @@ body,
 }
 
 @media (max-width: 900px) {
-    .workspaceShell {
+    .mainContent {
         flex-direction: column;
-        height: auto;
     }
     .toolRail,
     .panelRail,
