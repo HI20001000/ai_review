@@ -178,7 +178,29 @@ onMounted(async () => {
         </div>
 
         <div class="mainContent" ref="mainContentRef">
-            <aside class="toolRail">
+            <div class="projectPanel">
+                <div class="wsHeader">Projects</div>
+                <ul class="projectList">
+                    <li
+                        v-for="p in projects"
+                        :key="p.id"
+                        :class="['projectItem', { active: p.id === selectedProjectId }]"
+                    >
+                        <div class="projectHeader" @click="openProject(p)">
+                            <span class="projName">{{ p.name }}</span>
+                            <span class="rightSide">
+                                <span class="badge" :title="p.mode">{{ p.mode }}</span>
+                                <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
+                            </span>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+
+            <aside
+                v-if="hasActiveProject"
+                class="toolRail"
+            >
                 <button
                     type="button"
                     class="toolRail__btn"
@@ -199,63 +221,36 @@ onMounted(async () => {
             </aside>
 
             <section
+                v-if="hasActiveProject"
                 class="panelRail"
                 :style="middlePaneStyle"
             >
-                <div class="panelRail__projects">
-                    <div class="projectPanel">
-                        <div class="wsHeader">Projects</div>
-                        <ul class="projectList">
-                            <li
-                                v-for="p in projects"
-                                :key="p.id"
-                                :class="['projectItem', { active: p.id === selectedProjectId }]"
-                            >
-                                <div class="projectHeader" @click="openProject(p)">
-                                    <span class="projName">{{ p.name }}</span>
-                                    <span class="rightSide">
-                                        <span class="badge" :title="p.mode">{{ p.mode }}</span>
-                                        <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
-                                    </span>
-                                </div>
-                            </li>
-                        </ul>
-                    </div>
-                </div>
-
-                <div class="panelRail__content">
-                    <div v-if="activeTool === 'project'" class="treeArea">
-                        <template v-if="hasActiveProject">
-                            <div v-if="isLoadingTree" class="loading">Loading...</div>
-                            <ul v-else class="treeRoot">
-                                <TreeNode
-                                    v-for="n in tree"
-                                    :key="n.path"
-                                    :node="n"
-                                    :active-path="activeTreePath"
-                                    @open="openNode"
-                                    @select="selectTreeNode"
-                                />
-                            </ul>
-                        </template>
-                        <div v-else class="emptyState">
-                            選擇一個專案以檢視其檔案結構。
-                        </div>
-                    </div>
-                    <div v-else class="aiArea">
-                        <ChatAiWindow
-                            :visible="activeTool === 'ai'"
-                            :context-items="contextItems"
-                            :messages="messages"
-                            :loading="isProcessing"
-                            :disabled="isChatLocked"
-                            :connection="connection"
-                            @add-active="handleAddActiveContext"
-                            @clear-context="clearContext"
-                            @remove-context="removeContext"
-                            @send-message="handleSendMessage"
+                <div v-if="activeTool === 'project'" class="treeArea">
+                    <div v-if="isLoadingTree" class="loading">Loading...</div>
+                    <ul v-else class="treeRoot">
+                        <TreeNode
+                            v-for="n in tree"
+                            :key="n.path"
+                            :node="n"
+                            :active-path="activeTreePath"
+                            @open="openNode"
+                            @select="selectTreeNode"
                         />
-                    </div>
+                    </ul>
+                </div>
+                <div v-else class="aiArea">
+                    <ChatAiWindow
+                        :visible="activeTool === 'ai'"
+                        :context-items="contextItems"
+                        :messages="messages"
+                        :loading="isProcessing"
+                        :disabled="isChatLocked"
+                        :connection="connection"
+                        @add-active="handleAddActiveContext"
+                        @clear-context="clearContext"
+                        @remove-context="removeContext"
+                        @send-message="handleSendMessage"
+                    />
                 </div>
             </section>
 
