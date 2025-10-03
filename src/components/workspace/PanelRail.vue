@@ -144,19 +144,19 @@ const isAiTab = computed(() => activeTool.value === "ai");
     opacity: 0.8;
 }
 
-.treeRoot {
+:deep(.treeRoot) {
     list-style: none;
     margin: 0;
     padding: 0 8px 8px 0;
 }
 
-.treeChildren {
+:deep(.treeChildren) {
     list-style: none;
     margin: 0;
     padding-left: 16px;
 }
 
-.treeRow {
+:deep(.treeRow) {
     display: flex;
     gap: 8px;
     align-items: center;
@@ -164,12 +164,12 @@ const isAiTab = computed(() => activeTool.value === "ai");
     cursor: pointer;
 }
 
-.treeRow.active {
+:deep(.treeRow.active) {
     background: rgba(255, 255, 255, 0.08);
     border-radius: 6px;
 }
 
-.treeRow .icon {
+:deep(.treeRow .icon) {
     width: 20px;
     text-align: center;
 }
