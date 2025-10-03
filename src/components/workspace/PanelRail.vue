@@ -1,7 +1,7 @@
 <script setup>
 import { computed, toRefs } from "vue";
 import ChatAiWindow from "../ChatAiWindow.vue";
-import TreeNode from "../../scripts/components/TreeNode.js";
+import TreeNode from "./TreeNode.vue";
 
 const props = defineProps({
     activeTool: {

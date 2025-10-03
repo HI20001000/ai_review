@@ -78,11 +78,6 @@ export function useProjectsStore({ preview, fileSystem }) {
         if (!project) return;
         if (!treeStore) throw new Error("Tree store is not initialised");
 
-        if (selectedProjectId.value === project.id) {
-            collapseProject();
-            return;
-        }
-
         const currentId = project.id;
         selectedProjectId.value = currentId;
         preview.resetPreview();
