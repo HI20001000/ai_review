@@ -1,7 +1,8 @@
 <script setup>
 import { ref, watch, onMounted, computed } from "vue";
-import ChatAiWindow from "../components/ChatAiWindow.vue";
-import TreeNode from "../scripts/components/TreeNode.js";
+import ToolRail from "../components/workspace/ToolRail.vue";
+import PanelRail from "../components/workspace/PanelRail.vue";
+import ProjectPanel from "../components/workspace/ProjectPanel.vue";
 import { usePreview } from "../scripts/composables/usePreview.js";
 import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
@@ -127,14 +128,14 @@ function startPreviewResize(event) {
 async function handleAddActiveContext() {
     const added = await addActiveNode();
     if (added) {
-        activeTool.value = "ai";
+        selectTool("ai");
     }
 }
 
 async function handleSendMessage(content) {
     const text = (content || "").trim();
     if (!text) return;
-    activeTool.value = "ai";
+    selectTool("ai");
     await sendUserMessage(text);
 }
 
@@ -360,63 +361,6 @@ body,
     transition: transform 0.25s ease, fill 0.25s ease;
 }
 
-.topBar_actions {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.topBar_aiButton {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    border-radius: 8px;
-    border: 1px solid transparent;
-    background: #1f1f1f;
-    color: #94a3b8;
-    cursor: pointer;
-    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-}
-
-.topBar_aiButton:hover {
-    color: #f8fafc;
-    border-color: #3b82f6;
-}
-
-.topBar_aiButton:focus-visible {
-    outline: 2px solid #3b82f6;
-    outline-offset: 2px;
-}
-
-.topBar_aiButton.active {
-    background: rgba(59, 130, 246, 0.15);
-    color: #bfdbfe;
-    border-color: #3b82f6;
-}
-.topBar_aiButton.loading {
-    border-color: #facc15;
-    color: #fde68a;
-}
-
-.topBar_aiButton.loading svg {
-    animation: chat-spin 0.9s linear infinite;
-}
-
-
-
-.topBar_aiButton svg {
-    width: 20px;
-    height: 20px;
-}
-
-@keyframes chat-spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-}
-
 .topBar_addProject:hover {
     background-color: #0288d1;
     transform: translateY(-2px) scale(1.03);
@@ -483,19 +427,14 @@ body,
     transition: border-color .2s ease, background-color .2s ease;
 }
 
-.projectItem.active {
-    border-color: #2b4b63;
-    background: #1f2d3c;
+.mainContent > * {
+    min-height: 0;
 }
 
-.projectHeader {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    cursor: pointer;
-    color: #e5e7eb;
-    padding: 4px 0;
+.paneDivider {
+    flex: 0 0 6px;
+    cursor: col-resize;
+    background: linear-gradient(180deg, rgba(59, 130, 246, .25), rgba(14, 165, 233, 0));
     border-radius: 8px;
     transition: background .2s ease;
 }
@@ -707,75 +646,10 @@ body,
     color: #d1d5db;
 }
 
-.imgBox {
-    justify-content: center;
-    align-items: center;
-    padding: 12px;
+    .paneDivider {
+        display: none;
+    }
 }
-
-.imgBox img {
-    max-width: 100%;
-    height: auto;
-    border-radius: 6px;
-}
-
-.pdfBox {
-    padding: 0;
-}
-
-.pdfBox iframe {
-    width: 100%;
-    height: 100%;
-    border: none;
-    border-radius: 6px;
-}
-
-.pvError {
-    color: #f87171;
-    font-size: 13px;
-}
-
-.pvPlaceholder {
-    font-size: 13px;
-    color: #94a3b8;
-}
-
-.projName {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    padding-right: 8px;
-}
-
-.rightSide {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.badge {
-    font-size: 12px;
-    opacity: .6;
-}
-
-/* 刪除按鈕 */
-.delBtn {
-    background: transparent;
-    border: none;
-    color: #fca5a5;
-    font-size: 14px;
-    line-height: 1;
-    padding: 4px 6px;
-    border-radius: 6px;
-    cursor: pointer;
-}
-
-.delBtn:hover {
-    background: #3a2a2a;
-    color: #fecaca;
-}
-
-/* Modal */
 .modalBackdrop {
     position: fixed;
     inset: 0;
