@@ -95,6 +95,35 @@ watch(activeTool, (tool) => {
     }
 });
 
+async function ensureActiveProject() {
+    const list = Array.isArray(projects.value) ? projects.value : [];
+    if (!list.length) return;
+
+    const selectedIdValue = selectedProjectId.value;
+    const current = list.find((project) => project.id === selectedIdValue);
+
+    if (current) {
+        if (!tree.value.length && !isLoadingTree.value) {
+            await openProject(current);
+        }
+        return;
+    }
+
+    if (activeTool.value !== "project") {
+        activeTool.value = "project";
+    }
+
+    await openProject(list[0]);
+}
+
+watch(
+    [projects, selectedProjectId],
+    async () => {
+        await ensureActiveProject();
+    },
+    { immediate: true }
+);
+
 function selectTool(tool) {
     if (activeTool.value !== tool) {
         activeTool.value = tool;
