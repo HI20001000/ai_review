@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, onMounted, computed } from "vue";
+import { ref, reactive, watch, onMounted, onBeforeUnmount, computed, nextTick } from "vue";
 import { usePreview } from "../scripts/composables/usePreview.js";
 import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
@@ -52,8 +52,8 @@ const {
 } = treeStore;
 
 const {
-    open,
-    close,
+    open: openAssistantSession,
+    close: closeAssistantSession,
     contextItems,
     messages,
     addActiveNode,
@@ -72,6 +72,17 @@ const activeTool = ref("project");
 const showProjectOverview = ref(true);
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
+const isChatWindowOpen = ref(false);
+const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
+const chatDragState = reactive({ active: false, offsetX: 0, offsetY: 0 });
+const chatResizeState = reactive({
+    active: false,
+    startX: 0,
+    startY: 0,
+    startWidth: 0,
+    startHeight: 0
+});
+const hasInitializedChatWindow = ref(false);
 const hasActiveProject = computed(() => {
     const selectedId = selectedProjectId.value;
     if (selectedId === null || selectedId === undefined) return false;
@@ -87,13 +98,34 @@ const middlePaneStyle = computed(() => ({
     width: `${middlePaneWidth.value}px`
 }));
 
-watch(activeTool, (tool) => {
-    if (tool === "ai") {
-        open();
+const chatWindowStyle = computed(() => ({
+    width: `${chatWindowState.width}px`,
+    height: `${chatWindowState.height}px`,
+    left: `${chatWindowState.x}px`,
+    top: `${chatWindowState.y}px`
+}));
+
+const isChatToggleDisabled = computed(() => isChatLocked.value && !isChatWindowOpen.value);
+
+watch(isChatWindowOpen, (visible) => {
+    if (visible) {
+        openAssistantSession();
         const shouldForce = connection.value.status === "error";
         retryHandshake({ force: shouldForce });
+        if (!hasInitializedChatWindow.value) {
+            chatWindowState.width = 420;
+            chatWindowState.height = 520;
+            chatWindowState.x = Math.max(20, window.innerWidth - chatWindowState.width - 40);
+            chatWindowState.y = 80;
+            hasInitializedChatWindow.value = true;
+        } else {
+            ensureChatWindowInView();
+        }
+        nextTick(() => {
+            ensureChatWindowInView();
+        });
     } else {
-        close();
+        closeAssistantSession();
     }
 });
 
@@ -141,9 +173,8 @@ watch(
 );
 
 function selectTool(tool) {
-    if (tool === "project") {
-        showProjectOverview.value = true;
-    }
+    if (tool !== "project") return;
+    showProjectOverview.value = true;
     if (activeTool.value !== tool) {
         activeTool.value = tool;
     }
@@ -198,21 +229,119 @@ function startPreviewResize(event) {
 async function handleAddActiveContext() {
     const added = await addActiveNode();
     if (added) {
-        selectTool("ai");
+        openChatWindow();
     }
 }
 
 async function handleSendMessage(content) {
     const text = (content || "").trim();
     if (!text) return;
-    selectTool("ai");
+    openChatWindow();
     await sendUserMessage(text);
+}
+
+function openChatWindow() {
+    if (!isChatWindowOpen.value) {
+        isChatWindowOpen.value = true;
+    }
+}
+
+function closeChatWindow() {
+    if (isChatWindowOpen.value) {
+        isChatWindowOpen.value = false;
+        stopChatDrag();
+        stopChatResize();
+    }
+}
+
+function toggleChatWindow() {
+    if (isChatWindowOpen.value) {
+        closeChatWindow();
+    } else {
+        if (!isChatToggleDisabled.value) {
+            openChatWindow();
+        }
+    }
+}
+
+function ensureChatWindowInView() {
+    const maxX = Math.max(0, window.innerWidth - chatWindowState.width);
+    const maxY = Math.max(0, window.innerHeight - chatWindowState.height);
+    chatWindowState.x = clamp(chatWindowState.x, 0, maxX);
+    chatWindowState.y = clamp(chatWindowState.y, 0, maxY);
+}
+
+function startChatDrag(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    chatDragState.active = true;
+    chatDragState.offsetX = event.clientX - chatWindowState.x;
+    chatDragState.offsetY = event.clientY - chatWindowState.y;
+    window.addEventListener("pointermove", handleChatDrag);
+    window.addEventListener("pointerup", stopChatDrag);
+    window.addEventListener("pointercancel", stopChatDrag);
+}
+
+function handleChatDrag(event) {
+    if (!chatDragState.active) return;
+    event.preventDefault();
+    const maxX = Math.max(0, window.innerWidth - chatWindowState.width);
+    const maxY = Math.max(0, window.innerHeight - chatWindowState.height);
+    chatWindowState.x = clamp(event.clientX - chatDragState.offsetX, 0, maxX);
+    chatWindowState.y = clamp(event.clientY - chatDragState.offsetY, 0, maxY);
+}
+
+function stopChatDrag() {
+    chatDragState.active = false;
+    window.removeEventListener("pointermove", handleChatDrag);
+    window.removeEventListener("pointerup", stopChatDrag);
+    window.removeEventListener("pointercancel", stopChatDrag);
+}
+
+function startChatResize(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    chatResizeState.active = true;
+    chatResizeState.startX = event.clientX;
+    chatResizeState.startY = event.clientY;
+    chatResizeState.startWidth = chatWindowState.width;
+    chatResizeState.startHeight = chatWindowState.height;
+    window.addEventListener("pointermove", handleChatResize);
+    window.addEventListener("pointerup", stopChatResize);
+    window.addEventListener("pointercancel", stopChatResize);
+}
+
+function handleChatResize(event) {
+    if (!chatResizeState.active) return;
+    event.preventDefault();
+    const deltaX = event.clientX - chatResizeState.startX;
+    const deltaY = event.clientY - chatResizeState.startY;
+    const minWidth = 320;
+    const minHeight = 320;
+    const maxWidth = Math.max(minWidth, window.innerWidth - chatWindowState.x);
+    const maxHeight = Math.max(minHeight, window.innerHeight - chatWindowState.y);
+    chatWindowState.width = clamp(chatResizeState.startWidth + deltaX, minWidth, maxWidth);
+    chatWindowState.height = clamp(chatResizeState.startHeight + deltaY, minHeight, maxHeight);
+}
+
+function stopChatResize() {
+    chatResizeState.active = false;
+    window.removeEventListener("pointermove", handleChatResize);
+    window.removeEventListener("pointerup", stopChatResize);
+    window.removeEventListener("pointercancel", stopChatResize);
 }
 
 onMounted(async () => {
     await cleanupLegacyHandles();
     updateCapabilityFlags();
     await loadProjectsFromDB();
+    window.addEventListener("resize", ensureChatWindowInView);
+});
+
+onBeforeUnmount(() => {
+    window.removeEventListener("resize", ensureChatWindowInView);
+    stopChatDrag();
+    stopChatResize();
 });
 </script>
 
@@ -226,6 +355,23 @@ onMounted(async () => {
             </div>
             <div class="topBar_spacer"></div>
             <div class="topBar_right">
+                <button
+                    type="button"
+                    class="topBar_iconBtn"
+                    :class="{ active: isChatWindowOpen }"
+                    :disabled="isChatToggleDisabled"
+                    @click="toggleChatWindow"
+                    title="Chat AI"
+                    aria-label="Chat AI"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
+                        <path
+                            d="M8.5 8h7c.83 0 1.5.67 1.5 1.5v3c0 .83-.67 1.5-1.5 1.5h-.94l-1.8 1.88c-.31.33-.76.12-.76-.32V14.5h-3.5c-.83 0-1.5-.67-1.5-1.5v-3C7 8.67 7.67 8 8.5 8Z"
+                            fill="currentColor"
+                        />
+                    </svg>
+                </button>
                 <div class="topBar_addProject" @click="showUploadModal = true">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
                         <path d="M256,0C114.6,0,0,114.6,0,256s114.6,256,256,256s256-114.6,256-256S397.4,0,256,0z M405.3,277.3c0,11.8-9.5,21.3-21.3,21.3h-85.3V384c0,11.8-9.5,21.3-21.3,21.3h-42.7c-11.8,0-21.3-9.6-21.3-21.3v-85.3H128c-11.8,0-21.3-9.6-21.3-21.3v-42.7c0-11.8,9.5-21.3,21.3-21.3h85.3V128c0-11.8,9.5-21.3,21.3-21.3h42.7c11.8,0,21.3,9.6,21.3,21.3v85.3H384c11.8,0,21.3,9.6,21.3,21.3V277.3z" />
@@ -245,17 +391,15 @@ onMounted(async () => {
                     class="toolColumn__btn"
                     :class="{ active: activeTool === 'project' }"
                     @click="selectTool('project')"
+                    aria-label="Projects"
                 >
-                    Projects
-                </button>
-                <button
-                    type="button"
-                    class="toolColumn__btn"
-                    :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
-                    @click="selectTool('ai')"
-                    :disabled="isChatLocked && activeTool !== 'ai'"
-                >
-                    Chat AI
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
+                        <path
+                            d="M8 7h8a1 1 0 0 1 .94.66l1.56 4.36a1 1 0 0 1-.94 1.34H13l-.72 2.17a1 1 0 0 1-1.9-.04L9.4 13.36 6 13a1 1 0 0 1-.92-1.38l1.58-4.31A1 1 0 0 1 8 7Z"
+                            fill="currentColor"
+                        />
+                    </svg>
                 </button>
             </aside>
 
@@ -326,6 +470,57 @@ onMounted(async () => {
             </section>
         </div>
 
+        <Teleport to="body">
+            <div
+                v-if="isChatWindowOpen"
+                class="chatFloating"
+                :style="chatWindowStyle"
+                role="dialog"
+                aria-modal="false"
+                aria-label="Chat AI"
+            >
+                <div class="chatFloating__header" @pointerdown="startChatDrag">
+                    <div class="chatFloating__title">Chat AI</div>
+                    <div class="chatFloating__actions">
+                        <button
+                            type="button"
+                            class="chatFloating__iconBtn"
+                            title="Add active file"
+                            @click="handleAddActiveContext"
+                            :disabled="isChatLocked || isProcessing"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                                <path
+                                    d="M12 3a1 1 0 0 1 1 1v4.268l3.536 2.04a1 1 0 0 1 .464.848V13a1 1 0 0 1-1 1h-2.5l-.5 6-1-2-1 2-.5-6H8a1 1 0 0 1-1-1v-1.844a1 1 0 0 1 .464-.848L11 8.268V4a1 1 0 0 1 1-1Z"
+                                    fill="currentColor"
+                                />
+                            </svg>
+                        </button>
+                        <button type="button" class="chatFloating__iconBtn" title="Close" @click="closeChatWindow">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M7 7l10 10m0-10-10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="chatFloating__body">
+                    <ChatAiWindow
+                        :visible="true"
+                        :context-items="contextItems"
+                        :messages="messages"
+                        :loading="isProcessing"
+                        :disabled="isChatLocked"
+                        :connection="connection"
+                        @add-active="handleAddActiveContext"
+                        @clear-context="clearContext"
+                        @remove-context="removeContext"
+                        @send-message="handleSendMessage"
+                    />
+                </div>
+                <div class="chatFloating__resizeHandle" @pointerdown="startChatResize"></div>
+            </div>
+        </Teleport>
+
         <div v-if="showUploadModal" class="modalBackdrop" @click.self="showUploadModal = false">
             <div class="modalCard">
                 <h3>Import Project Folder</h3>
@@ -375,6 +570,49 @@ body,
 
 .topBar_spacer {
     flex: 1 1 auto;
+}
+
+.topBar_right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.topBar_iconBtn {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    border: 1px solid #3d3d3d;
+    background: #2b2b2b;
+    color: #cbd5f5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.topBar_iconBtn svg {
+    width: 20px;
+    height: 20px;
+}
+
+.topBar_iconBtn:hover:not(:disabled) {
+    background: #343434;
+    border-color: #4b5563;
+    color: #e0f2fe;
+    transform: translateY(-1px);
+}
+
+.topBar_iconBtn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.topBar_iconBtn.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.3), rgba(14, 165, 233, 0.3));
+    border-color: rgba(14, 165, 233, 0.6);
+    color: #e0f2fe;
 }
 
 .topBar_addProject {
@@ -439,23 +677,17 @@ body,
 }
 
 .toolColumn__section {
-    background: #252526;
-    border: 1px solid #3d3d3d;
-    border-radius: 10px;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    border-radius: 10px;
     border: 1px solid #303134;
     background: #1f1f1f;
     transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .toolColumn__btn {
-    border: none;
-    border-radius: 10px;
-    padding: 12px;
-    background: #2a2a2a;
+    border: 1px solid #303134;
+    border-radius: 14px;
+    width: 56px;
+    height: 56px;
+    background: #222;
     color: #cbd5e1;
     cursor: pointer;
     transition: background .2s ease, color .2s ease, transform .2s ease;
@@ -464,14 +696,21 @@ body,
     justify-content: center;
 }
 
+.toolColumn__btn svg {
+    width: 26px;
+    height: 26px;
+    pointer-events: none;
+}
+
 .toolColumn__btn:hover:not(.disabled):not(:disabled) {
-    background: #334155;
+    background: #2f3746;
     color: #f8fafc;
     transform: translateY(-1px);
 }
 
 .toolColumn__btn.active {
-    background: linear-gradient(135deg, rgba(59, 130, 246, .3), rgba(14, 165, 233, .3));
+    background: linear-gradient(135deg, rgba(59, 130, 246, .35), rgba(14, 165, 233, .35));
+    border-color: rgba(59, 130, 246, .6);
     color: #e0f2fe;
 }
 
@@ -498,12 +737,21 @@ body,
     flex: 1 1 auto;
     display: flex;
     align-items: center;
-    justify-content: center;
-    color: #94a3b8;
-    text-align: center;
-    padding: 24px;
-    background: rgba(148, 163, 184, 0.08);
+    gap: 8px;
+}
+
+.chatFloating__iconBtn {
+    width: 32px;
+    height: 32px;
     border-radius: 8px;
+    border: 1px solid #3d3d3d;
+    background: #2b2b2b;
+    color: #e2e8f0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .paneDivider:hover {
