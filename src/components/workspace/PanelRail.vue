@@ -96,11 +96,16 @@ const isProjectTab = computed(() => activeTool.value === "project");
 const isAiTab = computed(() => activeTool.value === "ai");
 const hasProjects = computed(() => (props.projects || []).length > 0);
 const hasSelectedProject = computed(() => props.selectedProjectId !== null && props.selectedProjectId !== undefined);
-const shouldShowTree = computed(
-    () =>
-        !showProjectOverview.value &&
+const shouldShowTree = computed(() => {
+    if (showProjectOverview.value) return false;
+
+    return (
         hasSelectedProject.value &&
         (props.isLoadingTree || (Array.isArray(props.tree) && props.tree.length > 0))
+    );
+});
+const shouldShowTreePlaceholder = computed(
+    () => !showProjectOverview.value && hasSelectedProject.value && !shouldShowTree.value
 );
 </script>
 
@@ -150,7 +155,7 @@ const shouldShowTree = computed(
                 </ul>
             </div>
 
-            <div v-else-if="hasSelectedProject && !showProjectOverview" class="treePlaceholder">
+            <div v-else-if="shouldShowTreePlaceholder" class="treePlaceholder">
                 <div class="panelHeader">Project Files</div>
                 <p class="emptyTree">載入專案中...</p>
             </div>

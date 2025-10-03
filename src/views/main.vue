@@ -1,6 +1,5 @@
 <script setup>
 import { ref, watch, onMounted, computed } from "vue";
-import PanelRail from "../components/workspace/PanelRail.vue";
 import { usePreview } from "../scripts/composables/usePreview.js";
 import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
@@ -72,7 +71,15 @@ const activeTool = ref("project");
 const showProjectOverview = ref(true);
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
-const hasActiveProject = computed(() => selectedProjectId.value !== null && selectedProjectId.value !== undefined);
+const hasActiveProject = computed(() => {
+    const selectedId = selectedProjectId.value;
+    if (selectedId === null || selectedId === undefined) return false;
+
+    const list = projects.value;
+    if (!Array.isArray(list)) return false;
+
+    return list.some((project) => project.id === selectedId);
+});
 
 const middlePaneStyle = computed(() => ({
     flex: `0 0 ${middlePaneWidth.value}px`,
@@ -89,31 +96,65 @@ watch(activeTool, (tool) => {
     }
 });
 
-watch(selectedProjectId, (projectId, previousId) => {
-    const hasSelection = projectId !== null && projectId !== undefined;
-    const selectionChanged = projectId !== previousId;
-    if (hasSelection && selectionChanged && activeTool.value === "project") {
+watch(
+    selectedProjectId,
+    (newId, oldId) => {
+        if (Object.is(newId, oldId)) return;
+
+        if (newId === null || newId === undefined) {
+            showProjectOverview.value = true;
+            return;
+        }
+
         showProjectOverview.value = false;
     }
-});
+);
+
+async function ensureActiveProject() {
+    const list = Array.isArray(projects.value) ? projects.value : [];
+    if (!list.length) return;
+
+    const selectedIdValue = selectedProjectId.value;
+    const current = list.find((project) => project.id === selectedIdValue);
+
+    if (current) {
+        if (!tree.value.length && !isLoadingTree.value) {
+            await openProject(current);
+        }
+        return;
+    }
+
+    if (activeTool.value !== "project") {
+        selectTool("project");
+    }
+
+    await openProject(list[0]);
+}
+
+watch(
+    [projects, selectedProjectId],
+    async () => {
+        await ensureActiveProject();
+    },
+    { immediate: true }
+);
 
 function selectTool(tool) {
+    if (tool === "project") {
+        showProjectOverview.value = true;
+    }
     if (activeTool.value !== tool) {
         activeTool.value = tool;
     }
 }
 
-function handleToolButton(tool) {
-    if (tool === "project") {
-        showProjectOverview.value = true;
-    }
-    selectTool(tool);
-}
-
 function handleSelectProject(project) {
     if (!project) return;
+    const wasOverviewOpen = showProjectOverview.value;
     selectTool("project");
-    showProjectOverview.value = false;
+    if (wasOverviewOpen) {
+        showProjectOverview.value = false;
+    }
     openProject(project);
 }
 
@@ -194,65 +235,90 @@ onMounted(async () => {
         </div>
 
         <div class="mainContent" ref="mainContentRef">
-            <aside class="toolRail">
-                <div class="toolRail__section toolRail__switcher">
-                    <div class="toolRail__header">工具</div>
-                    <div class="toolRail__buttons">
-                        <button
-                            type="button"
-                            class="toolRail__btn"
-                            :class="{ active: activeTool === 'project' }"
-                            @click="handleToolButton('project')"
-                            aria-label="Projects"
-                        >
-                            <span class="toolRail__emoji" aria-hidden="true">📂</span>
-                            <span class="srOnly">Projects</span>
-                        </button>
-                        <button
-                            type="button"
-                            class="toolRail__btn"
-                            :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
-                            @click="handleToolButton('ai')"
-                            :disabled="isChatLocked && activeTool !== 'ai'"
-                            aria-label="Chat AI"
-                        >
-                            <span class="toolRail__emoji" aria-hidden="true">🤖</span>
-                            <span class="srOnly">Chat AI</span>
-                        </button>
-                    </div>
-                </div>
+            <div class="projectPanel">
+                <div class="wsHeader">Projects</div>
+                <ul class="projectList">
+                    <li
+                        v-for="p in projects"
+                        :key="p.id"
+                        :class="['projectItem', { active: p.id === selectedProjectId }]"
+                    >
+                        <div class="projectHeader" @click="handleSelectProject(p)">
+                            <span class="projName">{{ p.name }}</span>
+                            <span class="rightSide">
+                                <span class="badge" :title="p.mode">{{ p.mode }}</span>
+                                <button class="delBtn" title="Delete project (DB only)" @click.stop="deleteProject($event, p)">❌</button>
+                            </span>
+                        </div>
+                    </li>
+                </ul>
+            </div>
 
+            <aside
+                v-if="hasActiveProject"
+                class="toolRail"
+            >
+                <button
+                    type="button"
+                    class="toolRail__btn"
+                    :class="{ active: activeTool === 'project' }"
+                    @click="selectTool('project')"
+                >
+                    Projects
+                </button>
+                <button
+                    type="button"
+                    class="toolRail__btn"
+                    :class="{ active: activeTool === 'ai', disabled: isChatLocked && activeTool !== 'ai' }"
+                    @click="selectTool('ai')"
+                    :disabled="isChatLocked && activeTool !== 'ai'"
+                >
+                    Chat AI
+                </button>
             </aside>
 
-            <PanelRail
-                class="contentColumn"
-                :style-width="middlePaneStyle"
-                :active-tool="activeTool"
-                :show-project-overview="showProjectOverview"
-                :projects="projects"
-                :selected-project-id="selectedProjectId"
-                :on-select-project="handleSelectProject"
-                :on-delete-project="deleteProject"
-                :tree="tree"
-                :active-tree-path="activeTreePath"
-                :is-loading-tree="isLoadingTree"
-                :open-node="openNode"
-                :select-tree-node="selectTreeNode"
-                :context-items="contextItems"
-                :messages="messages"
-                :is-processing="isProcessing"
-                :is-chat-locked="isChatLocked"
-                :connection="connection"
-                :on-add-active-context="handleAddActiveContext"
-                :on-remove-context="removeContext"
-                :on-clear-context="clearContext"
-                :on-send-message="handleSendMessage"
-            />
+            <section
+                v-if="hasActiveProject"
+                class="panelRail"
+                :style="middlePaneStyle"
+            >
+                <div v-if="activeTool === 'project'" class="treeArea">
+                    <div v-if="isLoadingTree" class="loading">Loading...</div>
+                    <ul v-else class="treeRoot">
+                        <TreeNode
+                            v-for="n in tree"
+                            :key="n.path"
+                            :node="n"
+                            :active-path="activeTreePath"
+                            @open="openNode"
+                            @select="selectTreeNode"
+                        />
+                    </ul>
+                </div>
+                <div v-else class="aiArea">
+                    <ChatAiWindow
+                        :visible="activeTool === 'ai'"
+                        :context-items="contextItems"
+                        :messages="messages"
+                        :loading="isProcessing"
+                        :disabled="isChatLocked"
+                        :connection="connection"
+                        @add-active="handleAddActiveContext"
+                        @clear-context="clearContext"
+                        @remove-context="removeContext"
+                        @send-message="handleSendMessage"
+                    />
+                </div>
+            </section>
 
-            <div class="paneDivider" @pointerdown="startPreviewResize"></div>
+            <div
+                v-if="hasActiveProject"
+                class="paneDivider"
+                @pointerdown="startPreviewResize"
+            ></div>
 
-            <section class="workSpace">
-                <template v-if="hasActiveProject && previewing.kind && previewing.kind !== 'error'">
+            <section v-if="hasActiveProject" class="workSpace">
+                <template v-if="previewing.kind && previewing.kind !== 'error'">
                     <div class="pvHeader">
                         <div class="pvName">{{ previewing.name }}</div>
                         <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
@@ -276,18 +342,14 @@ onMounted(async () => {
                     </div>
                 </template>
 
-                <template v-else-if="hasActiveProject && previewing.kind === 'error'">
+                <template v-else-if="previewing.kind === 'error'">
                     <div class="pvError">
                         Cannot preview: {{ previewing.error }}
                     </div>
                 </template>
 
-                <template v-else-if="hasActiveProject">
-                    <div class="pvPlaceholder">Select a file to see its preview here.</div>
-                </template>
-
                 <template v-else>
-                    <div class="pvPlaceholder">選擇一個專案以啟用預覽區域。</div>
+                    <div class="pvPlaceholder">Select a file to see its preview here.</div>
                 </template>
             </section>
         </div>
@@ -390,21 +452,27 @@ body,
     overflow: hidden;
 }
 
-.toolRail {
-    flex: 0 0 280px;
+.panelRail {
+    flex: 0 0 320px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    min-height: 0;
     height: 100%;
     background: #202020;
     border: 1px solid #323232;
     border-radius: 10px;
-    padding: 16px;
+    padding: 12px;
     box-sizing: border-box;
+    overflow: hidden;
+    gap: 12px;
 }
 
-.toolRail__section {
-    background: #252526;
+.panelRail__projects {
+    flex: 0 0 auto;
+}
+
+.projectPanel {
+    background-color: #252526;
     border: 1px solid #3d3d3d;
     border-radius: 10px;
     padding: 12px;
@@ -412,24 +480,88 @@ body,
     flex-direction: column;
     gap: 12px;
     min-height: 0;
+    max-height: 280px;
+    overflow: hidden;
 }
 
-.toolRail__header {
+.toolColumn__section:first-of-type {
+    flex: 1 1 auto;
+    overflow: hidden;
+}
+
+.toolColumn__header {
     font-weight: 700;
     color: #cbd5e1;
 }
 
-.toolRail__switcher {
+.aiShortcut {
     flex: 0 0 auto;
 }
 
-.toolRail__buttons {
+.projectList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
+    overflow: auto;
+    min-height: 0;
+    flex: 1 1 auto;
 }
 
-.toolRail__btn {
+.toolColumn__section {
+    background: #252526;
+    border: 1px solid #3d3d3d;
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    border-radius: 10px;
+    border: 1px solid #303134;
+    background: #1f1f1f;
+    transition: border-color .2s ease, background-color .2s ease;
+}
+
+.projectItem.active {
+    border-color: #0284c7;
+    background: rgba(14, 165, 233, 0.12);
+}
+
+.projectHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: background .2s ease;
+}
+
+.projName {
+    font-weight: 600;
+    color: #e2e8f0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.delBtn {
+    background: transparent;
+    border: none;
+    color: #f87171;
+    cursor: pointer;
+    font-size: 14px;
+    transition: transform .2s ease, color .2s ease;
+}
+
+.delBtn:hover {
+    transform: scale(1.1);
+    color: #ef4444;
+}
+
+.toolColumn__btn {
     border: none;
     border-radius: 10px;
     padding: 12px;
@@ -442,52 +574,29 @@ body,
     justify-content: center;
 }
 
-.toolRail__btn:hover:not(.disabled):not(:disabled) {
+.toolColumn__btn:hover:not(.disabled):not(:disabled) {
     background: #334155;
     color: #f8fafc;
     transform: translateY(-1px);
 }
 
-.toolRail__btn.active {
-    background: linear-gradient(135deg, rgba(59, 130, 246, .35), rgba(14, 165, 233, .35));
+.toolColumn__btn.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, .3), rgba(14, 165, 233, .3));
     color: #e0f2fe;
 }
 
-.toolRail__btn.disabled,
-.toolRail__btn:disabled {
+.toolColumn__btn.disabled,
+.toolColumn__btn:disabled {
     opacity: .6;
     cursor: not-allowed;
 }
 
-.toolRail__emoji {
-    font-size: 24px;
-    line-height: 1;
-}
 
-.srOnly {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-}
-
-.contentColumn {
-    flex: 0 0 360px;
+.panelRail__content {
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    height: 100%;
-    background: #202020;
-    border: 1px solid #323232;
-    border-radius: 10px;
-    padding: 16px;
-    box-sizing: border-box;
-    overflow: hidden;
 }
 
 .mainContent > * {
@@ -502,6 +611,53 @@ body,
     transition: background .2s ease;
 }
 
+.projectItem:not(.active) .projectHeader:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+
+.treeArea {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    padding-right: 8px;
+    overflow: auto;
+}
+
+.treeArea__header {
+    font-weight: 700;
+    color: #cbd5e1;
+}
+
+.aiArea {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.emptyState {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #94a3b8;
+    text-align: center;
+    padding: 24px;
+    background: rgba(148, 163, 184, 0.08);
+    border-radius: 8px;
+}
+
+.aiArea :deep(.chatWindow) {
+    height: 100%;
+}
+
+.aiArea :deep(.chatWindow) {
+    height: 100%;
+}
+
 .paneDivider:hover {
     background: linear-gradient(180deg, rgba(59, 130, 246, .45), rgba(14, 165, 233, .15));
 }
@@ -510,7 +666,7 @@ body,
     .mainContent {
         flex-direction: column;
     }
-    .toolRail,
+    .toolColumn,
     .contentColumn,
     .workSpace {
         width: 100%;
@@ -520,6 +676,12 @@ body,
 .loading {
     padding: 10px;
     opacity: .8;
+}
+
+.treeRoot {
+    list-style: none;
+    margin: 0;
+    padding: 0 8px 8px 0;
 }
 
 .workSpace {
