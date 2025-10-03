@@ -83,10 +83,14 @@ const props = defineProps({
     onSendMessage: {
         type: Function,
         required: true
+    },
+    showProjectOverview: {
+        type: Boolean,
+        default: true
     }
 });
 
-const { activeTool } = toRefs(props);
+const { activeTool, showProjectOverview } = toRefs(props);
 
 const isProjectTab = computed(() => activeTool.value === "project");
 const isAiTab = computed(() => activeTool.value === "ai");

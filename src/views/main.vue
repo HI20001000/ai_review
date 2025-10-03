@@ -68,6 +68,7 @@ const {
 const { previewing } = preview;
 
 const activeTool = ref("project");
+const showProjectOverview = ref(true);
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const hasActiveProject = computed(() => {
