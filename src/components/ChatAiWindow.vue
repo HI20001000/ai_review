@@ -1,97 +1,148 @@
 <template>
-    <div v-if="visible" class="chatWindow">
-        <section class="chatWindow__context">
-            <div class="chatWindow__contextHeader">
-                <span>Context</span>
-                <div class="chatWindow__contextBtns">
-                    <button
-                        type="button"
-                        class="chatWindow__btn"
-                        :disabled="controlsDisabled"
-                        @click="emit('add-active')"
-                    >
-                        Add active file
-                    </button>
-                    <button
-                        type="button"
-                        class="chatWindow__btn ghost"
-                        :disabled="clearDisabled"
-                        @click="emit('clear-context')"
-                    >
-                        Clear
-                    </button>
-                </div>
-            </div>
-            <div class="chatWindow__chips">
-                <template v-if="contextItems.length">
-                    <span
-                        v-for="item in contextItems"
-                        :key="item.id"
-                        class="chatWindow__chip"
-                        :title="item.path || item.label"
-                    >
-                        <span class="chatWindow__chipType">{{ item.type === 'dir' ? 'DIR' : 'FILE' }}</span>
-                        <span class="chatWindow__chipLabel">{{ item.label }}</span>
-                        <button
-                            type="button"
-                            class="chatWindow__chipRemove"
-                            @click="emit('remove-context', item.id)"
-                        >
-                            &times;
-                        </button>
-                    </span>
-                </template>
-                <p v-else class="chatWindow__chipsPlaceholder">No context yet. Select a file and press "Add active file".</p>
-            </div>
-        </section>
-
-        <section ref="messagesRef" class="chatWindow__messages">
-            <template v-if="messages.length">
-                <article
-                    v-for="msg in messages"
-                    :key="msg.id"
-                    :class="[
-                        'chatWindow__message',
-                        'is-' + msg.role,
-                        { 'is-pending': msg.status === 'pending', 'is-error': msg.status === 'error', 'is-info': msg.status === 'info' }
-                    ]"
-                >
-                    <header
-                        class="chatWindow__messageMeta"
-                        :class="{ 'is-user': msg.role === 'user' }"
-                    >
-                        <span class="chatWindow__messageAuthor">{{ msg.role === 'assistant' ? 'AI' : 'User' }}</span>
-                        <span class="chatWindow__messageTime">{{ formatTime(msg.timestamp) }}</span>
-                    </header>
-                    <p class="chatWindow__messageBody">{{ msg.content }}</p>
-                </article>
-            </template>
-            <div v-else class="chatWindow__messagesEmpty">No messages yet. Start typing!</div>
-        </section>
-
-        <footer class="chatWindow__footer">
-            <textarea
-                ref="textareaRef"
-                v-model="draft"
-                class="chatWindow__input"
-                :disabled="disabled"
-                placeholder="Type a message, Shift+Enter for newline"
-                @keydown.enter.exact.prevent="send"
-                @keydown.enter.shift.stop
-            ></textarea>
-            <div class="chatWindow__footerActions">
-                <span class="chatWindow__status" :style="statusStyle">{{ statusText }}</span>
+    <div
+        v-if="visible"
+        class="chatFloating"
+        :style="floatingStyle"
+        role="dialog"
+        aria-modal="false"
+        aria-label="Chat AI"
+    >
+        <div
+            class="chatFloating__header"
+            @pointerdown="emit('drag-start', $event)"
+            @mousedown="emit('drag-start', $event)"
+        >
+            <div class="chatFloating__title">Chat AI</div>
+            <div class="chatFloating__actions">
                 <button
                     type="button"
-                    class="chatWindow__send"
-                    :disabled="!draft.trim() || loading || disabled"
-                    :aria-busy="loading ? 'true' : 'false'"
-                    @click="send"
+                    class="chatFloating__iconBtn"
+                    title="Add active file"
+                    :disabled="controlsDisabled"
+                    @click="emit('add-active')"
                 >
-                    Send
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                            d="M12 3a1 1 0 0 1 1 1v4.268l3.536 2.04a1 1 0 0 1 .464.848V13a1 1 0 0 1-1 1h-2.5l-.5 6-1-2-1 2-.5-6H8a1 1 0 0 1-1-1v-1.844a1 1 0 0 1 .464-.848L11 8.268V4a1 1 0 0 1 1-1Z"
+                            fill="currentColor"
+                        />
+                    </svg>
+                </button>
+                <button
+                    type="button"
+                    class="chatFloating__iconBtn"
+                    title="Close"
+                    @click="emit('close')"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M7 7l10 10m0-10-10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    </svg>
                 </button>
             </div>
-        </footer>
+        </div>
+
+        <div class="chatFloating__body">
+            <div class="chatWindow">
+                <section class="chatWindow__context">
+                    <div class="chatWindow__contextHeader">
+                        <span>Context</span>
+                        <div class="chatWindow__contextBtns">
+                            <button
+                                type="button"
+                                class="chatWindow__btn"
+                                :disabled="controlsDisabled"
+                                @click="emit('add-active')"
+                            >
+                                Add active file
+                            </button>
+                            <button
+                                type="button"
+                                class="chatWindow__btn ghost"
+                                :disabled="clearDisabled"
+                                @click="emit('clear-context')"
+                            >
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+                    <div class="chatWindow__chips">
+                        <template v-if="contextItems.length">
+                            <span
+                                v-for="item in contextItems"
+                                :key="item.id"
+                                class="chatWindow__chip"
+                                :title="item.path || item.label"
+                            >
+                                <span class="chatWindow__chipType">{{ item.type === 'dir' ? 'DIR' : 'FILE' }}</span>
+                                <span class="chatWindow__chipLabel">{{ item.label }}</span>
+                                <button
+                                    type="button"
+                                    class="chatWindow__chipRemove"
+                                    @click="emit('remove-context', item.id)"
+                                >
+                                    &times;
+                                </button>
+                            </span>
+                        </template>
+                        <p v-else class="chatWindow__chipsPlaceholder">No context yet. Select a file and press "Add active file".</p>
+                    </div>
+                </section>
+
+                <section ref="messagesRef" class="chatWindow__messages">
+                    <template v-if="messages.length">
+                        <article
+                            v-for="msg in messages"
+                            :key="msg.id"
+                            :class="[
+                                'chatWindow__message',
+                                'is-' + msg.role,
+                                { 'is-pending': msg.status === 'pending', 'is-error': msg.status === 'error', 'is-info': msg.status === 'info' }
+                            ]"
+                        >
+                            <header
+                                class="chatWindow__messageMeta"
+                                :class="{ 'is-user': msg.role === 'user' }"
+                            >
+                                <span class="chatWindow__messageAuthor">{{ msg.role === 'assistant' ? 'AI' : 'User' }}</span>
+                                <span class="chatWindow__messageTime">{{ formatTime(msg.timestamp) }}</span>
+                            </header>
+                            <p class="chatWindow__messageBody">{{ msg.content }}</p>
+                        </article>
+                    </template>
+                    <div v-else class="chatWindow__messagesEmpty">No messages yet. Start typing!</div>
+                </section>
+
+                <footer class="chatWindow__footer">
+                    <textarea
+                        ref="textareaRef"
+                        v-model="draft"
+                        class="chatWindow__input"
+                        :disabled="disabled"
+                        placeholder="Type a message, Shift+Enter for newline"
+                        @keydown.enter.exact.prevent="send"
+                        @keydown.enter.shift.stop
+                    ></textarea>
+                    <div class="chatWindow__footerActions">
+                        <span class="chatWindow__status" :style="statusStyle">{{ statusText }}</span>
+                        <button
+                            type="button"
+                            class="chatWindow__send"
+                            :disabled="!draft.trim() || loading || disabled"
+                            :aria-busy="loading ? 'true' : 'false'"
+                            @click="send"
+                        >
+                            Send
+                        </button>
+                    </div>
+                </footer>
+            </div>
+        </div>
+
+        <div
+            class="chatFloating__resizeHandle"
+            @pointerdown="emit('resize-start', $event)"
+            @mousedown="emit('resize-start', $event)"
+        ></div>
     </div>
 </template>
 
@@ -102,6 +153,7 @@ const DEFAULT_STATUS_MESSAGE = "連接中...";
 
 const props = defineProps({
     visible: { type: Boolean, default: false },
+    floatingStyle: { type: Object, default: () => ({}) },
     contextItems: { type: Array, default: () => [] },
     messages: { type: Array, default: () => [] },
     loading: { type: Boolean, default: false },
@@ -109,7 +161,15 @@ const props = defineProps({
     connection: { type: Object, default: () => ({ status: "checking", message: "" }) }
 });
 
-const emit = defineEmits(["remove-context", "clear-context", "add-active", "send-message"]);
+const emit = defineEmits([
+    "remove-context",
+    "clear-context",
+    "add-active",
+    "send-message",
+    "close",
+    "drag-start",
+    "resize-start"
+]);
 
 const draft = ref("");
 const messagesRef = ref(null);
@@ -179,6 +239,110 @@ function formatTime(value) {
 </script>
 
 <style scoped>
+.chatFloating {
+    position: fixed;
+    z-index: 40;
+    background: #1f1f1f;
+    border: 1px solid #2f2f2f;
+    border-radius: 14px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 320px;
+    min-height: 320px;
+}
+
+.chatFloating__header {
+    padding: 10px 12px;
+    background: #262626;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: grab;
+    user-select: none;
+}
+
+.chatFloating__header:active {
+    cursor: grabbing;
+}
+
+.chatFloating__title {
+    font-weight: 600;
+    color: #e2e8f0;
+    letter-spacing: 0.01em;
+}
+
+.chatFloating__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.chatFloating__iconBtn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid #2f2f2f;
+    background: #1f2937;
+    color: #94a3b8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+    padding: 0;
+}
+
+.chatFloating__iconBtn svg {
+    width: 18px;
+    height: 18px;
+    pointer-events: none;
+}
+
+.chatFloating__iconBtn:hover:not(:disabled) {
+    background: #2f3746;
+    color: #f8fafc;
+}
+
+.chatFloating__iconBtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.chatFloating__body {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.chatFloating__body .chatWindow {
+    height: 100%;
+    border-radius: 0;
+}
+
+.chatFloating__resizeHandle {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    right: 4px;
+    bottom: 4px;
+    cursor: nwse-resize;
+    border-radius: 6px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.4), rgba(14, 165, 233, 0.2));
+}
+
+.chatFloating__resizeHandle::after {
+    content: "";
+    position: absolute;
+    right: 5px;
+    bottom: 5px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid rgba(148, 163, 184, 0.8);
+    border-bottom: 2px solid rgba(148, 163, 184, 0.8);
+}
+
 .chatWindow {
     display: flex;
     flex-direction: column;
