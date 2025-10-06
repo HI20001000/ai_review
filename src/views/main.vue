@@ -141,16 +141,19 @@ async function ensureActiveProject() {
     if (!list.length) return;
 
     const selectedIdValue = selectedProjectId.value;
-    const current = list.find((project) => project.id === selectedIdValue);
-
-    if (current) {
-        if (!tree.value.length && !isLoadingTree.value) {
-            await openProject(current);
-        }
+    if (!selectedIdValue) {
         return;
     }
 
-    await openProject(list[0]);
+    const current = list.find((project) => project.id === selectedIdValue);
+    if (!current) {
+        selectedProjectId.value = null;
+        return;
+    }
+
+    if (!tree.value.length && !isLoadingTree.value) {
+        await openProject(current);
+    }
 }
 
 watch(
@@ -221,6 +224,7 @@ async function handleSendMessage(content) {
     const text = (content || "").trim();
     if (!text) return;
     openChatWindow();
+    console.log("[ChatAI] Sending message:", text);
     await sendUserMessage(text);
 }
 
