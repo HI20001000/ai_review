@@ -10,13 +10,37 @@ function splitStatements(sql) {
         .filter((statement) => statement.length && !statement.startsWith("--"));
 }
 
-export async function ensureSchema() {
+function createLogger(logger) {
+    const target = logger && typeof logger === "object" ? logger : console;
+    const info = typeof target.info === "function" ? target.info.bind(target) : console.log.bind(console);
+    const error = typeof target.error === "function" ? target.error.bind(target) : console.error.bind(console);
+    return { info, error };
+}
+
+function formatStatement(statement) {
+    const singleLine = statement.replace(/\s+/g, " ").trim();
+    if (singleLine.length <= 120) {
+        return singleLine;
+    }
+    return `${singleLine.slice(0, 117)}...`;
+}
+
+export async function ensureSchema({ logger } = {}) {
+    const { info, error } = createLogger(logger);
     const currentDir = dirname(fileURLToPath(import.meta.url));
     const schemaPath = resolve(currentDir, "../sql/schema.sql");
     const sql = await readFile(schemaPath, "utf8");
     const statements = splitStatements(sql);
 
     for (const statement of statements) {
-        await pool.query(statement);
+        const preview = formatStatement(statement);
+        info(`[schema] Executing: ${preview}`);
+        try {
+            await pool.query(statement);
+            info(`[schema] Success: ${preview}`);
+        } catch (err) {
+            error(`[schema] Failed: ${preview}`, err);
+            throw err;
+        }
     }
 }

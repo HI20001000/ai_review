@@ -11,7 +11,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "node server/index.js",
-    "db:init": "node server/scripts/initDatabase.js"
+    "db:init": "node server/scripts/initDatabase.js",
+    "db:dev": "node server/scripts/initDatabase.js"
   },
   "dependencies": {
     "@codemirror/commands": "^6.8.1",

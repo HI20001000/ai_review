@@ -16,6 +16,20 @@ const app = express();
 
 app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || "10mb" }));
 
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on("finish", () => {
+        const duration = Date.now() - start;
+        console.log(
+            `[api] ${req.method} ${req.originalUrl || req.url} -> ${res.statusCode} (${duration}ms)`
+        );
+    });
+    res.on("error", (error) => {
+        console.error(`[api] ${req.method} ${req.originalUrl || req.url} stream error`, error);
+    });
+    next();
+});
+
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || "")
     .split(",")
     .map((origin) => origin.trim())
@@ -200,7 +214,14 @@ app.use((err, req, res, _next) => {
 const PORT = Number(process.env.PORT || process.env.API_PORT || 3001);
 const HOST = process.env.HOST || "0.0.0.0";
 
-await ensureSchema();
+try {
+    console.log("Ensuring MySQL schema before starting server...");
+    await ensureSchema({ logger: console });
+    console.log("MySQL schema ensured successfully.");
+} catch (error) {
+    console.error("Failed to ensure MySQL schema", error);
+    process.exit(1);
+}
 
 const server = app.listen(PORT, HOST, () => {
     console.log(`API server listening on http://${HOST}:${PORT}`);
