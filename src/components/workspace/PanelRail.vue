@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import TreeNode from "./TreeNode.vue";
 
 const props = defineProps({
@@ -42,22 +42,62 @@ const props = defineProps({
     selectTreeNode: {
         type: Function,
         required: true
+    },
+    isTreeCollapsed: {
+        type: Boolean,
+        default: false
     }
 });
 
+const emit = defineEmits(["resizeStart"]);
+
 const hasProjects = computed(() => (props.projects || []).length > 0);
 const hasSelectedProject = computed(() => props.selectedProjectId !== null && props.selectedProjectId !== undefined);
-const shouldShowTree = computed(() => {
-    return (
-        hasSelectedProject.value &&
-        (props.isLoadingTree || (Array.isArray(props.tree) && props.tree.length > 0))
-    );
-});
-const shouldShowTreePlaceholder = computed(() => hasSelectedProject.value && !shouldShowTree.value);
+const hasTreeNodes = computed(() => Array.isArray(props.tree) && props.tree.length > 0);
+const shouldShowTreeList = computed(() => hasSelectedProject.value && !props.isTreeCollapsed && hasTreeNodes.value && !props.isLoadingTree);
+const shouldShowTreeLoading = computed(() => hasSelectedProject.value && !props.isTreeCollapsed && props.isLoadingTree);
+const shouldShowEmptyTree = computed(() => hasSelectedProject.value && !props.isTreeCollapsed && !props.isLoadingTree && !hasTreeNodes.value);
+
+const isHoveringResizeEdge = ref(false);
+
+const EDGE_THRESHOLD = 8;
+
+function updateResizeHoverState(event) {
+    const panel = event.currentTarget;
+    if (!panel) return false;
+    const rect = panel.getBoundingClientRect();
+    const offsetX = event.clientX - rect.left;
+    const hovering = rect.width - offsetX <= EDGE_THRESHOLD;
+    if (isHoveringResizeEdge.value !== hovering) {
+        isHoveringResizeEdge.value = hovering;
+    }
+    return hovering;
+}
+
+function handlePointerMove(event) {
+    updateResizeHoverState(event);
+}
+
+function handlePointerLeave() {
+    isHoveringResizeEdge.value = false;
+}
+
+function handlePointerDown(event) {
+    const hovering = updateResizeHoverState(event);
+    if (!hovering) return;
+    emit("resizeStart", event);
+}
 </script>
 
 <template>
-    <section class="panelRail" :style="styleWidth">
+    <section
+        class="panelRail"
+        :class="{ 'panelRail--resizeEdge': isHoveringResizeEdge }"
+        :style="styleWidth"
+        @pointermove="handlePointerMove"
+        @pointerleave="handlePointerLeave"
+        @pointerdown="handlePointerDown"
+    >
         <div class="projectPanel">
             <div class="panelHeader">Projects</div>
             <template v-if="hasProjects">
@@ -86,10 +126,15 @@ const shouldShowTreePlaceholder = computed(() => hasSelectedProject.value && !sh
             <p v-else class="emptyProjects">尚未匯入任何專案。</p>
         </div>
 
-        <div v-if="shouldShowTree" class="treeArea">
+        <div
+            v-if="hasSelectedProject"
+            class="treeArea"
+            :class="{ collapsed: isTreeCollapsed }"
+        >
             <div class="panelHeader">Project Files</div>
-            <div v-if="isLoadingTree" class="loading">Loading...</div>
-            <ul v-else class="treeRoot">
+            <div v-if="isTreeCollapsed" class="collapsedNotice">檔案樹已折疊，點擊專案可再次展開。</div>
+            <div v-else-if="shouldShowTreeLoading" class="loading">Loading...</div>
+            <ul v-else-if="shouldShowTreeList" class="treeRoot">
                 <TreeNode
                     v-for="n in tree"
                     :key="n.path"
@@ -99,11 +144,12 @@ const shouldShowTreePlaceholder = computed(() => hasSelectedProject.value && !sh
                     @select="selectTreeNode"
                 />
             </ul>
+            <p v-else-if="shouldShowEmptyTree" class="emptyTree">尚未載入任何檔案。</p>
         </div>
 
-        <div v-else-if="shouldShowTreePlaceholder" class="treePlaceholder">
+        <div v-else class="treePlaceholder">
             <div class="panelHeader">Project Files</div>
-            <p class="emptyTree">載入專案中...</p>
+            <p class="emptyTree">請先選擇左側的專案以載入檔案。</p>
         </div>
     </section>
 </template>
@@ -117,10 +163,15 @@ const shouldShowTreePlaceholder = computed(() => hasSelectedProject.value && !sh
     min-height: 0;
     background: #202020;
     border: 1px solid #323232;
-    border-radius: 10px;
+    border-radius: 0;
     padding: 16px;
     box-sizing: border-box;
     overflow: hidden;
+    position: relative;
+}
+
+.panelRail--resizeEdge {
+    cursor: col-resize;
 }
 
 .panelHeader {
@@ -230,6 +281,10 @@ const shouldShowTreePlaceholder = computed(() => hasSelectedProject.value && !sh
     min-height: 0;
 }
 
+.treeArea.collapsed {
+    justify-content: flex-start;
+}
+
 .treeArea .panelHeader,
 .treePlaceholder .panelHeader {
     margin-bottom: 12px;
@@ -243,6 +298,12 @@ const shouldShowTreePlaceholder = computed(() => hasSelectedProject.value && !sh
 .emptyTree {
     margin: 0;
     color: rgba(255, 255, 255, 0.7);
+}
+
+.collapsedNotice {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.7);
+    line-height: 1.4;
 }
 
 .treeArea .treeRoot {

@@ -91,6 +91,7 @@ const chatResizeState = reactive({
     }
 });
 const hasInitializedChatWindow = ref(false);
+const isTreeCollapsed = ref(false);
 const hasActiveProject = computed(() => {
     const selectedId = selectedProjectId.value;
     if (selectedId === null || selectedId === undefined) return false;
@@ -153,6 +154,7 @@ async function ensureActiveProject() {
     }
 
     if (!tree.value.length && !isLoadingTree.value) {
+        isTreeCollapsed.value = false;
         await openProject(current);
     }
 }
@@ -165,13 +167,32 @@ watch(
     { immediate: true }
 );
 
+watch(selectedProjectId, (projectId) => {
+    if (projectId === null || projectId === undefined) {
+        isTreeCollapsed.value = false;
+    }
+});
+
 function handleSelectProject(project) {
     if (!project) return;
     const currentId = selectedProjectId.value;
+    const treeHasNodes = Array.isArray(tree.value) && tree.value.length > 0;
     if (currentId === project.id) {
-        collapseProject();
+        if (isTreeCollapsed.value) {
+            isTreeCollapsed.value = false;
+            if (!treeHasNodes && !isLoadingTree.value) {
+                openProject(project);
+            }
+        } else {
+            if (!isLoadingTree.value && !treeHasNodes) {
+                openProject(project);
+            } else {
+                isTreeCollapsed.value = true;
+            }
+        }
         return;
     }
+    isTreeCollapsed.value = false;
     openProject(project);
 }
 
@@ -425,14 +446,14 @@ onBeforeUnmount(() => {
                 :selected-project-id="selectedProjectId"
                 :on-select-project="handleSelectProject"
                 :on-delete-project="deleteProject"
+                :is-tree-collapsed="isTreeCollapsed"
                 :tree="tree"
                 :active-tree-path="activeTreePath"
                 :is-loading-tree="isLoadingTree"
                 :open-node="openNode"
                 :select-tree-node="selectTreeNode"
+                @resize-start="startPreviewResize"
             />
-
-            <div v-if="hasActiveProject" class="paneDivider" @pointerdown="startPreviewResize"></div>
 
             <section v-if="hasActiveProject" class="workSpace">
                 <template v-if="previewing.kind && previewing.kind !== 'error'">
@@ -623,29 +644,16 @@ body,
     display: flex;
     flex-direction: row;
     align-items: stretch;
-    gap: 16px;
     flex: 1 1 auto;
     min-height: 0;
     background-color: #1e1e1e;
-    padding: 16px;
+    padding: 0;
     overflow: hidden;
 }
 
 
 .mainContent > * {
     min-height: 0;
-}
-
-.paneDivider {
-    flex: 0 0 6px;
-    cursor: col-resize;
-    background: linear-gradient(180deg, rgba(59, 130, 246, .25), rgba(14, 165, 233, 0));
-    border-radius: 8px;
-    transition: background .2s ease;
-}
-
-.paneDivider:hover {
-    background: linear-gradient(180deg, rgba(59, 130, 246, .45), rgba(14, 165, 233, .15));
 }
 
 @media (max-width: 900px) {
