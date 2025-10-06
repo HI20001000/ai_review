@@ -71,6 +71,19 @@ const {
 
 const { previewing } = preview;
 
+const previewLineItems = computed(() => {
+    if (previewing.value.kind !== "text") return [];
+    const text = previewing.value.text ?? "";
+    const lines = text.split(/\r\n|\r|\n/);
+    if (lines.length === 0) {
+        return [{ number: 1, content: "\u00A0" }];
+    }
+    return lines.map((line, index) => ({
+        number: index + 1,
+        content: line === "" ? "\u00A0" : line
+    }));
+});
+
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const isChatWindowOpen = ref(false);
@@ -956,8 +969,17 @@ onBeforeUnmount(() => {
                         <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
                     </div>
 
-                    <div v-if="previewing.kind === 'text'" class="pvBox">
-                        <pre class="pvPre">{{ previewing.text }}</pre>
+                    <div v-if="previewing.kind === 'text'" class="pvBox codeBox">
+                        <div class="codeScroll">
+                            <div
+                                v-for="line in previewLineItems"
+                                :key="line.number"
+                                class="codeLine"
+                            >
+                                <span class="codeLineNo">{{ line.number }}</span>
+                                <span class="codeLineContent" v-text="line.content"></span>
+                            </div>
+                        </div>
                     </div>
 
                     <div v-else-if="previewing.kind === 'image'" class="pvBox imgBox">
@@ -1406,17 +1428,43 @@ body,
     display: flex;
 }
 
-.pvPre {
-    margin: 0;
+.pvBox.codeBox {
+    padding: 0;
+    overflow: hidden;
+}
+
+.codeScroll {
     flex: 1 1 auto;
-    min-width: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
+    overflow: auto;
     font-family: Consolas, "Courier New", monospace;
     font-size: 13px;
     line-height: 1.45;
     color: #d1d5db;
-    overflow: auto;
+    background: #1b1b1b;
+}
+
+.codeLine {
+    display: flex;
+    min-width: max-content;
+}
+
+.codeLineNo {
+    flex: 0 0 auto;
+    width: 48px;
+    padding: 0 12px;
+    text-align: right;
+    color: #6b7280;
+    background: #141414;
+    border-right: 1px solid #2f2f2f;
+    user-select: none;
+    font-variant-numeric: tabular-nums;
+}
+
+.codeLineContent {
+    flex: 1 1 auto;
+    padding: 0 12px;
+    white-space: pre;
+    min-width: max-content;
 }
 
 .modalBackdrop {
