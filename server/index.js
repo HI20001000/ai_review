@@ -1,13 +1,3 @@
-if (typeof process.loadEnvFile === "function") {
-    try {
-        process.loadEnvFile();
-    } catch (error) {
-        if (error?.code !== "ENOENT") {
-            console.warn("Failed to load .env file", error?.message || error);
-        }
-    }
-}
-
 import express from "express";
 import pool from "./lib/db.js";
 import { ensureSchema } from "./lib/ensureSchema.js";

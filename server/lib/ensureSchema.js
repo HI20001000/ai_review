@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import pool from "./db.js";
+import pool, { getPoolConfigSummary } from "./db.js";
 
 function stripComments(sql) {
     return sql
@@ -39,6 +39,12 @@ export async function ensureSchema({ logger } = {}) {
     const schemaPath = resolve(currentDir, "../sql/schema.sql");
     const sql = await readFile(schemaPath, "utf8");
     const statements = splitStatements(sql);
+
+    const summary = getPoolConfigSummary();
+    info(
+        `[schema] Using connection host=${summary.host} port=${summary.port} user=${summary.user} ` +
+            `database=${summary.database} password=${summary.hasPassword ? "set" : "empty"}`
+    );
 
     for (const statement of statements) {
         const preview = formatStatement(statement);

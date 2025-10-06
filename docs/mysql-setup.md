@@ -87,3 +87,18 @@ Vite 會在開發模式讀取 `.env.local`、`.env.development` 等檔案；若�
 3. API 伺服器啟動時的日誌是否顯示 `MySQL schema ensured successfully.`；如果沒有，請檢查使用者帳號是否具有 `CREATE TABLE` 權限，或手動執行 `schema.sql`。
 
 完成以上檢查後，再次重啟 API 伺服器，錯誤即可排除。
+
+## 8. 排錯：出現「Access denied for user '...' (using password: NO)」
+
+如果初始化或啟動時看到 `ER_ACCESS_DENIED_ERROR`，且訊息中寫著 `using password: NO`，代表 Node.js 並沒有從環境變數取得密碼。請檢查下列步驟：
+
+1. 確認 `.env` 檔案中 `MYSQL_PASSWORD` 已填入正確的密碼，若密碼包含特殊符號可使用引號包起來（例如 `MYSQL_PASSWORD="p@ss word"`）。
+2. `npm run db:init` 與 `npm run server` 會在日誌中列印目前使用的主機、使用者、資料庫與「password=set/empty」提示，可用來確認是否成功載入 `.env`。
+3. 若您透過 shell 直接匯出環境變數，請重新開啟終端或確保在執行指令的同一個視窗中匯出。例如：
+
+   ```bash
+   export MYSQL_PASSWORD=your-password
+   npm run db:init
+   ```
+
+完成後重新執行初始化或啟動流程，即可使用帶密碼的帳號連線。
