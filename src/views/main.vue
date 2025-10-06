@@ -36,6 +36,7 @@ const {
     loadProjectsFromDB,
     cleanupLegacyHandles,
     openProject,
+    collapseProject,
     deleteProject,
     handleDrop,
     handleDragOver,
@@ -166,6 +167,11 @@ watch(
 
 function handleSelectProject(project) {
     if (!project) return;
+    const currentId = selectedProjectId.value;
+    if (currentId === project.id) {
+        collapseProject();
+        return;
+    }
     openProject(project);
 }
 
