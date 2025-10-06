@@ -36,6 +36,7 @@ const {
     loadProjectsFromDB,
     cleanupLegacyHandles,
     openProject,
+    collapseProject,
     deleteProject,
     handleDrop,
     handleDragOver,
