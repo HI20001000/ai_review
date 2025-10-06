@@ -46,6 +46,10 @@ const props = defineProps({
     isTreeCollapsed: {
         type: Boolean,
         default: false
+    },
+    showContent: {
+        type: Boolean,
+        default: true
     }
 });
 
@@ -98,58 +102,65 @@ function handlePointerDown(event) {
         @pointerleave="handlePointerLeave"
         @pointerdown="handlePointerDown"
     >
-        <div class="projectPanel">
-            <div class="panelHeader">Projects</div>
-            <template v-if="hasProjects">
-                <ul class="projectList">
-                    <li
-                        v-for="p in projects"
-                        :key="p.id"
-                        :class="['projectItem', { active: p.id === selectedProjectId }]"
-                    >
-                        <div class="projectHeader" @click="onSelectProject(p)">
-                            <span class="projName">{{ p.name }}</span>
-                            <span class="rightSide">
-                                <span class="badge" :title="p.mode">{{ p.mode }}</span>
-                                <button
-                                    class="delBtn"
-                                    title="Delete project (DB only)"
-                                    @click.stop="onDeleteProject($event, p)"
-                                >
-                                    ❌
-                                </button>
-                            </span>
-                        </div>
-                    </li>
+        <template v-if="showContent">
+            <div class="projectPanel">
+                <div class="panelHeader">Projects</div>
+                <template v-if="hasProjects">
+                    <ul class="projectList">
+                        <li
+                            v-for="p in projects"
+                            :key="p.id"
+                            :class="['projectItem', { active: p.id === selectedProjectId }]"
+                        >
+                            <div class="projectHeader" @click="onSelectProject(p)">
+                                <span class="projName">{{ p.name }}</span>
+                                <span class="rightSide">
+                                    <span class="badge" :title="p.mode">{{ p.mode }}</span>
+                                    <button
+                                        class="delBtn"
+                                        title="Delete project (DB only)"
+                                        @click.stop="onDeleteProject($event, p)"
+                                    >
+                                        ❌
+                                    </button>
+                                </span>
+                            </div>
+                        </li>
+                    </ul>
+                </template>
+                <p v-else class="emptyProjects">尚未匯入任何專案。</p>
+            </div>
+
+            <div
+                v-if="hasSelectedProject"
+                class="treeArea"
+                :class="{ collapsed: isTreeCollapsed }"
+            >
+                <div class="panelHeader">Project Files</div>
+                <div v-if="isTreeCollapsed" class="collapsedNotice">檔案樹已折疊，點擊專案可再次展開。</div>
+                <div v-else-if="shouldShowTreeLoading" class="loading">Loading...</div>
+                <ul v-else-if="shouldShowTreeList" class="treeRoot">
+                    <TreeNode
+                        v-for="n in tree"
+                        :key="n.path"
+                        :node="n"
+                        :active-path="activeTreePath"
+                        @open="openNode"
+                        @select="selectTreeNode"
+                    />
                 </ul>
-            </template>
-            <p v-else class="emptyProjects">尚未匯入任何專案。</p>
-        </div>
+                <p v-else-if="shouldShowEmptyTree" class="emptyTree">尚未載入任何檔案。</p>
+            </div>
 
-        <div
-            v-if="hasSelectedProject"
-            class="treeArea"
-            :class="{ collapsed: isTreeCollapsed }"
-        >
-            <div class="panelHeader">Project Files</div>
-            <div v-if="isTreeCollapsed" class="collapsedNotice">檔案樹已折疊，點擊專案可再次展開。</div>
-            <div v-else-if="shouldShowTreeLoading" class="loading">Loading...</div>
-            <ul v-else-if="shouldShowTreeList" class="treeRoot">
-                <TreeNode
-                    v-for="n in tree"
-                    :key="n.path"
-                    :node="n"
-                    :active-path="activeTreePath"
-                    @open="openNode"
-                    @select="selectTreeNode"
-                />
-            </ul>
-            <p v-else-if="shouldShowEmptyTree" class="emptyTree">尚未載入任何檔案。</p>
-        </div>
+            <div v-else class="treePlaceholder">
+                <div class="panelHeader">Project Files</div>
+                <p class="emptyTree">請先選擇左側的專案以載入檔案。</p>
+            </div>
+        </template>
 
-        <div v-else class="treePlaceholder">
-            <div class="panelHeader">Project Files</div>
-            <p class="emptyTree">請先選擇左側的專案以載入檔案。</p>
+        <div v-else class="panelEmpty">
+            <div class="panelHeader">工具列</div>
+            <p class="emptyTree">選擇左側的工具以顯示內容。</p>
         </div>
     </section>
 </template>
@@ -164,7 +175,6 @@ function handlePointerDown(event) {
     background: #202020;
     border: 1px solid #323232;
     border-radius: 0;
-    padding: 16px;
     box-sizing: border-box;
     overflow: hidden;
     position: relative;
@@ -279,6 +289,21 @@ function handlePointerDown(event) {
     display: flex;
     flex-direction: column;
     min-height: 0;
+}
+
+.panelEmpty {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: #252526;
+    border: 1px solid #323232;
+    border-radius: 0;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    text-align: center;
 }
 
 .treeArea.collapsed {

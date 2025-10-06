@@ -73,6 +73,7 @@ const { previewing } = preview;
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const isChatWindowOpen = ref(false);
+const activeRailTool = ref("projects");
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
 const chatDragState = reactive({ active: false, offsetX: 0, offsetY: 0 });
 const chatResizeState = reactive({
@@ -92,10 +93,15 @@ const chatResizeState = reactive({
 });
 const hasInitializedChatWindow = ref(false);
 const isTreeCollapsed = ref(false);
-const middlePaneStyle = computed(() => ({
-    flex: `0 0 ${middlePaneWidth.value}px`,
-    width: `${middlePaneWidth.value}px`
-}));
+const isProjectToolActive = computed(() => activeRailTool.value === "projects");
+const isReportToolActive = computed(() => activeRailTool.value === "reports");
+const middlePaneStyle = computed(() => {
+    const width = isProjectToolActive.value ? middlePaneWidth.value : 0;
+    return {
+        flex: `0 0 ${width}px`,
+        width: `${width}px`
+    };
+});
 
 const chatWindowStyle = computed(() => ({
     width: `${chatWindowState.width}px`,
@@ -184,6 +190,14 @@ function handleSelectProject(project) {
     }
     isTreeCollapsed.value = false;
     openProject(project);
+}
+
+function toggleProjectTool() {
+    activeRailTool.value = isProjectToolActive.value ? null : "projects";
+}
+
+function toggleReportTool() {
+    activeRailTool.value = isReportToolActive.value ? null : "reports";
 }
 
 function clamp(value, min, max) {
@@ -430,6 +444,40 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="mainContent" ref="mainContentRef">
+            <nav class="toolColumn">
+                <button
+                    type="button"
+                    class="toolColumn_btn"
+                    :class="{ active: isProjectToolActive }"
+                    @click="toggleProjectTool"
+                    :aria-pressed="isProjectToolActive"
+                    title="Projects"
+                >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="5" width="18" height="14" rx="2" ry="2" fill="currentColor" opacity="0.18" />
+                        <path
+                            d="M5 7h5l1.5 2H19v8H5V7Z"
+                            fill="currentColor"
+                        />
+                    </svg>
+                </button>
+                <button
+                    type="button"
+                    class="toolColumn_btn"
+                    :class="{ active: isReportToolActive }"
+                    @click="toggleReportTool"
+                    :aria-pressed="isReportToolActive"
+                    title="報告審查"
+                >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="4" y="3" width="16" height="18" rx="2" ry="2" fill="currentColor" opacity="0.18" />
+                        <path
+                            d="M8 7h8v2H8V7Zm0 4h8v2H8v-2Zm0 4h5v2H8v-2Z"
+                            fill="currentColor"
+                        />
+                    </svg>
+                </button>
+            </nav>
             <PanelRail
                 :style-width="middlePaneStyle"
                 :projects="projects"
@@ -437,6 +485,7 @@ onBeforeUnmount(() => {
                 :on-select-project="handleSelectProject"
                 :on-delete-project="deleteProject"
                 :is-tree-collapsed="isTreeCollapsed"
+                :show-content="isProjectToolActive"
                 :tree="tree"
                 :active-tree-path="activeTreePath"
                 :is-loading-tree="isLoadingTree"
@@ -641,6 +690,55 @@ body,
     overflow: hidden;
 }
 
+.toolColumn {
+    flex: 0 0 64px;
+    width: 64px;
+    background: #191919;
+    border-right: 1px solid #323232;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 10px;
+    box-sizing: border-box;
+}
+
+.toolColumn_btn {
+    width: 44px;
+    height: 44px;
+    border: 1px solid #3d3d3d;
+    background: #262626;
+    color: #cbd5f5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    padding: 0;
+}
+
+.toolColumn_btn svg {
+    width: 22px;
+    height: 22px;
+}
+
+.toolColumn_btn:hover {
+    background: #2f2f2f;
+    border-color: #4b5563;
+    color: #e0f2fe;
+    transform: translateY(-1px);
+}
+
+.toolColumn_btn.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.25), rgba(14, 165, 233, 0.25));
+    border-color: rgba(14, 165, 233, 0.6);
+    color: #e0f2fe;
+}
+
+.toolColumn_btn:focus-visible {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
+}
 
 .mainContent > * {
     min-height: 0;
@@ -649,6 +747,17 @@ body,
 @media (max-width: 900px) {
     .mainContent {
         flex-direction: column;
+    }
+    .toolColumn {
+        flex-direction: row;
+        width: 100%;
+        flex: 0 0 auto;
+        border-right: none;
+        border-bottom: 1px solid #323232;
+        justify-content: flex-start;
+    }
+    .toolColumn_btn {
+        transform: none;
     }
     .workSpace {
         width: 100%;
@@ -720,6 +829,7 @@ body,
     font-size: 13px;
     line-height: 1.45;
     color: #d1d5db;
+    overflow: auto;
 }
 
 .modalBackdrop {
