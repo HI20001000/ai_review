@@ -243,15 +243,23 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
 
             payloadMessages.push(...conversation);
 
+            const requestBody = {
+                model: MODEL_ID,
+                messages: payloadMessages,
+                max_tokens: MAX_TOKENS,
+                temperature: TEMPERATURE
+            };
+
+            try {
+                console.log("[ChatAI] Dispatch payload:", JSON.stringify(requestBody, null, 2));
+            } catch (logError) {
+                console.log("[ChatAI] Dispatch payload (object):", requestBody);
+            }
+
             const response = await fetch(API_ENDPOINT, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    model: MODEL_ID,
-                    messages: payloadMessages,
-                    max_tokens: MAX_TOKENS,
-                    temperature: TEMPERATURE
-                })
+                body: JSON.stringify(requestBody)
             });
 
             if (!response.ok) {
