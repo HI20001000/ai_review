@@ -75,6 +75,9 @@ const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
+const reportReviewRef = ref(null);
+const reportSidebarWidth = ref(320);
+const isReportSidebarResizing = ref(false);
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
 const chatDragState = reactive({ active: false, offsetX: 0, offsetY: 0 });
 const chatResizeState = reactive({
@@ -164,6 +167,11 @@ const middlePaneStyle = computed(() => {
     };
 });
 
+const reportSidebarStyle = computed(() => ({
+    flex: `0 0 ${reportSidebarWidth.value}px`,
+    width: `${reportSidebarWidth.value}px`
+}));
+
 const chatWindowStyle = computed(() => ({
     width: `${chatWindowState.width}px`,
     height: `${chatWindowState.height}px`,
@@ -192,6 +200,14 @@ watch(isChatWindowOpen, (visible) => {
         });
     } else {
         closeAssistantSession();
+    }
+});
+
+watch(isReportToolActive, (active) => {
+    if (active) {
+        nextTick(() => {
+            clampReportSidebarWidth();
+        });
     }
 });
 
@@ -579,6 +595,55 @@ function startPreviewResize(event) {
     window.addEventListener("pointercancel", stop);
 }
 
+const REPORT_SIDEBAR_MIN_WIDTH = 260;
+const REPORT_VIEWER_MIN_WIDTH = 360;
+
+function getReportSidebarBounds() {
+    const reviewEl = reportReviewRef.value;
+    if (!reviewEl) return null;
+    const rect = reviewEl.getBoundingClientRect();
+    if (!rect?.width) return null;
+    const min = REPORT_SIDEBAR_MIN_WIDTH;
+    const max = Math.max(min, rect.width - REPORT_VIEWER_MIN_WIDTH);
+    return { min, max };
+}
+
+function clampReportSidebarWidth() {
+    const bounds = getReportSidebarBounds();
+    if (!bounds) return;
+    reportSidebarWidth.value = clamp(reportSidebarWidth.value, bounds.min, bounds.max);
+}
+
+function startReportSidebarResize(event) {
+    if (event.button !== 0 && event.pointerType !== "touch") return;
+    event.preventDefault();
+
+    const bounds = getReportSidebarBounds();
+    if (!bounds) return;
+
+    const startX = event.clientX;
+    const startWidth = reportSidebarWidth.value;
+    isReportSidebarResizing.value = true;
+
+    const handleMove = (pointerEvent) => {
+        const delta = pointerEvent.clientX - startX;
+        const currentBounds = getReportSidebarBounds() || bounds;
+        const nextWidth = clamp(startWidth + delta, currentBounds.min, currentBounds.max);
+        reportSidebarWidth.value = nextWidth;
+    };
+
+    const stop = () => {
+        isReportSidebarResizing.value = false;
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+}
+
 async function handleAddActiveContext() {
     const added = await addActiveNode();
     if (added) {
@@ -733,10 +798,12 @@ onMounted(async () => {
     updateCapabilityFlags();
     await loadProjectsFromDB();
     window.addEventListener("resize", ensureChatWindowInView);
+    window.addEventListener("resize", clampReportSidebarWidth);
 });
 
 onBeforeUnmount(() => {
     window.removeEventListener("resize", ensureChatWindowInView);
+    window.removeEventListener("resize", clampReportSidebarWidth);
     stopChatDrag();
     stopChatResize();
 });
@@ -831,8 +898,8 @@ onBeforeUnmount(() => {
 
             <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive }">
                 <template v-if="isReportToolActive">
-                    <div class="reportReview">
-                        <aside class="reportProjects">
+                    <div class="reportReview" ref="reportReviewRef">
+                        <aside class="reportProjects" :style="reportSidebarStyle">
                             <div class="panelHeader">代碼審查</div>
                             <template v-if="reportProjectEntries.length">
                                 <ul class="reportProjectList">
@@ -878,6 +945,11 @@ onBeforeUnmount(() => {
                             </template>
                             <p v-else class="emptyProjects">尚未匯入任何專案。</p>
                         </aside>
+                        <div
+                            class="reportDivider"
+                            :class="{ 'reportDivider--active': isReportSidebarResizing }"
+                            @pointerdown="startReportSidebarResize"
+                        ></div>
                         <section class="reportViewer">
                             <div class="panelHeader">報告檢視</div>
                             <template v-if="hasReadyReports">
@@ -1247,20 +1319,38 @@ body,
 .reportReview {
     flex: 1 1 auto;
     display: flex;
-    gap: 12px;
+    gap: 0;
     min-height: 0;
+    min-width: 0;
+    align-items: stretch;
+}
+
+.reportDivider {
+    flex: 0 0 8px;
+    cursor: col-resize;
+    background: #1a1a1a;
+    border-left: 1px solid #323232;
+    border-right: 1px solid #323232;
+    margin: 0 4px;
+}
+
+.reportDivider--active {
+    background: #1f2d3c;
+    border-color: #355070;
 }
 
 .reportProjects {
-    flex: 0 0 320px;
+    flex: 0 0 auto;
     display: flex;
     flex-direction: column;
     gap: 16px;
     background: #191919;
     border: 1px solid #323232;
-    border-radius: 6px;
     padding: 16px;
     overflow-y: auto;
+    border-radius: 0;
+    box-sizing: border-box;
+    min-width: 260px;
 }
 
 .panelHeader {
@@ -1280,8 +1370,8 @@ body,
 
 .reportProjectItem {
     border: 1px solid #2f2f2f;
-    border-radius: 6px;
-    background: #101010;
+    border-radius: 0;
+    background: #202020;
     padding: 12px;
     display: flex;
     flex-direction: column;
@@ -1303,7 +1393,7 @@ body,
 .reportRetryBtn {
     margin-left: auto;
     padding: 4px 10px;
-    border-radius: 4px;
+    border-radius: 0;
     border: 1px solid rgba(239, 68, 68, 0.5);
     background: rgba(239, 68, 68, 0.1);
     color: #fca5a5;
@@ -1330,7 +1420,7 @@ body,
 .reportActionBtn {
     flex: 0 0 auto;
     padding: 6px 12px;
-    border-radius: 4px;
+    border-radius: 0;
     border: 1px solid #2563eb;
     background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(14, 165, 233, 0.18));
     color: #bfdbfe;
@@ -1450,7 +1540,7 @@ body,
 .reportTreeToggle {
     width: 24px;
     height: 24px;
-    border-radius: 4px;
+    border-radius: 0;
     border: 1px solid #2f2f2f;
     background: #1f2937;
     color: #cbd5f5;
@@ -1504,9 +1594,11 @@ body,
     gap: 16px;
     background: #1b1b1b;
     border: 1px solid #2f2f2f;
-    border-radius: 6px;
+    border-radius: 0;
     padding: 16px;
     min-width: 0;
+    box-sizing: border-box;
+    min-width: 360px;
 }
 
 .reportTabs {
@@ -1517,7 +1609,7 @@ body,
 
 .reportTab {
     border: 1px solid rgba(148, 163, 184, 0.4);
-    border-radius: 4px;
+    border-radius: 0;
     background: rgba(148, 163, 184, 0.12);
     color: #e2e8f0;
     font-size: 12px;
@@ -1556,7 +1648,7 @@ body,
     flex: 1 1 auto;
     margin: 0;
     padding: 16px;
-    border-radius: 6px;
+    border-radius: 0;
     background: #111827;
     border: 1px solid #1f2937;
     color: #e5e7eb;
