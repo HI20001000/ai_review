@@ -1,6 +1,6 @@
 import { parentOf } from "../utils/path.js";
 import { ref } from "vue";
-import { idbGetAllByIndex, idbPutMany } from "../services/indexedDbService.js";
+import { fetchNodesByProject, replaceProjectNodes } from "../services/apiService.js";
 
 export function useTreeStore({
     getProjectRootHandleById,
@@ -42,7 +42,7 @@ export function useTreeStore({
     }
 
     async function loadTreeFromDB(projectId) {
-        const flat = await idbGetAllByIndex("nodes", "byProject", projectId);
+        const flat = await fetchNodesByProject(projectId);
         console.log(`[Tree] loaded flat nodes for ${projectId}:`, flat.length);
         return buildTreeFromFlat(flat);
     }
@@ -92,7 +92,7 @@ export function useTreeStore({
             }
         }
 
-        await idbPutMany("nodes", nodes);
+        await replaceProjectNodes(projectId, nodes);
     }
 
     async function openNode(node) {
