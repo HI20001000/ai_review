@@ -155,7 +155,6 @@ function handlePointerDown(event) {
     flex-direction: column;
     gap: 16px;
     background: #191919;
-    border: 1px solid #323232;
     padding: 16px;
     overflow-y: auto;
     border-radius: 0;
