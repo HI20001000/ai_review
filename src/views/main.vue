@@ -417,23 +417,6 @@ onBeforeUnmount(() => {
             </div>
             <div class="topBar_spacer"></div>
             <div class="topBar_right">
-                <button
-                    type="button"
-                    class="topBar_iconBtn"
-                    :class="{ active: isChatWindowOpen }"
-                    :disabled="isChatToggleDisabled"
-                    @click="toggleChatWindow"
-                    title="Chat AI"
-                    aria-label="Chat AI"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
-                        <path
-                            d="M8.5 8h7c.83 0 1.5.67 1.5 1.5v3c0 .83-.67 1.5-1.5 1.5h-.94l-1.8 1.88c-.31.33-.76.12-.76-.32V14.5h-3.5c-.83 0-1.5-.67-1.5-1.5v-3C7 8.67 7.67 8 8.5 8Z"
-                            fill="currentColor"
-                        />
-                    </svg>
-                </button>
                 <div class="topBar_addProject" @click="showUploadModal = true">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
                         <path d="M256,0C114.6,0,0,114.6,0,256s114.6,256,256,256s256-114.6,256-256S397.4,0,256,0z M405.3,277.3c0,11.8-9.5,21.3-21.3,21.3h-85.3V384c0,11.8-9.5,21.3-21.3,21.3h-42.7c-11.8,0-21.3-9.6-21.3-21.3v-85.3H128c-11.8,0-21.3-9.6-21.3-21.3v-42.7c0-11.8,9.5-21.3,21.3-21.3h85.3V128c0-11.8,9.5-21.3,21.3-21.3h42.7c11.8,0,21.3,9.6,21.3,21.3v85.3H384c11.8,0,21.3,9.6,21.3,21.3V277.3z" />
@@ -470,9 +453,26 @@ onBeforeUnmount(() => {
                     title="報告審查"
                 >
                     <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="4" y="3" width="16" height="18" rx="2" ry="2" fill="currentColor" opacity="0.18" />
+                        <rect x="3" y="3" width="18" height="18" rx="9" fill="currentColor" opacity="0.18" />
                         <path
-                            d="M8 7h8v2H8V7Zm0 4h8v2H8v-2Zm0 4h5v2H8v-2Z"
+                            d="M14.8 13.4a4.5 4.5 0 1 0-1.4 1.4l3.5 3.5 1.4-1.4-3.5-3.5Zm-3.8.6a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"
+                            fill="currentColor"
+                        />
+                    </svg>
+                </button>
+                <button
+                    type="button"
+                    class="toolColumn_btn toolColumn_btn--chat"
+                    :class="{ active: isChatWindowOpen }"
+                    :disabled="isChatToggleDisabled"
+                    @click="toggleChatWindow"
+                    :aria-pressed="isChatWindowOpen"
+                    title="Chat AI"
+                >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
+                        <path
+                            d="M8.5 8h7c.83 0 1.5.67 1.5 1.5v3c0 .83-.67 1.5-1.5 1.5h-.94l-1.8 1.88c-.31.33-.76.12-.76-.32V14.5h-3.5c-.83 0-1.5-.67-1.5-1.5v-3C7 8.67 7.67 8 8.5 8Z"
                             fill="currentColor"
                         />
                     </svg>
@@ -687,7 +687,30 @@ body,
     min-height: 0;
     background-color: #1e1e1e;
     padding: 0;
-    overflow: hidden;
+    height: calc(100vh - 60px);
+    max-height: calc(100vh - 60px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #3d3d3d #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar {
+    width: 10px;
+}
+
+.mainContent::-webkit-scrollbar-track {
+    background: #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #3b82f6, #0ea5e9);
+    border-radius: 999px;
+    border: 2px solid #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #60a5fa, #22d3ee);
 }
 
 .toolColumn {
@@ -718,8 +741,12 @@ body,
 }
 
 .toolColumn_btn svg {
-    width: 22px;
-    height: 22px;
+    width: 33px;
+    height: 33px;
+}
+
+.toolColumn_btn--chat {
+    margin-top: auto;
 }
 
 .toolColumn_btn:hover {
@@ -758,6 +785,10 @@ body,
     }
     .toolColumn_btn {
         transform: none;
+    }
+    .toolColumn_btn--chat {
+        margin-top: 0;
+        margin-left: auto;
     }
     .workSpace {
         width: 100%;
