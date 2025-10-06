@@ -12,11 +12,15 @@ const props = defineProps({
     getState: { type: Function, required: true },
     onGenerate: { type: Function, required: true },
     onSelect: { type: Function, required: true },
-    getStatusLabel: { type: Function, required: true }
+    getStatusLabel: { type: Function, required: true },
+    activeTarget: { type: Object, default: null }
 });
 
+const isDirectory = computed(() => props.node.type === "dir");
+const isFile = computed(() => props.node.type === "file");
+
 const fileState = computed(() => {
-    if (props.node.type !== "file") return null;
+    if (!isFile.value) return null;
     return props.getState(props.projectId, props.node.path);
 });
 
@@ -30,54 +34,106 @@ const hasChildren = computed(
 );
 
 const isNodeExpanded = computed(() => {
-    if (props.node.type !== "dir") return false;
+    if (!isDirectory.value) return false;
     return props.isExpanded(props.projectId, props.node.path);
 });
+
+const icon = computed(() => {
+    if (isDirectory.value) {
+        return isNodeExpanded.value ? "📂" : "📁";
+    }
+    return "📄";
+});
+
+const isActive = computed(() => {
+    if (!props.activeTarget || !isFile.value) return false;
+    return (
+        props.activeTarget.projectId === props.projectId &&
+        props.activeTarget.path === props.node.path
+    );
+});
+
+const statusClass = computed(() => {
+    if (!fileState.value) return "";
+    return `statusBadge--${fileState.value.status}`;
+});
+
+const isProcessing = computed(() => fileState.value?.status === "processing");
+const isReady = computed(() => fileState.value?.status === "ready");
+
+function handleToggle() {
+    if (!isDirectory.value) return;
+    props.toggle(props.projectId, props.node.path);
+}
+
+function handleRowClick() {
+    if (isDirectory.value) {
+        handleToggle();
+        return;
+    }
+    if (isReady.value) {
+        props.onSelect(props.projectId, props.node.path);
+    }
+}
+
+function handleGenerate(event) {
+    event?.stopPropagation?.();
+    props.onGenerate(props.project, props.node);
+}
+
+function handleSelect(event) {
+    event?.stopPropagation?.();
+    props.onSelect(props.projectId, props.node.path);
+}
 </script>
 
 <template>
     <li :class="['reportTreeNode', `reportTreeNode--${node.type}`]">
-        <div class="reportTreeRow">
+        <div
+            class="reportTreeRow"
+            :class="{ 'reportTreeRow--active': isActive }"
+            @click="handleRowClick"
+        >
             <button
-                v-if="node.type === 'dir'"
+                v-if="isDirectory"
                 type="button"
-                class="reportTreeToggle"
-                @click.stop="toggle(projectId, node.path)"
+                class="reportTreeCaret"
+                @click.stop="handleToggle"
+                :aria-label="isNodeExpanded ? '收合資料夾' : '展開資料夾'"
+                :aria-expanded="isNodeExpanded"
             >
                 <span v-if="isNodeExpanded">▾</span>
                 <span v-else>▸</span>
             </button>
-            <span v-else class="reportTreeSpacer"></span>
+            <span v-else class="reportTreeCaret reportTreeCaret--placeholder"></span>
+            <span class="reportTreeIcon">{{ icon }}</span>
             <span class="reportTreeLabel" :title="node.path">{{ node.name }}</span>
-            <template v-if="node.type === 'file' && fileState">
-                <span class="statusBadge" :class="`statusBadge--${fileState.status}`">{{ statusLabel }}</span>
+            <template v-if="isFile && fileState">
+                <span class="statusBadge" :class="statusClass">{{ statusLabel }}</span>
                 <button
                     type="button"
                     class="reportActionBtn"
-                    :disabled="fileState.status === 'processing'"
-                    @click.stop="onGenerate(project, node)"
+                    :disabled="isProcessing"
+                    @click="handleGenerate"
                 >
-                    <span v-if="fileState.status === 'processing'">處理中...</span>
-                    <span v-else-if="fileState.status === 'ready'">重新生成</span>
+                    <span v-if="isProcessing">處理中...</span>
+                    <span v-else-if="isReady">重新生成</span>
                     <span v-else>生成報告</span>
                 </button>
                 <button
-                    v-if="fileState.status === 'ready'"
+                    v-if="isReady"
                     type="button"
                     class="reportViewBtn"
-                    @click.stop="onSelect(projectId, node.path)"
+                    @click="handleSelect"
                 >
                     查看
                 </button>
             </template>
         </div>
-        <p
-            v-if="node.type === 'file' && fileState?.status === 'ready' && fileState?.updatedAtDisplay"
-            class="reportTimestamp"
-        >
+        <p v-if="isFile && fileState?.status === 'ready' && fileState?.updatedAtDisplay" class="reportTimestamp">
             最後更新：{{ fileState.updatedAtDisplay }}
         </p>
-        <ul v-if="node.type === 'dir' && hasChildren && isNodeExpanded" class="reportFileTreeChildren">
+        <ul v-if="isDirectory && hasChildren && isNodeExpanded" class="reportFileTreeChildren">
             <ReportTreeNode
                 v-for="child in node.children"
                 :key="child.path"
@@ -90,7 +146,151 @@ const isNodeExpanded = computed(() => {
                 :on-generate="onGenerate"
                 :on-select="onSelect"
                 :get-status-label="getStatusLabel"
+                :active-target="activeTarget"
             />
         </ul>
     </li>
 </template>
+
+<style scoped>
+.reportTreeNode {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.reportTreeRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 4px;
+    border-radius: 6px;
+    transition: background 0.2s ease;
+}
+
+.reportTreeRow:hover {
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.reportTreeRow--active {
+    background: rgba(59, 130, 246, 0.18);
+}
+
+.reportTreeCaret {
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: transparent;
+    color: #cbd5f5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 13px;
+    user-select: none;
+}
+
+.reportTreeCaret--placeholder {
+    cursor: default;
+}
+
+.reportTreeIcon {
+    width: 20px;
+    text-align: center;
+    font-size: 16px;
+}
+
+.reportTreeLabel {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 13px;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.statusBadge {
+    flex: 0 0 auto;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.statusBadge--idle {
+    background: rgba(148, 163, 184, 0.18);
+    color: #cbd5f5;
+}
+
+.statusBadge--processing {
+    background: rgba(251, 191, 36, 0.2);
+    color: #facc15;
+}
+
+.statusBadge--ready {
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+}
+
+.reportActionBtn {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    border-radius: 0;
+    border: 1px solid #2563eb;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(14, 165, 233, 0.18));
+    color: #bfdbfe;
+    font-size: 12px;
+    cursor: pointer;
+    transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.reportActionBtn:hover {
+    transform: translateY(-1px);
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.28), rgba(14, 165, 233, 0.28));
+}
+
+.reportActionBtn:disabled {
+    cursor: progress;
+    opacity: 0.7;
+    transform: none;
+    background: rgba(148, 163, 184, 0.12);
+    border-color: rgba(148, 163, 184, 0.3);
+    color: #cbd5f5;
+}
+
+.reportViewBtn {
+    margin-left: auto;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    background: rgba(148, 163, 184, 0.12);
+    color: #e2e8f0;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.reportViewBtn:hover {
+    background: rgba(148, 163, 184, 0.2);
+}
+
+.reportTimestamp {
+    margin: 0;
+    font-size: 11px;
+    color: #94a3b8;
+    padding-left: 54px;
+}
+
+.reportFileTreeChildren {
+    list-style: none;
+    margin: 4px 0 0 22px;
+    padding: 0 0 0 16px;
+    border-left: 1px dashed rgba(148, 163, 184, 0.25);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+</style>

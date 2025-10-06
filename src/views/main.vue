@@ -7,7 +7,7 @@ import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
-import ReportTreeNode from "../components/reports/ReportTreeNode.vue";
+import ReportPanel from "../components/reports/ReportPanel.vue";
 
 const preview = usePreview();
 
@@ -899,57 +899,21 @@ onBeforeUnmount(() => {
             <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive }">
                 <template v-if="isReportToolActive">
                     <div class="reportReview" ref="reportReviewRef">
-                        <aside class="reportProjects" :style="reportSidebarStyle">
-                            <div class="panelHeader">代碼審查</div>
-                            <template v-if="reportProjectEntries.length">
-                                <ul class="reportProjectList">
-                                    <li
-                                        v-for="entry in reportProjectEntries"
-                                        :key="entry.project.id"
-                                        class="reportProjectItem"
-                                    >
-                                        <div class="projectHeader">
-                                            <span class="projName" :title="entry.project.name">{{ entry.project.name }}</span>
-                                            <button
-                                                v-if="entry.cache.error"
-                                                type="button"
-                                                class="reportRetryBtn"
-                                                @click.stop="loadReportTreeForProject(entry.project.id)"
-                                            >
-                                                重新載入
-                                            </button>
-                                            <span v-else-if="entry.cache.loading" class="reportMeta">載入中…</span>
-                                        </div>
-                                        <p v-if="entry.cache.error" class="reportError">無法載入：{{ entry.cache.error }}</p>
-                                        <div v-else-if="entry.cache.loading" class="reportLoading">正在載入檔案清單…</div>
-                                        <p v-else-if="!entry.cache.nodes.length" class="reportEmpty">此專案尚未索引任何檔案。</p>
-                                        <div v-else class="reportTreeWrapper">
-                                            <ul class="reportFileTree">
-                                                <ReportTreeNode
-                                                    v-for="node in entry.cache.nodes"
-                                                    :key="node.path"
-                                                    :node="node"
-                                                    :project="entry.project"
-                                                    :project-id="normaliseProjectId(entry.project.id)"
-                                                    :is-expanded="isReportNodeExpanded"
-                                                    :toggle="toggleReportNode"
-                                                    :get-state="getReportStateForFile"
-                                                    :on-generate="generateReportForFile"
-                                                    :on-select="selectReport"
-                                                    :get-status-label="getStatusLabel"
-                                                />
-                                            </ul>
-                                        </div>
-                                    </li>
-                                </ul>
-                            </template>
-                            <p v-else class="emptyProjects">尚未匯入任何專案。</p>
-                        </aside>
-                        <div
-                            class="reportDivider"
-                            :class="{ 'reportDivider--active': isReportSidebarResizing }"
-                            @pointerdown="startReportSidebarResize"
-                        ></div>
+                        <ReportPanel
+                            :style-width="reportSidebarStyle"
+                            :entries="reportProjectEntries"
+                            :normalise-project-id="normaliseProjectId"
+                            :is-node-expanded="isReportNodeExpanded"
+                            :toggle-node="toggleReportNode"
+                            :get-report-state="getReportStateForFile"
+                            :on-generate="generateReportForFile"
+                            :on-select="selectReport"
+                            :get-status-label="getStatusLabel"
+                            :on-reload-project="loadReportTreeForProject"
+                            :active-target="activeReportTarget"
+                            :is-resizing="isReportSidebarResizing"
+                            @resize-start="startReportSidebarResize"
+                        />
                         <section class="reportViewer">
                             <div class="panelHeader">報告檢視</div>
                             <template v-if="hasReadyReports">
@@ -1325,266 +1289,10 @@ body,
     align-items: stretch;
 }
 
-.reportDivider {
-    flex: 0 0 8px;
-    cursor: col-resize;
-    background: #1a1a1a;
-    border-left: 1px solid #323232;
-    border-right: 1px solid #323232;
-    margin: 0 4px;
-}
-
-.reportDivider--active {
-    background: #1f2d3c;
-    border-color: #355070;
-}
-
-.reportProjects {
-    flex: 0 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    background: #191919;
-    border: 1px solid #323232;
-    padding: 16px;
-    overflow-y: auto;
-    border-radius: 0;
-    box-sizing: border-box;
-    min-width: 260px;
-}
-
 .panelHeader {
     font-weight: 700;
     color: #cbd5e1;
     font-size: 14px;
-}
-
-.reportProjectList {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.reportProjectItem {
-    border: 1px solid #2f2f2f;
-    border-radius: 0;
-    background: #202020;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.projectHeader {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.reportMeta {
-    margin-left: auto;
-    font-size: 12px;
-    color: #94a3b8;
-}
-
-.reportRetryBtn {
-    margin-left: auto;
-    padding: 4px 10px;
-    border-radius: 0;
-    border: 1px solid rgba(239, 68, 68, 0.5);
-    background: rgba(239, 68, 68, 0.1);
-    color: #fca5a5;
-    font-size: 12px;
-    cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease;
-}
-
-.reportRetryBtn:hover {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: rgba(248, 113, 113, 0.7);
-}
-
-.projName {
-    flex: 1 1 auto;
-    min-width: 0;
-    font-weight: 600;
-    color: #f3f4f6;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    overflow: hidden;
-}
-
-.reportActionBtn {
-    flex: 0 0 auto;
-    padding: 6px 12px;
-    border-radius: 0;
-    border: 1px solid #2563eb;
-    background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(14, 165, 233, 0.18));
-    color: #bfdbfe;
-    font-size: 12px;
-    cursor: pointer;
-    transition: transform 0.2s ease, background 0.2s ease;
-}
-
-.reportActionBtn:hover {
-    transform: translateY(-1px);
-    background: linear-gradient(135deg, rgba(37, 99, 235, 0.28), rgba(14, 165, 233, 0.28));
-}
-
-.reportActionBtn:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-    transform: none;
-}
-
-.reportLoading,
-.reportEmpty {
-    margin: 0;
-    font-size: 12px;
-    color: #94a3b8;
-}
-
-.reportError {
-    margin: 0;
-    font-size: 12px;
-    color: #fca5a5;
-}
-
-.reportStatusRow {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.statusBadge {
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    background: #374151;
-    color: #e2e8f0;
-}
-
-.statusBadge--processing {
-    background: rgba(251, 191, 36, 0.2);
-    color: #facc15;
-}
-
-.statusBadge--ready {
-    background: rgba(34, 197, 94, 0.2);
-    color: #4ade80;
-}
-
-.modeBadge {
-    padding: 2px 6px;
-    border-radius: 4px;
-    background: rgba(99, 102, 241, 0.18);
-    color: #c7d2fe;
-    font-size: 11px;
-}
-
-.reportViewBtn {
-    margin-left: auto;
-    padding: 4px 10px;
-    border-radius: 4px;
-    border: 1px solid rgba(148, 163, 184, 0.4);
-    background: rgba(148, 163, 184, 0.12);
-    color: #e2e8f0;
-    font-size: 12px;
-    cursor: pointer;
-    transition: background 0.2s ease;
-}
-
-.reportViewBtn:hover {
-    background: rgba(148, 163, 184, 0.2);
-}
-
-.reportTimestamp {
-    margin: 0;
-    font-size: 11px;
-    color: #94a3b8;
-}
-
-.reportTreeWrapper {
-    border-top: 1px solid #2f2f2f;
-    padding-top: 8px;
-}
-
-.reportFileTree {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.reportTreeNode {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.reportTreeRow {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.reportTreeToggle {
-    width: 24px;
-    height: 24px;
-    border-radius: 0;
-    border: 1px solid #2f2f2f;
-    background: #1f2937;
-    color: #cbd5f5;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease;
-}
-
-.reportTreeToggle:hover {
-    background: #374151;
-    border-color: #475569;
-}
-
-.reportTreeSpacer {
-    width: 24px;
-    height: 24px;
-}
-
-.reportTreeLabel {
-    flex: 1 1 auto;
-    min-width: 0;
-    font-size: 13px;
-    color: #e2e8f0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.reportFileTreeChildren {
-    list-style: none;
-    margin: 4px 0 0 24px;
-    padding: 0 0 0 12px;
-    border-left: 1px dashed rgba(148, 163, 184, 0.25);
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.emptyProjects {
-    margin: 0;
-    color: #94a3b8;
-    font-size: 13px;
 }
 
 .reportViewer {
