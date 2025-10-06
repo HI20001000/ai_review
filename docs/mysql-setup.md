@@ -7,11 +7,7 @@
 2. 確認您擁有可讀寫該資料庫的帳號與密碼。
 
 ## 2. 設定環境變數
-1. 複製 `.env.example` 為 `.env`：
-   ```bash
-   cp .env.example .env
-   ```
-2. 編輯 `.env`，填入您資料庫的連線資訊：
+1. 在專案根目錄建立一份 `.env` 檔案，填入您資料庫的連線資訊：
    ```ini
    MYSQL_HOST=your-db-host
    MYSQL_PORT=3306
