@@ -110,6 +110,39 @@ interface ReportResult {
 5. 完成後 `ReportPanel` 自動顯示結果摘要，並可進一步展開詳情。
 6. 使用者可將建議加入待辦、複製或導出為 Markdown/PDF。
 
+## 報告文件生成與交付
+
+為了讓審查結果能夠長期保存並易於分享，需要針對 Dify 回傳資料建立統一的文件輸出流程：
+
+1. **格式選擇**：預設生成 Markdown 供前端直接渲染，同時提供 PDF、HTML 的導出選項。導出的模板建議放在 `docs/templates/report` 目錄，可由設計師與產品協作調整。
+2. **後端匯出服務**：在 `/api/reports/:id/export` 加入 `format` 查詢參數，後端負責使用如 `markdown-pdf` 或 `Puppeteer` 轉檔，避免在瀏覽器端增加依賴。
+3. **檔案快取與存儲**：
+   * 對於一次性下載，回應 `Content-Disposition: attachment` 即可。
+   * 若需要留存歷史記錄，可將生成的檔案上傳至 S3/OSS，並在報告紀錄中追加 `downloadUrl`、`expiresAt` 欄位。
+4. **文件結構建議**：
+   * 標題：包含專案、分支、提交資訊與產生時間。
+   * 摘要：Dify 回傳的總體結論，必要時附上分數或等級。
+   * 問題清單：按照嚴重性排序，帶檔案路徑與行號，並提供可複製的修正建議段落。
+   * 指標：如複雜度、測試涵蓋率、潛在風險數量等統計資料。
+   * 附錄：放置原始輸出、模型參數等細節。
+
+### 報告生成進度體驗
+
+* 在 `ReportPanel` 中加入 **步驟指示器**：上傳上下文 → 排程 → Dify 處理 → 文件渲染 → 完成。
+* 支援背景生成：若使用者離開報告頁，`useReportStore` 仍維持輪詢/推播，並在完成時以通知提醒。
+* 失敗時提供「重新嘗試」與「下載原始 JSON」按鈕，方便工程師調查。
+
+### Dify Workflow 設計建議
+
+* 在 Workflow 中拆分節點：
+  * `ingest_context`：整理代碼片段與元數據。
+  * `analysis_chain`：可插入多模型（靜態分析、風格檢查等）。
+  * `report_writer`：產生結構化 JSON，並輸出 Markdown 文本欄位。
+* 若需要支援多語系，在 `inputs` 中加入 `locale`，並於模板內置翻譯表或指定語系模型。
+* 將 Workflow Run 的 `outputs` 轉換為 `ReportResult` 時，保留 `raw.markdown`、`raw.json` 欄位，供不同格式生成器使用。
+
+## 權限與設定
+
 ## 權限與設定
 
 * 在專案設定頁加入 Dify API Key 與 Workflow ID 的管理介面。

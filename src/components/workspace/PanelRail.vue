@@ -170,7 +170,7 @@ function handlePointerDown(event) {
     flex: 0 0 320px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 0;
     min-height: 0;
     background: #202020;
     border: 1px solid #323232;
