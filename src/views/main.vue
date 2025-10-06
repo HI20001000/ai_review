@@ -1276,6 +1276,10 @@ body,
 }
 
 .workSpace--reports {
+    padding: 0;
+    gap: 0;
+    background: #202020;
+    border-color: #323232;
     overflow: hidden;
 }
 
@@ -1299,8 +1303,8 @@ body,
     display: flex;
     flex-direction: column;
     gap: 16px;
-    background: #1b1b1b;
-    border: 1px solid #2f2f2f;
+    background: #191919;
+    border: 1px solid #323232;
     border-radius: 0;
     padding: 16px;
     min-width: 0;
