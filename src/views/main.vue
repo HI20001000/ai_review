@@ -693,7 +693,7 @@ body,
 .toolColumn {
     flex: 0 0 64px;
     width: 64px;
-    background: #191919;
+    background: #252526;
     border-right: 1px solid #323232;
     display: flex;
     flex-direction: column;

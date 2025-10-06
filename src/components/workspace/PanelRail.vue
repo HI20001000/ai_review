@@ -192,7 +192,7 @@ function handlePointerDown(event) {
 
 .projectPanel {
     flex: 0 0 auto;
-    background: #252526;
+    background: #191919;
     border: 1px solid #323232;
     border-radius: 0;
     padding: 16px;
@@ -282,7 +282,7 @@ function handlePointerDown(event) {
 .treePlaceholder {
     flex: 1 1 auto;
     min-width: 0;
-    background: #252526;
+    background: #191919;
     border: 1px solid #323232;
     border-radius: 0;
     padding: 16px;
