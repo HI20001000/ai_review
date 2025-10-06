@@ -7,6 +7,7 @@ import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
+import ReportPanel from "../components/reports/ReportPanel.vue";
 
 const preview = usePreview();
 
@@ -74,6 +75,9 @@ const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
+const reportReviewRef = ref(null);
+const reportSidebarWidth = ref(320);
+const isReportSidebarResizing = ref(false);
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
 const chatDragState = reactive({ active: false, offsetX: 0, offsetY: 0 });
 const chatResizeState = reactive({
@@ -93,8 +97,68 @@ const chatResizeState = reactive({
 });
 const hasInitializedChatWindow = ref(false);
 const isTreeCollapsed = ref(false);
+const reportStates = reactive({});
+const reportTreeCache = reactive({});
+const activeReportTarget = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
+const reportProjectEntries = computed(() => {
+    const list = Array.isArray(projects.value) ? projects.value : [];
+    return list.map((project) => {
+        const projectKey = normaliseProjectId(project.id);
+        return {
+            project,
+            cache: reportTreeCache[projectKey] || {
+                nodes: [],
+                loading: false,
+                error: "",
+                expandedPaths: []
+            }
+        };
+    });
+});
+const readyReports = computed(() => {
+    const list = [];
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const projectMap = new Map(projectList.map((project) => [String(project.id), project]));
+
+    Object.entries(reportStates).forEach(([key, state]) => {
+        if (state.status !== "ready") return;
+        const parsed = parseReportKey(key);
+        const project = projectMap.get(parsed.projectId);
+        if (!project || !parsed.path) return;
+        list.push({
+            key,
+            project,
+            path: parsed.path,
+            state
+        });
+    });
+
+    list.sort((a, b) => {
+        if (a.project.name === b.project.name) return a.path.localeCompare(b.path);
+        return a.project.name.localeCompare(b.project.name);
+    });
+
+    return list;
+});
+const hasReadyReports = computed(() => readyReports.value.length > 0);
+const activeReport = computed(() => {
+    const target = activeReportTarget.value;
+    if (!target) return null;
+    const key = toReportKey(target.projectId, target.path);
+    if (!key) return null;
+    const state = reportStates[key];
+    if (!state || state.status !== "ready") return null;
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const project = projectList.find((item) => String(item.id) === target.projectId);
+    if (!project) return null;
+    return {
+        project,
+        state,
+        path: target.path
+    };
+});
 const middlePaneStyle = computed(() => {
     const width = isProjectToolActive.value ? middlePaneWidth.value : 0;
     return {
@@ -102,6 +166,11 @@ const middlePaneStyle = computed(() => {
         width: `${width}px`
     };
 });
+
+const reportSidebarStyle = computed(() => ({
+    flex: `0 0 ${reportSidebarWidth.value}px`,
+    width: `${reportSidebarWidth.value}px`
+}));
 
 const chatWindowStyle = computed(() => ({
     width: `${chatWindowState.width}px`,
@@ -131,6 +200,14 @@ watch(isChatWindowOpen, (visible) => {
         });
     } else {
         closeAssistantSession();
+    }
+});
+
+watch(isReportToolActive, (active) => {
+    if (active) {
+        nextTick(() => {
+            clampReportSidebarWidth();
+        });
     }
 });
 
@@ -200,6 +277,280 @@ function toggleReportTool() {
     activeRailTool.value = isReportToolActive.value ? null : "reports";
 }
 
+function normaliseProjectId(projectId) {
+    if (projectId === null || projectId === undefined) return "";
+    return String(projectId);
+}
+
+function toReportKey(projectId, path) {
+    const projectKey = normaliseProjectId(projectId);
+    if (!projectKey || !path) return "";
+    return `${projectKey}::${path}`;
+}
+
+function parseReportKey(key) {
+    if (!key) return { projectId: "", path: "" };
+    const index = key.indexOf("::");
+    if (index === -1) {
+        return { projectId: key, path: "" };
+    }
+    return {
+        projectId: key.slice(0, index),
+        path: key.slice(index + 2)
+    };
+}
+
+function createDefaultReportState() {
+    return {
+        status: "idle",
+        report: "",
+        updatedAt: null,
+        updatedAtDisplay: null
+    };
+}
+
+function ensureReportTreeEntry(projectId) {
+    const key = normaliseProjectId(projectId);
+    if (!key) return null;
+    if (!Object.prototype.hasOwnProperty.call(reportTreeCache, key)) {
+        reportTreeCache[key] = {
+            nodes: [],
+            loading: false,
+            error: "",
+            expandedPaths: []
+        };
+    }
+    return reportTreeCache[key];
+}
+
+function ensureFileReportState(projectId, path) {
+    const key = toReportKey(projectId, path);
+    if (!key) return null;
+    if (!Object.prototype.hasOwnProperty.call(reportStates, key)) {
+        reportStates[key] = createDefaultReportState();
+    }
+    return reportStates[key];
+}
+
+function getReportStateForFile(projectId, path) {
+    return ensureFileReportState(projectId, path) || createDefaultReportState();
+}
+
+function getStatusLabel(status) {
+    switch (status) {
+        case "processing":
+            return "處理中";
+        case "ready":
+            return "已完成";
+        default:
+            return "待生成";
+    }
+}
+
+function isReportNodeExpanded(projectId, path) {
+    const entry = ensureReportTreeEntry(projectId);
+    if (!entry) return false;
+    if (!path) return true;
+    return entry.expandedPaths.includes(path);
+}
+
+function toggleReportNode(projectId, path) {
+    const entry = ensureReportTreeEntry(projectId);
+    if (!entry || !path) return;
+    const set = new Set(entry.expandedPaths);
+    if (set.has(path)) {
+        set.delete(path);
+    } else {
+        set.add(path);
+    }
+    entry.expandedPaths = Array.from(set);
+}
+
+function collectFileNodes(nodes, bucket = []) {
+    for (const node of nodes || []) {
+        if (node.type === "file") {
+            bucket.push(node);
+        } else if (node.children && node.children.length) {
+            collectFileNodes(node.children, bucket);
+        }
+    }
+    return bucket;
+}
+
+function ensureStatesForProject(projectId, nodes) {
+    const fileNodes = collectFileNodes(nodes);
+    const validPaths = new Set();
+    for (const node of fileNodes) {
+        if (!node?.path) continue;
+        ensureFileReportState(projectId, node.path);
+        validPaths.add(node.path);
+    }
+
+    Object.keys(reportStates).forEach((key) => {
+        const parsed = parseReportKey(key);
+        if (parsed.projectId !== normaliseProjectId(projectId)) return;
+        if (parsed.path && !validPaths.has(parsed.path)) {
+            if (activeReportTarget.value &&
+                activeReportTarget.value.projectId === parsed.projectId &&
+                activeReportTarget.value.path === parsed.path) {
+                activeReportTarget.value = null;
+            }
+            delete reportStates[key];
+        }
+    });
+}
+
+async function loadReportTreeForProject(projectId) {
+    const entry = ensureReportTreeEntry(projectId);
+    if (!entry || entry.loading) return;
+    entry.loading = true;
+    entry.error = "";
+    try {
+        const nodes = await treeStore.loadTreeFromDB(projectId);
+        entry.nodes = nodes;
+        ensureStatesForProject(projectId, nodes);
+        const nextExpanded = new Set(entry.expandedPaths);
+        for (const node of nodes) {
+            if (node.type === "dir") {
+                nextExpanded.add(node.path);
+            }
+        }
+        entry.expandedPaths = Array.from(nextExpanded);
+    } catch (error) {
+        console.error("[Report] Failed to load tree for project", projectId, error);
+        entry.error = error?.message ? String(error.message) : String(error);
+    } finally {
+        entry.loading = false;
+    }
+}
+
+function selectReport(projectId, path) {
+    const key = toReportKey(projectId, path);
+    if (!key) return;
+    const state = reportStates[key];
+    if (!state || state.status !== "ready") return;
+    activeReportTarget.value = {
+        projectId: normaliseProjectId(projectId),
+        path
+    };
+}
+
+async function generateReportForFile(project, node) {
+    if (!project || !node || node.type !== "file") return;
+    const projectId = normaliseProjectId(project.id);
+    const state = ensureFileReportState(projectId, node.path);
+    if (!state || state.status === "processing") return;
+
+    state.status = "processing";
+
+    await new Promise((resolve) => setTimeout(resolve, 1800));
+
+    const completedAt = new Date();
+    state.status = "ready";
+    state.updatedAt = completedAt;
+    state.updatedAtDisplay = completedAt.toLocaleString();
+    state.report = buildReportContent(project, node, completedAt);
+
+    activeReportTarget.value = {
+        projectId,
+        path: node.path
+    };
+}
+
+function buildReportContent(project, node, completedAt) {
+    const timestamp = completedAt?.toLocaleString() ?? new Date().toLocaleString();
+    const infoLines = [
+        `# ${node?.name ?? "文件"} 審查報告`,
+        "",
+        `- 所屬專案：${project?.name ?? "專案"}`,
+        `- 文件路徑：${node?.path ?? ""}`,
+        `- 生成時間：${timestamp}`
+    ];
+    infoLines.push(
+        "",
+        "## 審查摘要",
+        "1. 整合 Dify 單文件輸出，摘錄主要風險與異常。",
+        "2. 評估程式碼風格、可維護性與測試覆蓋情況。",
+        "3. 標記需要人工複核的段落或外部依賴。",
+        "",
+        "## 後續建議",
+        "- 若檔案相依其他模組，建議同步追加審查。",
+        "- 重新生成報告時保留本次輸出以利差異比對。",
+        "- 若需更進階分析，可於 Dify 任務中追加上下文。"
+    );
+    return infoLines.join("\n");
+}
+
+watch(
+    projects,
+    (list) => {
+        const projectList = Array.isArray(list) ? list : [];
+        const currentIds = new Set(projectList.map((project) => normaliseProjectId(project.id)));
+
+        projectList.forEach((project) => {
+            const entry = ensureReportTreeEntry(project.id);
+            if (isReportToolActive.value && entry && !entry.nodes.length && !entry.loading) {
+                loadReportTreeForProject(project.id);
+            }
+        });
+
+        Object.keys(reportTreeCache).forEach((projectId) => {
+            if (!currentIds.has(projectId)) {
+                delete reportTreeCache[projectId];
+            }
+        });
+
+        Object.keys(reportStates).forEach((key) => {
+            const parsed = parseReportKey(key);
+            if (!currentIds.has(parsed.projectId)) {
+                if (activeReportTarget.value &&
+                    activeReportTarget.value.projectId === parsed.projectId &&
+                    activeReportTarget.value.path === parsed.path) {
+                    activeReportTarget.value = null;
+                }
+                delete reportStates[key];
+            }
+        });
+    },
+    { immediate: true, deep: true }
+);
+
+watch(
+    isReportToolActive,
+    (active) => {
+        if (!active) return;
+        const list = Array.isArray(projects.value) ? projects.value : [];
+        list.forEach((project) => {
+            const entry = ensureReportTreeEntry(project.id);
+            if (entry && !entry.nodes.length && !entry.loading) {
+                loadReportTreeForProject(project.id);
+            }
+        });
+    }
+);
+
+watch(
+    readyReports,
+    (list) => {
+        if (!list.length) {
+            activeReportTarget.value = null;
+            return;
+        }
+        const target = activeReportTarget.value;
+        const hasActive = target
+            ? list.some((entry) => normaliseProjectId(entry.project.id) === target.projectId && entry.path === target.path)
+            : false;
+        if (!hasActive) {
+            const next = list[0];
+            activeReportTarget.value = {
+                projectId: normaliseProjectId(next.project.id),
+                path: next.path
+            };
+        }
+    },
+    { immediate: true }
+);
+
 function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
 }
@@ -234,6 +585,55 @@ function startPreviewResize(event) {
     };
 
     const stop = () => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+}
+
+const REPORT_SIDEBAR_MIN_WIDTH = 260;
+const REPORT_VIEWER_MIN_WIDTH = 360;
+
+function getReportSidebarBounds() {
+    const reviewEl = reportReviewRef.value;
+    if (!reviewEl) return null;
+    const rect = reviewEl.getBoundingClientRect();
+    if (!rect?.width) return null;
+    const min = REPORT_SIDEBAR_MIN_WIDTH;
+    const max = Math.max(min, rect.width - REPORT_VIEWER_MIN_WIDTH);
+    return { min, max };
+}
+
+function clampReportSidebarWidth() {
+    const bounds = getReportSidebarBounds();
+    if (!bounds) return;
+    reportSidebarWidth.value = clamp(reportSidebarWidth.value, bounds.min, bounds.max);
+}
+
+function startReportSidebarResize(event) {
+    if (event.button !== 0 && event.pointerType !== "touch") return;
+    event.preventDefault();
+
+    const bounds = getReportSidebarBounds();
+    if (!bounds) return;
+
+    const startX = event.clientX;
+    const startWidth = reportSidebarWidth.value;
+    isReportSidebarResizing.value = true;
+
+    const handleMove = (pointerEvent) => {
+        const delta = pointerEvent.clientX - startX;
+        const currentBounds = getReportSidebarBounds() || bounds;
+        const nextWidth = clamp(startWidth + delta, currentBounds.min, currentBounds.max);
+        reportSidebarWidth.value = nextWidth;
+    };
+
+    const stop = () => {
+        isReportSidebarResizing.value = false;
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", stop);
         window.removeEventListener("pointercancel", stop);
@@ -398,10 +798,12 @@ onMounted(async () => {
     updateCapabilityFlags();
     await loadProjectsFromDB();
     window.addEventListener("resize", ensureChatWindowInView);
+    window.addEventListener("resize", clampReportSidebarWidth);
 });
 
 onBeforeUnmount(() => {
     window.removeEventListener("resize", ensureChatWindowInView);
+    window.removeEventListener("resize", clampReportSidebarWidth);
     stopChatDrag();
     stopChatResize();
 });
@@ -417,23 +819,6 @@ onBeforeUnmount(() => {
             </div>
             <div class="topBar_spacer"></div>
             <div class="topBar_right">
-                <button
-                    type="button"
-                    class="topBar_iconBtn"
-                    :class="{ active: isChatWindowOpen }"
-                    :disabled="isChatToggleDisabled"
-                    @click="toggleChatWindow"
-                    title="Chat AI"
-                    aria-label="Chat AI"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
-                        <path
-                            d="M8.5 8h7c.83 0 1.5.67 1.5 1.5v3c0 .83-.67 1.5-1.5 1.5h-.94l-1.8 1.88c-.31.33-.76.12-.76-.32V14.5h-3.5c-.83 0-1.5-.67-1.5-1.5v-3C7 8.67 7.67 8 8.5 8Z"
-                            fill="currentColor"
-                        />
-                    </svg>
-                </button>
                 <div class="topBar_addProject" @click="showUploadModal = true">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
                         <path d="M256,0C114.6,0,0,114.6,0,256s114.6,256,256,256s256-114.6,256-256S397.4,0,256,0z M405.3,277.3c0,11.8-9.5,21.3-21.3,21.3h-85.3V384c0,11.8-9.5,21.3-21.3,21.3h-42.7c-11.8,0-21.3-9.6-21.3-21.3v-85.3H128c-11.8,0-21.3-9.6-21.3-21.3v-42.7c0-11.8,9.5-21.3,21.3-21.3h85.3V128c0-11.8,9.5-21.3,21.3-21.3h42.7c11.8,0,21.3,9.6,21.3,21.3v85.3H384c11.8,0,21.3,9.6,21.3,21.3V277.3z" />
@@ -470,9 +855,26 @@ onBeforeUnmount(() => {
                     title="報告審查"
                 >
                     <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="4" y="3" width="16" height="18" rx="2" ry="2" fill="currentColor" opacity="0.18" />
+                        <rect x="3" y="3" width="18" height="18" rx="9" fill="currentColor" opacity="0.18" />
                         <path
-                            d="M8 7h8v2H8V7Zm0 4h8v2H8v-2Zm0 4h5v2H8v-2Z"
+                            d="M14.8 13.4a4.5 4.5 0 1 0-1.4 1.4l3.5 3.5 1.4-1.4-3.5-3.5Zm-3.8.6a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"
+                            fill="currentColor"
+                        />
+                    </svg>
+                </button>
+                <button
+                    type="button"
+                    class="toolColumn_btn toolColumn_btn--chat"
+                    :class="{ active: isChatWindowOpen }"
+                    :disabled="isChatToggleDisabled"
+                    @click="toggleChatWindow"
+                    :aria-pressed="isChatWindowOpen"
+                    title="Chat AI"
+                >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
+                        <path
+                            d="M8.5 8h7c.83 0 1.5.67 1.5 1.5v3c0 .83-.67 1.5-1.5 1.5h-.94l-1.8 1.88c-.31.33-.76.12-.76-.32V14.5h-3.5c-.83 0-1.5-.67-1.5-1.5v-3C7 8.67 7.67 8 8.5 8Z"
                             fill="currentColor"
                         />
                     </svg>
@@ -494,8 +896,61 @@ onBeforeUnmount(() => {
                 @resize-start="startPreviewResize"
             />
 
-            <section class="workSpace">
-                <template v-if="previewing.kind && previewing.kind !== 'error'">
+            <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive }">
+                <template v-if="isReportToolActive">
+                    <div class="reportReview" ref="reportReviewRef">
+                        <ReportPanel
+                            :style-width="reportSidebarStyle"
+                            :entries="reportProjectEntries"
+                            :normalise-project-id="normaliseProjectId"
+                            :is-node-expanded="isReportNodeExpanded"
+                            :toggle-node="toggleReportNode"
+                            :get-report-state="getReportStateForFile"
+                            :on-generate="generateReportForFile"
+                            :on-select="selectReport"
+                            :get-status-label="getStatusLabel"
+                            :on-reload-project="loadReportTreeForProject"
+                            :active-target="activeReportTarget"
+                            :is-resizing="isReportSidebarResizing"
+                            @resize-start="startReportSidebarResize"
+                        />
+                        <section class="reportViewer">
+                            <div class="panelHeader">報告檢視</div>
+                            <template v-if="hasReadyReports">
+                                <div class="reportTabs">
+                                    <button
+                                        v-for="entry in readyReports"
+                                        :key="entry.key"
+                                        type="button"
+                                        class="reportTab"
+                                        :class="{
+                                            active:
+                                                activeReport &&
+                                                normaliseProjectId(entry.project.id) === normaliseProjectId(activeReport.project.id) &&
+                                                entry.path === activeReport.path
+                                        }"
+                                        @click="selectReport(entry.project.id, entry.path)"
+                                    >
+                                        {{ entry.project.name }} / {{ entry.path }}
+                                    </button>
+                                </div>
+                                <div v-if="activeReport" class="reportViewerContent">
+                                    <h2 class="reportTitle">{{ activeReport.project.name }} / {{ activeReport.path }}</h2>
+                                    <p
+                                        v-if="activeReport.state.updatedAtDisplay"
+                                        class="reportViewerTimestamp"
+                                    >
+                                        生成時間：{{ activeReport.state.updatedAtDisplay }}
+                                    </p>
+                                    <pre class="reportBody">{{ activeReport.state.report }}</pre>
+                                </div>
+                                <div v-else class="reportViewerPlaceholder">請從左側選擇檔案報告。</div>
+                            </template>
+                            <p v-else class="reportViewerPlaceholder">尚未生成任何報告，請先於左側檔案中啟動生成。</p>
+                        </section>
+                    </div>
+                </template>
+                <template v-else-if="previewing.kind && previewing.kind !== 'error'">
                     <div class="pvHeader">
                         <div class="pvName">{{ previewing.name }}</div>
                         <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
@@ -687,7 +1142,30 @@ body,
     min-height: 0;
     background-color: #1e1e1e;
     padding: 0;
-    overflow: hidden;
+    height: calc(100vh - 60px);
+    max-height: calc(100vh - 60px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #3d3d3d #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar {
+    width: 10px;
+}
+
+.mainContent::-webkit-scrollbar-track {
+    background: #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #3b82f6, #0ea5e9);
+    border-radius: 999px;
+    border: 2px solid #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #60a5fa, #22d3ee);
 }
 
 .toolColumn {
@@ -718,8 +1196,12 @@ body,
 }
 
 .toolColumn_btn svg {
-    width: 22px;
-    height: 22px;
+    width: 33px;
+    height: 33px;
+}
+
+.toolColumn_btn--chat {
+    margin-top: auto;
 }
 
 .toolColumn_btn:hover {
@@ -759,6 +1241,10 @@ body,
     .toolColumn_btn {
         transform: none;
     }
+    .toolColumn_btn--chat {
+        margin-top: 0;
+        margin-left: auto;
+    }
     .workSpace {
         width: 100%;
         flex: 1 1 auto;
@@ -787,6 +1273,104 @@ body,
     flex-direction: column;
     gap: 12px;
     overflow: auto;
+}
+
+.workSpace--reports {
+    overflow: hidden;
+    padding: 12px;
+}
+
+.reportReview {
+    flex: 1 1 auto;
+    display: flex;
+    gap: 0;
+    min-height: 0;
+    min-width: 0;
+    align-items: stretch;
+}
+
+.panelHeader {
+    font-weight: 700;
+    color: #cbd5e1;
+    font-size: 14px;
+}
+
+.reportViewer {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    background: #1b1b1b;
+    border: 1px solid #2f2f2f;
+    border-radius: 0;
+    padding: 16px;
+    min-width: 0;
+    box-sizing: border-box;
+    min-width: 360px;
+}
+
+.reportTabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.reportTab {
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    border-radius: 0;
+    background: rgba(148, 163, 184, 0.12);
+    color: #e2e8f0;
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.reportTab.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.25), rgba(14, 165, 233, 0.25));
+    border-color: rgba(59, 130, 246, 0.5);
+}
+
+.reportViewerContent {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.reportTitle {
+    margin: 0;
+    font-size: 18px;
+    color: #f9fafb;
+}
+
+.reportViewerTimestamp {
+    margin: 0;
+    font-size: 12px;
+    color: #a5b4fc;
+}
+
+.reportBody {
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 16px;
+    border-radius: 0;
+    background: #111827;
+    border: 1px solid #1f2937;
+    color: #e5e7eb;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow: auto;
+}
+
+.reportViewerPlaceholder {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 13px;
 }
 
 .pvHeader {
