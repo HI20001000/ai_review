@@ -687,7 +687,30 @@ body,
     min-height: 0;
     background-color: #1e1e1e;
     padding: 0;
-    overflow: hidden;
+    height: calc(100vh - 60px);
+    max-height: calc(100vh - 60px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #3d3d3d #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar {
+    width: 10px;
+}
+
+.mainContent::-webkit-scrollbar-track {
+    background: #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #3b82f6, #0ea5e9);
+    border-radius: 999px;
+    border: 2px solid #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #60a5fa, #22d3ee);
 }
 
 .toolColumn {
