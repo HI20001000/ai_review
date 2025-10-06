@@ -7,6 +7,7 @@ import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
+import ReportTreeNode from "../components/reports/ReportTreeNode.vue";
 
 const preview = usePreview();
 
@@ -94,31 +95,65 @@ const chatResizeState = reactive({
 const hasInitializedChatWindow = ref(false);
 const isTreeCollapsed = ref(false);
 const reportStates = reactive({});
-const activeReportId = ref(null);
+const reportTreeCache = reactive({});
+const activeReportTarget = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
-const projectReports = computed(() => {
+const reportProjectEntries = computed(() => {
     const list = Array.isArray(projects.value) ? projects.value : [];
     return list.map((project) => {
-        const key = toReportKey(project.id);
-        ensureReportState(key);
+        const projectKey = normaliseProjectId(project.id);
         return {
             project,
-            state: reportStates[key],
-            key
+            cache: reportTreeCache[projectKey] || {
+                nodes: [],
+                loading: false,
+                error: "",
+                expandedPaths: []
+            }
         };
     });
 });
-const readyReports = computed(() => projectReports.value.filter(({ state }) => state.status === "ready"));
+const readyReports = computed(() => {
+    const list = [];
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const projectMap = new Map(projectList.map((project) => [String(project.id), project]));
+
+    Object.entries(reportStates).forEach(([key, state]) => {
+        if (state.status !== "ready") return;
+        const parsed = parseReportKey(key);
+        const project = projectMap.get(parsed.projectId);
+        if (!project || !parsed.path) return;
+        list.push({
+            key,
+            project,
+            path: parsed.path,
+            state
+        });
+    });
+
+    list.sort((a, b) => {
+        if (a.project.name === b.project.name) return a.path.localeCompare(b.path);
+        return a.project.name.localeCompare(b.project.name);
+    });
+
+    return list;
+});
 const hasReadyReports = computed(() => readyReports.value.length > 0);
 const activeReport = computed(() => {
-    const activeKey = toReportKey(activeReportId.value);
-    if (!activeKey) return null;
-    const entry = projectReports.value.find(({ key }) => key === activeKey);
-    if (!entry) return null;
+    const target = activeReportTarget.value;
+    if (!target) return null;
+    const key = toReportKey(target.projectId, target.path);
+    if (!key) return null;
+    const state = reportStates[key];
+    if (!state || state.status !== "ready") return null;
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const project = projectList.find((item) => String(item.id) === target.projectId);
+    if (!project) return null;
     return {
-        project: entry.project,
-        state: entry.state
+        project,
+        state,
+        path: target.path
     };
 });
 const middlePaneStyle = computed(() => {
@@ -226,9 +261,27 @@ function toggleReportTool() {
     activeRailTool.value = isReportToolActive.value ? null : "reports";
 }
 
-function toReportKey(id) {
-    if (id === null || id === undefined) return "";
-    return String(id);
+function normaliseProjectId(projectId) {
+    if (projectId === null || projectId === undefined) return "";
+    return String(projectId);
+}
+
+function toReportKey(projectId, path) {
+    const projectKey = normaliseProjectId(projectId);
+    if (!projectKey || !path) return "";
+    return `${projectKey}::${path}`;
+}
+
+function parseReportKey(key) {
+    if (!key) return { projectId: "", path: "" };
+    const index = key.indexOf("::");
+    if (index === -1) {
+        return { projectId: key, path: "" };
+    }
+    return {
+        projectId: key.slice(0, index),
+        path: key.slice(index + 2)
+    };
 }
 
 function createDefaultReportState() {
@@ -240,11 +293,31 @@ function createDefaultReportState() {
     };
 }
 
-function ensureReportState(key) {
-    if (!key) return;
+function ensureReportTreeEntry(projectId) {
+    const key = normaliseProjectId(projectId);
+    if (!key) return null;
+    if (!Object.prototype.hasOwnProperty.call(reportTreeCache, key)) {
+        reportTreeCache[key] = {
+            nodes: [],
+            loading: false,
+            error: "",
+            expandedPaths: []
+        };
+    }
+    return reportTreeCache[key];
+}
+
+function ensureFileReportState(projectId, path) {
+    const key = toReportKey(projectId, path);
+    if (!key) return null;
     if (!Object.prototype.hasOwnProperty.call(reportStates, key)) {
         reportStates[key] = createDefaultReportState();
     }
+    return reportStates[key];
+}
+
+function getReportStateForFile(projectId, path) {
+    return ensureFileReportState(projectId, path) || createDefaultReportState();
 }
 
 function getStatusLabel(status) {
@@ -258,17 +331,99 @@ function getStatusLabel(status) {
     }
 }
 
-function selectReport(projectId) {
-    activeReportId.value = projectId;
+function isReportNodeExpanded(projectId, path) {
+    const entry = ensureReportTreeEntry(projectId);
+    if (!entry) return false;
+    if (!path) return true;
+    return entry.expandedPaths.includes(path);
 }
 
-async function generateReportForProject(project) {
-    if (!project) return;
-    const key = toReportKey(project.id);
+function toggleReportNode(projectId, path) {
+    const entry = ensureReportTreeEntry(projectId);
+    if (!entry || !path) return;
+    const set = new Set(entry.expandedPaths);
+    if (set.has(path)) {
+        set.delete(path);
+    } else {
+        set.add(path);
+    }
+    entry.expandedPaths = Array.from(set);
+}
+
+function collectFileNodes(nodes, bucket = []) {
+    for (const node of nodes || []) {
+        if (node.type === "file") {
+            bucket.push(node);
+        } else if (node.children && node.children.length) {
+            collectFileNodes(node.children, bucket);
+        }
+    }
+    return bucket;
+}
+
+function ensureStatesForProject(projectId, nodes) {
+    const fileNodes = collectFileNodes(nodes);
+    const validPaths = new Set();
+    for (const node of fileNodes) {
+        if (!node?.path) continue;
+        ensureFileReportState(projectId, node.path);
+        validPaths.add(node.path);
+    }
+
+    Object.keys(reportStates).forEach((key) => {
+        const parsed = parseReportKey(key);
+        if (parsed.projectId !== normaliseProjectId(projectId)) return;
+        if (parsed.path && !validPaths.has(parsed.path)) {
+            if (activeReportTarget.value &&
+                activeReportTarget.value.projectId === parsed.projectId &&
+                activeReportTarget.value.path === parsed.path) {
+                activeReportTarget.value = null;
+            }
+            delete reportStates[key];
+        }
+    });
+}
+
+async function loadReportTreeForProject(projectId) {
+    const entry = ensureReportTreeEntry(projectId);
+    if (!entry || entry.loading) return;
+    entry.loading = true;
+    entry.error = "";
+    try {
+        const nodes = await treeStore.loadTreeFromDB(projectId);
+        entry.nodes = nodes;
+        ensureStatesForProject(projectId, nodes);
+        const nextExpanded = new Set(entry.expandedPaths);
+        for (const node of nodes) {
+            if (node.type === "dir") {
+                nextExpanded.add(node.path);
+            }
+        }
+        entry.expandedPaths = Array.from(nextExpanded);
+    } catch (error) {
+        console.error("[Report] Failed to load tree for project", projectId, error);
+        entry.error = error?.message ? String(error.message) : String(error);
+    } finally {
+        entry.loading = false;
+    }
+}
+
+function selectReport(projectId, path) {
+    const key = toReportKey(projectId, path);
     if (!key) return;
-    ensureReportState(key);
     const state = reportStates[key];
-    if (state.status === "processing") return;
+    if (!state || state.status !== "ready") return;
+    activeReportTarget.value = {
+        projectId: normaliseProjectId(projectId),
+        path
+    };
+}
+
+async function generateReportForFile(project, node) {
+    if (!project || !node || node.type !== "file") return;
+    const projectId = normaliseProjectId(project.id);
+    const state = ensureFileReportState(projectId, node.path);
+    if (!state || state.status === "processing") return;
 
     state.status = "processing";
 
@@ -278,35 +433,34 @@ async function generateReportForProject(project) {
     state.status = "ready";
     state.updatedAt = completedAt;
     state.updatedAtDisplay = completedAt.toLocaleString();
-    state.report = buildReportContent(project, completedAt);
+    state.report = buildReportContent(project, node, completedAt);
 
-    if (!activeReportId.value) {
-        activeReportId.value = project.id;
-    }
+    activeReportTarget.value = {
+        projectId,
+        path: node.path
+    };
 }
 
-function buildReportContent(project, completedAt) {
+function buildReportContent(project, node, completedAt) {
     const timestamp = completedAt?.toLocaleString() ?? new Date().toLocaleString();
-    const mode = project?.mode ? `專案模式：${project.mode}` : "";
     const infoLines = [
-        `# ${project?.name ?? "專案"} 審查報告`,
+        `# ${node?.name ?? "文件"} 審查報告`,
         "",
+        `- 所屬專案：${project?.name ?? "專案"}`,
+        `- 文件路徑：${node?.path ?? ""}`,
         `- 生成時間：${timestamp}`
     ];
-    if (mode) {
-        infoLines.push(`- ${mode}`);
-    }
     infoLines.push(
         "",
         "## 審查摘要",
-        "1. 整合 Dify 輸出，摘要出關鍵風險與優化建議。",
-        "2. 核查主要模組覆蓋率與測試結果，記錄異常。",
-        "3. 彙整需要人工複核的代碼區段與背景資料。",
+        "1. 整合 Dify 單文件輸出，摘錄主要風險與異常。",
+        "2. 評估程式碼風格、可維護性與測試覆蓋情況。",
+        "3. 標記需要人工複核的段落或外部依賴。",
         "",
         "## 後續建議",
-        "- 針對高風險項目安排二次審查或 Pair Review。",
-        "- 將報告同步至知識庫，方便跨團隊追蹤。",
-        "- 重新生成報告時，保留 Dify 原始輸出以利比對。"
+        "- 若檔案相依其他模組，建議同步追加審查。",
+        "- 重新生成報告時保留本次輸出以利差異比對。",
+        "- 若需更進階分析，可於 Dify 任務中追加上下文。"
     );
     return infoLines.join("\n");
 }
@@ -315,17 +469,28 @@ watch(
     projects,
     (list) => {
         const projectList = Array.isArray(list) ? list : [];
-        const currentIds = new Set(projectList.map((project) => toReportKey(project.id)));
+        const currentIds = new Set(projectList.map((project) => normaliseProjectId(project.id)));
 
         projectList.forEach((project) => {
-            const key = toReportKey(project.id);
-            ensureReportState(key);
+            const entry = ensureReportTreeEntry(project.id);
+            if (isReportToolActive.value && entry && !entry.nodes.length && !entry.loading) {
+                loadReportTreeForProject(project.id);
+            }
+        });
+
+        Object.keys(reportTreeCache).forEach((projectId) => {
+            if (!currentIds.has(projectId)) {
+                delete reportTreeCache[projectId];
+            }
         });
 
         Object.keys(reportStates).forEach((key) => {
-            if (!currentIds.has(key)) {
-                if (toReportKey(activeReportId.value) === key) {
-                    activeReportId.value = null;
+            const parsed = parseReportKey(key);
+            if (!currentIds.has(parsed.projectId)) {
+                if (activeReportTarget.value &&
+                    activeReportTarget.value.projectId === parsed.projectId &&
+                    activeReportTarget.value.path === parsed.path) {
+                    activeReportTarget.value = null;
                 }
                 delete reportStates[key];
             }
@@ -335,16 +500,36 @@ watch(
 );
 
 watch(
+    isReportToolActive,
+    (active) => {
+        if (!active) return;
+        const list = Array.isArray(projects.value) ? projects.value : [];
+        list.forEach((project) => {
+            const entry = ensureReportTreeEntry(project.id);
+            if (entry && !entry.nodes.length && !entry.loading) {
+                loadReportTreeForProject(project.id);
+            }
+        });
+    }
+);
+
+watch(
     readyReports,
     (list) => {
         if (!list.length) {
-            activeReportId.value = null;
+            activeReportTarget.value = null;
             return;
         }
-        const activeKey = toReportKey(activeReportId.value);
-        const hasActive = list.some(({ key }) => key === activeKey);
+        const target = activeReportTarget.value;
+        const hasActive = target
+            ? list.some((entry) => normaliseProjectId(entry.project.id) === target.projectId && entry.path === target.path)
+            : false;
         if (!hasActive) {
-            activeReportId.value = list[0].project.id;
+            const next = list[0];
+            activeReportTarget.value = {
+                projectId: normaliseProjectId(next.project.id),
+                path: next.path
+            };
         }
     },
     { immediate: true }
@@ -649,46 +834,45 @@ onBeforeUnmount(() => {
                     <div class="reportReview">
                         <aside class="reportProjects">
                             <div class="panelHeader">代碼審查</div>
-                            <template v-if="projectReports.length">
+                            <template v-if="reportProjectEntries.length">
                                 <ul class="reportProjectList">
                                     <li
-                                        v-for="entry in projectReports"
-                                        :key="entry.key"
+                                        v-for="entry in reportProjectEntries"
+                                        :key="entry.project.id"
                                         class="reportProjectItem"
                                     >
                                         <div class="projectHeader">
                                             <span class="projName" :title="entry.project.name">{{ entry.project.name }}</span>
                                             <button
+                                                v-if="entry.cache.error"
                                                 type="button"
-                                                class="reportActionBtn"
-                                                :disabled="entry.state.status === 'processing'"
-                                                @click.stop="generateReportForProject(entry.project)"
+                                                class="reportRetryBtn"
+                                                @click.stop="loadReportTreeForProject(entry.project.id)"
                                             >
-                                                <span v-if="entry.state.status === 'processing'">處理中...</span>
-                                                <span v-else-if="entry.state.status === 'ready'">重新生成</span>
-                                                <span v-else>生成報告</span>
+                                                重新載入
                                             </button>
+                                            <span v-else-if="entry.cache.loading" class="reportMeta">載入中…</span>
                                         </div>
-                                        <div class="reportStatusRow">
-                                            <span class="statusBadge" :class="`statusBadge--${entry.state.status}`">
-                                                {{ getStatusLabel(entry.state.status) }}
-                                            </span>
-                                            <span v-if="entry.project.mode" class="modeBadge">{{ entry.project.mode }}</span>
-                                            <button
-                                                v-if="entry.state.status === 'ready'"
-                                                type="button"
-                                                class="reportViewBtn"
-                                                @click.stop="selectReport(entry.project.id)"
-                                            >
-                                                查看報告
-                                            </button>
+                                        <p v-if="entry.cache.error" class="reportError">無法載入：{{ entry.cache.error }}</p>
+                                        <div v-else-if="entry.cache.loading" class="reportLoading">正在載入檔案清單…</div>
+                                        <p v-else-if="!entry.cache.nodes.length" class="reportEmpty">此專案尚未索引任何檔案。</p>
+                                        <div v-else class="reportTreeWrapper">
+                                            <ul class="reportFileTree">
+                                                <ReportTreeNode
+                                                    v-for="node in entry.cache.nodes"
+                                                    :key="node.path"
+                                                    :node="node"
+                                                    :project="entry.project"
+                                                    :project-id="normaliseProjectId(entry.project.id)"
+                                                    :is-expanded="isReportNodeExpanded"
+                                                    :toggle="toggleReportNode"
+                                                    :get-state="getReportStateForFile"
+                                                    :on-generate="generateReportForFile"
+                                                    :on-select="selectReport"
+                                                    :get-status-label="getStatusLabel"
+                                                />
+                                            </ul>
                                         </div>
-                                        <p
-                                            v-if="entry.state.status === 'ready' && entry.state.updatedAtDisplay"
-                                            class="reportTimestamp"
-                                        >
-                                            最後更新：{{ entry.state.updatedAtDisplay }}
-                                        </p>
                                     </li>
                                 </ul>
                             </template>
@@ -703,14 +887,19 @@ onBeforeUnmount(() => {
                                         :key="entry.key"
                                         type="button"
                                         class="reportTab"
-                                        :class="{ active: toReportKey(activeReportId) === entry.key }"
-                                        @click="selectReport(entry.project.id)"
+                                        :class="{
+                                            active:
+                                                activeReport &&
+                                                normaliseProjectId(entry.project.id) === normaliseProjectId(activeReport.project.id) &&
+                                                entry.path === activeReport.path
+                                        }"
+                                        @click="selectReport(entry.project.id, entry.path)"
                                     >
-                                        {{ entry.project.name }}
+                                        {{ entry.project.name }} / {{ entry.path }}
                                     </button>
                                 </div>
                                 <div v-if="activeReport" class="reportViewerContent">
-                                    <h2 class="reportTitle">{{ activeReport.project.name }} 審查報告</h2>
+                                    <h2 class="reportTitle">{{ activeReport.project.name }} / {{ activeReport.path }}</h2>
                                     <p
                                         v-if="activeReport.state.updatedAtDisplay"
                                         class="reportViewerTimestamp"
@@ -719,9 +908,9 @@ onBeforeUnmount(() => {
                                     </p>
                                     <pre class="reportBody">{{ activeReport.state.report }}</pre>
                                 </div>
-                                <div v-else class="reportViewerPlaceholder">請選擇左側的專案報告。</div>
+                                <div v-else class="reportViewerPlaceholder">請從左側選擇檔案報告。</div>
                             </template>
-                            <p v-else class="reportViewerPlaceholder">尚未生成任何報告，請先從左側專案按鈕啟動生成。</p>
+                            <p v-else class="reportViewerPlaceholder">尚未生成任何報告，請先於左側檔案中啟動生成。</p>
                         </section>
                     </div>
                 </template>
@@ -1105,6 +1294,29 @@ body,
     gap: 12px;
 }
 
+.reportMeta {
+    margin-left: auto;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportRetryBtn {
+    margin-left: auto;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.1);
+    color: #fca5a5;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.reportRetryBtn:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(248, 113, 113, 0.7);
+}
+
 .projName {
     flex: 1 1 auto;
     min-width: 0;
@@ -1136,6 +1348,19 @@ body,
     cursor: not-allowed;
     opacity: 0.6;
     transform: none;
+}
+
+.reportLoading,
+.reportEmpty {
+    margin: 0;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportError {
+    margin: 0;
+    font-size: 12px;
+    color: #fca5a5;
 }
 
 .reportStatusRow {
@@ -1194,6 +1419,76 @@ body,
     margin: 0;
     font-size: 11px;
     color: #94a3b8;
+}
+
+.reportTreeWrapper {
+    border-top: 1px solid #2f2f2f;
+    padding-top: 8px;
+}
+
+.reportFileTree {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.reportTreeNode {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.reportTreeRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.reportTreeToggle {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border: 1px solid #2f2f2f;
+    background: #1f2937;
+    color: #cbd5f5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.reportTreeToggle:hover {
+    background: #374151;
+    border-color: #475569;
+}
+
+.reportTreeSpacer {
+    width: 24px;
+    height: 24px;
+}
+
+.reportTreeLabel {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 13px;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.reportFileTreeChildren {
+    list-style: none;
+    margin: 4px 0 0 24px;
+    padding: 0 0 0 12px;
+    border-left: 1px dashed rgba(148, 163, 184, 0.25);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
 .emptyProjects {
