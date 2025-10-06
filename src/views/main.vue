@@ -1277,7 +1277,6 @@ body,
 
 .workSpace--reports {
     overflow: hidden;
-    padding: 12px;
 }
 
 .reportReview {
