@@ -3,11 +3,19 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import pool from "./db.js";
 
-function splitStatements(sql) {
+function stripComments(sql) {
     return sql
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .split(/\r?\n/)
+        .map((line) => line.replace(/--.*$/, ""))
+        .join("\n");
+}
+
+function splitStatements(sql) {
+    return stripComments(sql)
         .split(/;\s*(?:\r?\n|$)/)
         .map((statement) => statement.trim())
-        .filter((statement) => statement.length && !statement.startsWith("--"));
+        .filter((statement) => statement.length);
 }
 
 function createLogger(logger) {

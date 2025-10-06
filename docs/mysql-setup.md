@@ -39,11 +39,18 @@ npm run server
 啟動時會自動確認資料表是否存在（參考 `server/index.js` 的 `ensureSchema` 呼叫）。
 
 ## 5. 前端連線設定
-若前端與後端不在同一個主機／Port，請設定 `VITE_API_BASE_URL` 指向後端 API，例如在 `.env` 或 `.env.local` 中加入：
-```ini
-VITE_API_BASE_URL=https://your-api-host:3001/api
+前端透過 `src/scripts/services/apiService.js` 讀取 `VITE_API_BASE_URL` 來決定 API 位址；若沒有設定，則預設以目前網頁的來源 + `/api` 為基底。
+
+若瀏覽器載入的前端與後端服務不同主機／Port，請在前端可讀取的環境檔案中設定 `VITE_API_BASE_URL`。常見做法如下：
+
+```bash
+# 以本地開發為例，在專案根目錄建立 .env.local
+echo "VITE_API_BASE_URL=https://your-api-host:3001/api" >> .env.local
 ```
-前端使用 `src/scripts/services/apiService.js` 透過 `fetch` 連線後端 API。
+
+Vite 會在開發模式讀取 `.env.local`、`.env.development` 等檔案；若您是在部署前就要寫死連線資訊，也可以直接在部署流程產生對應的環境檔案。設定後重新啟動 `npm run dev` 或重新建置前端，即可讓所有 API 呼叫指向新的後端。
+
+> **提示**：若您在本地同時啟動 `npm run dev` 與後端，還可以設定 `VITE_BACKEND_URL` 以改變 Vite 開發伺服器的 proxy 目標（預設為 `http://localhost:3001`）。
 
 ## 6. 常見 npm 指令說明
 
@@ -53,3 +60,30 @@ VITE_API_BASE_URL=https://your-api-host:3001/api
 | `npm run db:dev` | 與 `db:init` 等效，提供在開發流程中更直覺的命名。 | `node server/scripts/initDatabase.js` |
 
 完成上述步驟後，應用程式就會改為使用您指定的 MySQL 資料庫儲存專案與節點資料。
+
+## 6.1 本地開發執行順序示例
+
+若要在本機端完整啟動前後端，可依照下列順序操作：
+
+1. 設定 `.env` 與 `.env.local` 等環境檔案，確認資料庫與 API 位址皆正確。
+2. 執行 `npm run db:init`（或 `npm run db:dev`）建立 `projects` 與 `nodes` 資料表。
+3. 在第一個終端視窗啟動後端 API：
+   ```bash
+   npm run server
+   ```
+4. 在第二個終端視窗啟動前端開發伺服器：
+   ```bash
+   npm run dev
+   ```
+
+保持兩個指令持續執行，前端就會透過 `VITE_API_BASE_URL` 指向已啟動的 API 服務。
+
+## 7. 排錯：看到「Table '...projects' doesn't exist」
+
+若 API 回傳錯誤訊息 `Table 'ai_platform.projects' doesn't exist`（或其他資料庫名稱），表示已成功連線到 MySQL，但目前的 `MYSQL_DATABASE` 中尚未建立必要的資料表。請確認下列事項：
+
+1. `.env` 檔案中的 `MYSQL_DATABASE` 是否指向您初始化 schema 的那個資料庫。
+2. 是否已執行 `npm run db:init`（或 `npm run db:dev`）來套用 `server/sql/schema.sql`。
+3. API 伺服器啟動時的日誌是否顯示 `MySQL schema ensured successfully.`；如果沒有，請檢查使用者帳號是否具有 `CREATE TABLE` 權限，或手動執行 `schema.sql`。
+
+完成以上檢查後，再次重啟 API 伺服器，錯誤即可排除。

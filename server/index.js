@@ -206,7 +206,23 @@ app.delete("/api/projects/:projectId/nodes", async (req, res, next) => {
     }
 });
 
+const MISSING_TABLE_ERROR_CODE = "ER_NO_SUCH_TABLE";
+
 app.use((err, req, res, _next) => {
+    if (err?.code === MISSING_TABLE_ERROR_CODE) {
+        console.error(
+            "API error: database schema is missing required tables",
+            err
+        );
+        res.status(500).json({
+            message:
+                "Database tables are missing. Run `npm run db:init` or ensure your MySQL schema is up to date.",
+            details:
+                "Check that MYSQL_DATABASE points to the schema where the `projects` and `nodes` tables are created."
+        });
+        return;
+    }
+
     console.error("API error", err);
     res.status(500).json({ message: err.message || "Internal Server Error" });
 });
