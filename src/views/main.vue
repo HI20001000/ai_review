@@ -93,8 +93,34 @@ const chatResizeState = reactive({
 });
 const hasInitializedChatWindow = ref(false);
 const isTreeCollapsed = ref(false);
+const reportStates = reactive({});
+const activeReportId = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
+const projectReports = computed(() => {
+    const list = Array.isArray(projects.value) ? projects.value : [];
+    return list.map((project) => {
+        const key = toReportKey(project.id);
+        ensureReportState(key);
+        return {
+            project,
+            state: reportStates[key],
+            key
+        };
+    });
+});
+const readyReports = computed(() => projectReports.value.filter(({ state }) => state.status === "ready"));
+const hasReadyReports = computed(() => readyReports.value.length > 0);
+const activeReport = computed(() => {
+    const activeKey = toReportKey(activeReportId.value);
+    if (!activeKey) return null;
+    const entry = projectReports.value.find(({ key }) => key === activeKey);
+    if (!entry) return null;
+    return {
+        project: entry.project,
+        state: entry.state
+    };
+});
 const middlePaneStyle = computed(() => {
     const width = isProjectToolActive.value ? middlePaneWidth.value : 0;
     return {
@@ -199,6 +225,130 @@ function toggleProjectTool() {
 function toggleReportTool() {
     activeRailTool.value = isReportToolActive.value ? null : "reports";
 }
+
+function toReportKey(id) {
+    if (id === null || id === undefined) return "";
+    return String(id);
+}
+
+function createDefaultReportState() {
+    return {
+        status: "idle",
+        report: "",
+        updatedAt: null,
+        updatedAtDisplay: null
+    };
+}
+
+function ensureReportState(key) {
+    if (!key) return;
+    if (!Object.prototype.hasOwnProperty.call(reportStates, key)) {
+        reportStates[key] = createDefaultReportState();
+    }
+}
+
+function getStatusLabel(status) {
+    switch (status) {
+        case "processing":
+            return "處理中";
+        case "ready":
+            return "已完成";
+        default:
+            return "待生成";
+    }
+}
+
+function selectReport(projectId) {
+    activeReportId.value = projectId;
+}
+
+async function generateReportForProject(project) {
+    if (!project) return;
+    const key = toReportKey(project.id);
+    if (!key) return;
+    ensureReportState(key);
+    const state = reportStates[key];
+    if (state.status === "processing") return;
+
+    state.status = "processing";
+
+    await new Promise((resolve) => setTimeout(resolve, 1800));
+
+    const completedAt = new Date();
+    state.status = "ready";
+    state.updatedAt = completedAt;
+    state.updatedAtDisplay = completedAt.toLocaleString();
+    state.report = buildReportContent(project, completedAt);
+
+    if (!activeReportId.value) {
+        activeReportId.value = project.id;
+    }
+}
+
+function buildReportContent(project, completedAt) {
+    const timestamp = completedAt?.toLocaleString() ?? new Date().toLocaleString();
+    const mode = project?.mode ? `專案模式：${project.mode}` : "";
+    const infoLines = [
+        `# ${project?.name ?? "專案"} 審查報告`,
+        "",
+        `- 生成時間：${timestamp}`
+    ];
+    if (mode) {
+        infoLines.push(`- ${mode}`);
+    }
+    infoLines.push(
+        "",
+        "## 審查摘要",
+        "1. 整合 Dify 輸出，摘要出關鍵風險與優化建議。",
+        "2. 核查主要模組覆蓋率與測試結果，記錄異常。",
+        "3. 彙整需要人工複核的代碼區段與背景資料。",
+        "",
+        "## 後續建議",
+        "- 針對高風險項目安排二次審查或 Pair Review。",
+        "- 將報告同步至知識庫，方便跨團隊追蹤。",
+        "- 重新生成報告時，保留 Dify 原始輸出以利比對。"
+    );
+    return infoLines.join("\n");
+}
+
+watch(
+    projects,
+    (list) => {
+        const projectList = Array.isArray(list) ? list : [];
+        const currentIds = new Set(projectList.map((project) => toReportKey(project.id)));
+
+        projectList.forEach((project) => {
+            const key = toReportKey(project.id);
+            ensureReportState(key);
+        });
+
+        Object.keys(reportStates).forEach((key) => {
+            if (!currentIds.has(key)) {
+                if (toReportKey(activeReportId.value) === key) {
+                    activeReportId.value = null;
+                }
+                delete reportStates[key];
+            }
+        });
+    },
+    { immediate: true, deep: true }
+);
+
+watch(
+    readyReports,
+    (list) => {
+        if (!list.length) {
+            activeReportId.value = null;
+            return;
+        }
+        const activeKey = toReportKey(activeReportId.value);
+        const hasActive = list.some(({ key }) => key === activeKey);
+        if (!hasActive) {
+            activeReportId.value = list[0].project.id;
+        }
+    },
+    { immediate: true }
+);
 
 function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
@@ -417,23 +567,6 @@ onBeforeUnmount(() => {
             </div>
             <div class="topBar_spacer"></div>
             <div class="topBar_right">
-                <button
-                    type="button"
-                    class="topBar_iconBtn"
-                    :class="{ active: isChatWindowOpen }"
-                    :disabled="isChatToggleDisabled"
-                    @click="toggleChatWindow"
-                    title="Chat AI"
-                    aria-label="Chat AI"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
-                        <path
-                            d="M8.5 8h7c.83 0 1.5.67 1.5 1.5v3c0 .83-.67 1.5-1.5 1.5h-.94l-1.8 1.88c-.31.33-.76.12-.76-.32V14.5h-3.5c-.83 0-1.5-.67-1.5-1.5v-3C7 8.67 7.67 8 8.5 8Z"
-                            fill="currentColor"
-                        />
-                    </svg>
-                </button>
                 <div class="topBar_addProject" @click="showUploadModal = true">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
                         <path d="M256,0C114.6,0,0,114.6,0,256s114.6,256,256,256s256-114.6,256-256S397.4,0,256,0z M405.3,277.3c0,11.8-9.5,21.3-21.3,21.3h-85.3V384c0,11.8-9.5,21.3-21.3,21.3h-42.7c-11.8,0-21.3-9.6-21.3-21.3v-85.3H128c-11.8,0-21.3-9.6-21.3-21.3v-42.7c0-11.8,9.5-21.3,21.3-21.3h85.3V128c0-11.8,9.5-21.3,21.3-21.3h42.7c11.8,0,21.3,9.6,21.3,21.3v85.3H384c11.8,0,21.3,9.6,21.3,21.3V277.3z" />
@@ -470,9 +603,26 @@ onBeforeUnmount(() => {
                     title="報告審查"
                 >
                     <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="4" y="3" width="16" height="18" rx="2" ry="2" fill="currentColor" opacity="0.18" />
+                        <rect x="3" y="3" width="18" height="18" rx="9" fill="currentColor" opacity="0.18" />
                         <path
-                            d="M8 7h8v2H8V7Zm0 4h8v2H8v-2Zm0 4h5v2H8v-2Z"
+                            d="M14.8 13.4a4.5 4.5 0 1 0-1.4 1.4l3.5 3.5 1.4-1.4-3.5-3.5Zm-3.8.6a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"
+                            fill="currentColor"
+                        />
+                    </svg>
+                </button>
+                <button
+                    type="button"
+                    class="toolColumn_btn toolColumn_btn--chat"
+                    :class="{ active: isChatWindowOpen }"
+                    :disabled="isChatToggleDisabled"
+                    @click="toggleChatWindow"
+                    :aria-pressed="isChatWindowOpen"
+                    title="Chat AI"
+                >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="3" width="18" height="18" rx="4" fill="currentColor" opacity="0.12" />
+                        <path
+                            d="M8.5 8h7c.83 0 1.5.67 1.5 1.5v3c0 .83-.67 1.5-1.5 1.5h-.94l-1.8 1.88c-.31.33-.76.12-.76-.32V14.5h-3.5c-.83 0-1.5-.67-1.5-1.5v-3C7 8.67 7.67 8 8.5 8Z"
                             fill="currentColor"
                         />
                     </svg>
@@ -494,8 +644,88 @@ onBeforeUnmount(() => {
                 @resize-start="startPreviewResize"
             />
 
-            <section class="workSpace">
-                <template v-if="previewing.kind && previewing.kind !== 'error'">
+            <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive }">
+                <template v-if="isReportToolActive">
+                    <div class="reportReview">
+                        <aside class="reportProjects">
+                            <div class="panelHeader">代碼審查</div>
+                            <template v-if="projectReports.length">
+                                <ul class="reportProjectList">
+                                    <li
+                                        v-for="entry in projectReports"
+                                        :key="entry.key"
+                                        class="reportProjectItem"
+                                    >
+                                        <div class="projectHeader">
+                                            <span class="projName" :title="entry.project.name">{{ entry.project.name }}</span>
+                                            <button
+                                                type="button"
+                                                class="reportActionBtn"
+                                                :disabled="entry.state.status === 'processing'"
+                                                @click.stop="generateReportForProject(entry.project)"
+                                            >
+                                                <span v-if="entry.state.status === 'processing'">處理中...</span>
+                                                <span v-else-if="entry.state.status === 'ready'">重新生成</span>
+                                                <span v-else>生成報告</span>
+                                            </button>
+                                        </div>
+                                        <div class="reportStatusRow">
+                                            <span class="statusBadge" :class="`statusBadge--${entry.state.status}`">
+                                                {{ getStatusLabel(entry.state.status) }}
+                                            </span>
+                                            <span v-if="entry.project.mode" class="modeBadge">{{ entry.project.mode }}</span>
+                                            <button
+                                                v-if="entry.state.status === 'ready'"
+                                                type="button"
+                                                class="reportViewBtn"
+                                                @click.stop="selectReport(entry.project.id)"
+                                            >
+                                                查看報告
+                                            </button>
+                                        </div>
+                                        <p
+                                            v-if="entry.state.status === 'ready' && entry.state.updatedAtDisplay"
+                                            class="reportTimestamp"
+                                        >
+                                            最後更新：{{ entry.state.updatedAtDisplay }}
+                                        </p>
+                                    </li>
+                                </ul>
+                            </template>
+                            <p v-else class="emptyProjects">尚未匯入任何專案。</p>
+                        </aside>
+                        <section class="reportViewer">
+                            <div class="panelHeader">報告檢視</div>
+                            <template v-if="hasReadyReports">
+                                <div class="reportTabs">
+                                    <button
+                                        v-for="entry in readyReports"
+                                        :key="entry.key"
+                                        type="button"
+                                        class="reportTab"
+                                        :class="{ active: toReportKey(activeReportId) === entry.key }"
+                                        @click="selectReport(entry.project.id)"
+                                    >
+                                        {{ entry.project.name }}
+                                    </button>
+                                </div>
+                                <div v-if="activeReport" class="reportViewerContent">
+                                    <h2 class="reportTitle">{{ activeReport.project.name }} 審查報告</h2>
+                                    <p
+                                        v-if="activeReport.state.updatedAtDisplay"
+                                        class="reportViewerTimestamp"
+                                    >
+                                        生成時間：{{ activeReport.state.updatedAtDisplay }}
+                                    </p>
+                                    <pre class="reportBody">{{ activeReport.state.report }}</pre>
+                                </div>
+                                <div v-else class="reportViewerPlaceholder">請選擇左側的專案報告。</div>
+                            </template>
+                            <p v-else class="reportViewerPlaceholder">尚未生成任何報告，請先從左側專案按鈕啟動生成。</p>
+                        </section>
+                    </div>
+                </template>
+                <template v-else-if="previewing.kind && previewing.kind !== 'error'">
                     <div class="pvHeader">
                         <div class="pvName">{{ previewing.name }}</div>
                         <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
@@ -687,7 +917,30 @@ body,
     min-height: 0;
     background-color: #1e1e1e;
     padding: 0;
-    overflow: hidden;
+    height: calc(100vh - 60px);
+    max-height: calc(100vh - 60px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #3d3d3d #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar {
+    width: 10px;
+}
+
+.mainContent::-webkit-scrollbar-track {
+    background: #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #3b82f6, #0ea5e9);
+    border-radius: 999px;
+    border: 2px solid #1b1b1b;
+}
+
+.mainContent::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #60a5fa, #22d3ee);
 }
 
 .toolColumn {
@@ -718,8 +971,12 @@ body,
 }
 
 .toolColumn_btn svg {
-    width: 22px;
-    height: 22px;
+    width: 33px;
+    height: 33px;
+}
+
+.toolColumn_btn--chat {
+    margin-top: auto;
 }
 
 .toolColumn_btn:hover {
@@ -759,6 +1016,10 @@ body,
     .toolColumn_btn {
         transform: none;
     }
+    .toolColumn_btn--chat {
+        margin-top: 0;
+        margin-left: auto;
+    }
     .workSpace {
         width: 100%;
         flex: 1 1 auto;
@@ -787,6 +1048,234 @@ body,
     flex-direction: column;
     gap: 12px;
     overflow: auto;
+}
+
+.workSpace--reports {
+    overflow: hidden;
+    padding: 12px;
+}
+
+.reportReview {
+    flex: 1 1 auto;
+    display: flex;
+    gap: 12px;
+    min-height: 0;
+}
+
+.reportProjects {
+    flex: 0 0 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    background: #191919;
+    border: 1px solid #323232;
+    border-radius: 6px;
+    padding: 16px;
+    overflow-y: auto;
+}
+
+.panelHeader {
+    font-weight: 700;
+    color: #cbd5e1;
+    font-size: 14px;
+}
+
+.reportProjectList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportProjectItem {
+    border: 1px solid #2f2f2f;
+    border-radius: 6px;
+    background: #101010;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.projectHeader {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.projName {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-weight: 600;
+    color: #f3f4f6;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+}
+
+.reportActionBtn {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid #2563eb;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(14, 165, 233, 0.18));
+    color: #bfdbfe;
+    font-size: 12px;
+    cursor: pointer;
+    transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.reportActionBtn:hover {
+    transform: translateY(-1px);
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.28), rgba(14, 165, 233, 0.28));
+}
+
+.reportActionBtn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    transform: none;
+}
+
+.reportStatusRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.statusBadge {
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: #374151;
+    color: #e2e8f0;
+}
+
+.statusBadge--processing {
+    background: rgba(251, 191, 36, 0.2);
+    color: #facc15;
+}
+
+.statusBadge--ready {
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+}
+
+.modeBadge {
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(99, 102, 241, 0.18);
+    color: #c7d2fe;
+    font-size: 11px;
+}
+
+.reportViewBtn {
+    margin-left: auto;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    background: rgba(148, 163, 184, 0.12);
+    color: #e2e8f0;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.reportViewBtn:hover {
+    background: rgba(148, 163, 184, 0.2);
+}
+
+.reportTimestamp {
+    margin: 0;
+    font-size: 11px;
+    color: #94a3b8;
+}
+
+.emptyProjects {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+.reportViewer {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    background: #1b1b1b;
+    border: 1px solid #2f2f2f;
+    border-radius: 6px;
+    padding: 16px;
+    min-width: 0;
+}
+
+.reportTabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.reportTab {
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.12);
+    color: #e2e8f0;
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.reportTab.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.25), rgba(14, 165, 233, 0.25));
+    border-color: rgba(59, 130, 246, 0.5);
+}
+
+.reportViewerContent {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.reportTitle {
+    margin: 0;
+    font-size: 18px;
+    color: #f9fafb;
+}
+
+.reportViewerTimestamp {
+    margin: 0;
+    font-size: 12px;
+    color: #a5b4fc;
+}
+
+.reportBody {
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 16px;
+    border-radius: 6px;
+    background: #111827;
+    border: 1px solid #1f2937;
+    color: #e5e7eb;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow: auto;
+}
+
+.reportViewerPlaceholder {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 13px;
 }
 
 .pvHeader {
