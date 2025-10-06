@@ -92,16 +92,6 @@ const chatResizeState = reactive({
 });
 const hasInitializedChatWindow = ref(false);
 const isTreeCollapsed = ref(false);
-const hasActiveProject = computed(() => {
-    const selectedId = selectedProjectId.value;
-    if (selectedId === null || selectedId === undefined) return false;
-
-    const list = projects.value;
-    if (!Array.isArray(list)) return false;
-
-    return list.some((project) => project.id === selectedId);
-});
-
 const middlePaneStyle = computed(() => ({
     flex: `0 0 ${middlePaneWidth.value}px`,
     width: `${middlePaneWidth.value}px`
@@ -455,7 +445,7 @@ onBeforeUnmount(() => {
                 @resize-start="startPreviewResize"
             />
 
-            <section v-if="hasActiveProject" class="workSpace">
+            <section class="workSpace">
                 <template v-if="previewing.kind && previewing.kind !== 'error'">
                     <div class="pvHeader">
                         <div class="pvName">{{ previewing.name }}</div>
@@ -681,7 +671,7 @@ body,
     min-width: 0;
     min-height: 0;
     background: #252526;
-    border-radius: 8px;
+    border-radius: 0;
     border: 1px solid #323232;
     padding: 12px;
     display: flex;

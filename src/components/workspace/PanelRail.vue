@@ -183,8 +183,8 @@ function handlePointerDown(event) {
 .projectPanel {
     flex: 0 0 auto;
     background: #252526;
-    border: 1px solid #3d3d3d;
-    border-radius: 10px;
+    border: 1px solid #323232;
+    border-radius: 0;
     padding: 16px;
     display: flex;
     flex-direction: column;
@@ -205,7 +205,7 @@ function handlePointerDown(event) {
 .projectItem {
     background: #202020;
     border: 1px solid #303134;
-    border-radius: 10px;
+    border-radius: 0;
     padding: 10px 12px;
     display: flex;
     justify-content: space-between;
@@ -253,7 +253,7 @@ function handlePointerDown(event) {
     font-size: 14px;
     line-height: 1;
     padding: 4px 6px;
-    border-radius: 6px;
+    border-radius: 0;
     cursor: pointer;
 }
 
@@ -273,8 +273,8 @@ function handlePointerDown(event) {
     flex: 1 1 auto;
     min-width: 0;
     background: #252526;
-    border: 1px solid #3d3d3d;
-    border-radius: 10px;
+    border: 1px solid #323232;
+    border-radius: 0;
     padding: 16px;
     display: flex;
     flex-direction: column;
@@ -329,7 +329,7 @@ function handlePointerDown(event) {
 
 :deep(.treeRow.active) {
     background: rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
+    border-radius: 0;
 }
 
 :deep(.treeRow .icon) {
