@@ -1,25 +1,77 @@
 const DEFAULT_BASE = "/api";
 
-const apiBase = (() => {
-    if (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_BASE_URL) {
-        return import.meta.env.VITE_API_BASE_URL.replace(/\/$/, "");
+function readEnvBase() {
+    const fromWindow = typeof window !== "undefined" && window.__AI_PLATFORM_API_BASE__;
+    if (fromWindow) {
+        return String(fromWindow).trim();
     }
-    if (typeof process !== "undefined" && process.env?.VITE_API_BASE_URL) {
-        return process.env.VITE_API_BASE_URL.replace(/\/$/, "");
+    if (typeof import.meta !== "undefined" && import.meta.env && typeof import.meta.env.VITE_API_BASE_URL === "string") {
+        const value = import.meta.env.VITE_API_BASE_URL.trim();
+        if (value) return value;
     }
-    return DEFAULT_BASE;
-})();
+    if (typeof process !== "undefined" && typeof process.env?.VITE_API_BASE_URL === "string") {
+        const value = process.env.VITE_API_BASE_URL.trim();
+        if (value) return value;
+    }
+    return "";
+}
+
+function normaliseBase(base) {
+    const value = (base || "").trim();
+    if (!value) {
+        return DEFAULT_BASE;
+    }
+    return value.replace(/\/+$/, "");
+}
+
+const apiBase = normaliseBase(readEnvBase());
+
+function joinPaths(base, path) {
+    if (!base) return path;
+    const hasTrailing = base.endsWith("/");
+    const hasLeading = path.startsWith("/");
+    if (hasTrailing && hasLeading) {
+        return base + path.slice(1);
+    }
+    if (!hasTrailing && !hasLeading) {
+        return `${base}/${path}`;
+    }
+    return base + path;
+}
+
+function buildRequestUrl(path) {
+    const targetPath = path.startsWith("/") ? path : `/${path}`;
+    if (/^https?:\/\//i.test(apiBase)) {
+        const base = apiBase.endsWith("/") ? apiBase : `${apiBase}/`;
+        return new URL(targetPath.replace(/^\//, ""), base).toString();
+    }
+    if (apiBase.startsWith("/")) {
+        return joinPaths(apiBase, targetPath);
+    }
+    const rootedBase = apiBase ? `/${apiBase.replace(/^\//, "")}` : "";
+    return joinPaths(rootedBase || DEFAULT_BASE, targetPath);
+}
 
 async function postJson(path, payload) {
-    const url = `${apiBase}${path}`;
-    const response = await fetch(url, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "Authorization:": "Bearer app-FLK3bBX1cIA8Niy61uEe4Ec2"
-        },
-        body: JSON.stringify(payload)
-    });
+    const url = buildRequestUrl(path);
+    const headers = new Headers();
+    headers.set("Content-Type", "application/json");
+
+    let response;
+    try {
+        response = await fetch(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(payload)
+        });
+    } catch (error) {
+        if (error && typeof error.message === "string" && /Invalid name/i.test(error.message)) {
+            const hint =
+                "請確認 VITE_API_BASE_URL 或瀏覽器注入的 API Base 設定是否包含非法字元，例如換行或額外的表頭。";
+            throw new Error(`${error.message}。${hint}`);
+        }
+        throw error;
+    }
 
     if (!response.ok) {
         const text = await response.text().catch(() => "");
