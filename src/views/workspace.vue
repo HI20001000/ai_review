@@ -5,7 +5,7 @@ import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
 import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
-import { generateReportViaDify } from "../scripts/services/apiService.js";
+import { generateReportViaDify } from "../scripts/services/reportService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
 import ReportPanel from "../components/reports/ReportPanel.vue";
