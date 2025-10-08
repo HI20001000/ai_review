@@ -35,10 +35,22 @@ function formatContextSummary(items) {
     if (!Array.isArray(items) || !items.length) return "";
     const lines = items.map((item, index) => {
         const label = item.label || item.path || `Item ${index + 1}`;
-        const segments = [
-            `${index + 1}. \u6a94\u6848: ${label}`
-        ];
-        if (item.path) segments.push(`\u8def\u5f91: ${item.path}`);
+        const isSnippet = item.type === "snippet";
+        const header = isSnippet ? `\u7a0b\u5f0f\u78bc\u7247\u6bb5: ${label}` : `\u6a94\u6848: ${label}`;
+        const segments = [`${index + 1}. ${header}`];
+        if (isSnippet) {
+            if (item.snippet?.path) {
+                segments.push(`\u4f86\u6e90\u6a94\u6848: ${item.snippet.path}`);
+            }
+            const startLine = item.snippet?.startLine;
+            const endLine = item.snippet?.endLine;
+            if (Number.isFinite(startLine)) {
+                const range = Number.isFinite(endLine) && endLine !== startLine ? `${startLine}-${endLine}` : `${startLine}`;
+                segments.push(`\u884c\u6578: ${range}`);
+            }
+        } else if (item.path) {
+            segments.push(`\u8def\u5f91: ${item.path}`);
+        }
         if (item.content) segments.push(item.content);
         return segments.join("\n");
     });
@@ -195,6 +207,63 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         }
     }
 
+    function normaliseLine(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    async function addSnippetContext(snippet) {
+        const text = (snippet?.content || "").trim();
+        if (!text) {
+            pushMessage("assistant", "請先選取有效的程式碼片段。", { synthetic: true, status: "error" });
+            return false;
+        }
+
+        const path = snippet?.path || "";
+        const startLine = normaliseLine(snippet?.startLine);
+        const endLine = normaliseLine(snippet?.endLine ?? startLine);
+        const lineCount = Number.isFinite(snippet?.lineCount)
+            ? Number(snippet.lineCount)
+            : startLine !== null && endLine !== null
+                ? Math.abs(endLine - startLine) + 1
+                : null;
+
+        const duplicate = contextItems.value.find(
+            (item) =>
+                item.type === "snippet" &&
+                item.snippet?.path === path &&
+                item.snippet?.startLine === startLine &&
+                item.snippet?.endLine === endLine &&
+                item.content === text
+        );
+        if (duplicate) {
+            return true;
+        }
+
+        const id = snippet?.id || `snippet-${++ctxId}`;
+        const label =
+            snippet?.label ||
+            (path
+                ? `${path}${startLine !== null ? ` (行 ${startLine}${endLine !== null && endLine !== startLine ? `-${endLine}` : ""})` : ""}`
+                : `Snippet ${ctxId}`);
+
+        contextItems.value.push({
+            id,
+            type: "snippet",
+            label,
+            path,
+            content: text,
+            snippet: {
+                path,
+                startLine,
+                endLine,
+                lineCount
+            }
+        });
+
+        return true;
+    }
+
     async function addActiveNode() {
         if (isInteractionLocked.value) return false;
         const activePath = treeStore?.activeTreePath?.value;
@@ -301,6 +370,7 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         contextItems,
         messages,
         addActiveNode,
+        addSnippetContext,
         removeContext,
         clearContext,
         sendUserMessage,

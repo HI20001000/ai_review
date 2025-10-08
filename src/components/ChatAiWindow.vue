@@ -62,9 +62,9 @@
                                 v-for="item in contextItems"
                                 :key="item.id"
                                 class="chatWindow__chip"
-                                :title="item.path || item.label"
+                                :title="chipTitle(item)"
                             >
-                                <span class="chatWindow__chipType">{{ item.type === 'dir' ? 'DIR' : 'FILE' }}</span>
+                                <span class="chatWindow__chipType">{{ formatChipType(item.type) }}</span>
                                 <span class="chatWindow__chipLabel">{{ item.label }}</span>
                                 <button
                                     type="button"
@@ -176,6 +176,30 @@ const statusStyle = computed(() => {
 });
 const controlsDisabled = computed(() => props.disabled || props.loading);
 const clearDisabled = computed(() => controlsDisabled.value || !(props.contextItems || []).length);
+
+function formatChipType(type) {
+    if (type === "dir") return "DIR";
+    if (type === "snippet") return "SNIP";
+    return "FILE";
+}
+
+function chipTitle(item) {
+    if (!item) return "";
+    if (item.type === "snippet" && item.snippet) {
+        const { path, startLine, endLine } = item.snippet;
+        const parts = [];
+        if (item.label) parts.push(item.label);
+        if (path && (!item.label || !item.label.includes(path))) {
+            parts.push(path);
+        }
+        if (Number.isFinite(startLine)) {
+            const range = Number.isFinite(endLine) && endLine !== startLine ? `${startLine}-${endLine}` : `${startLine}`;
+            parts.push(`行 ${range}`);
+        }
+        return parts.join(" | ") || item.label || "Snippet";
+    }
+    return item.path || item.label;
+}
 
 watch(
     () => props.messages,
