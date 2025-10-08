@@ -5,7 +5,7 @@ import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
 import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
-import { generateReportViaDify, fetchProjectReports } from "../scripts/services/reportService.js";
+import { generateReportViaDify, fetchProjectReports, generateSnippetReportViaDify } from "../scripts/services/reportService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
 import ReportPanel from "../components/reports/ReportPanel.vue";
@@ -89,6 +89,7 @@ const previewLineItems = computed(() => {
 
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
+const codeScrollRef = ref(null);
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
@@ -116,6 +117,7 @@ const reportBatchStates = reactive({});
 const activeReportTarget = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
+const isSnippetToolActive = computed(() => activeRailTool.value === "snippets");
 const panelMode = computed(() => (isReportToolActive.value ? "reports" : "projects"));
 const reportProjectEntries = computed(() => {
     const list = Array.isArray(projects.value) ? projects.value : [];
@@ -191,7 +193,8 @@ const hasChunkDetails = computed(() => {
     return Array.isArray(chunks) && chunks.length > 1;
 });
 const middlePaneStyle = computed(() => {
-    const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
+    const hasActiveTool =
+        isProjectToolActive.value || isReportToolActive.value || isSnippetToolActive.value;
     const width = hasActiveTool ? middlePaneWidth.value : 0;
     return {
         flex: `0 0 ${width}px`,
@@ -207,6 +210,250 @@ const chatWindowStyle = computed(() => ({
 }));
 
 const isChatToggleDisabled = computed(() => isChatLocked.value && !isChatWindowOpen.value);
+
+const snippetSelection = reactive({
+    startLine: null,
+    endLine: null,
+    lineCount: 0,
+    text: "",
+    path: ""
+});
+const snippetState = reactive({
+    status: "idle",
+    error: "",
+    report: "",
+    chunks: [],
+    conversationId: "",
+    updatedAt: null,
+    updatedAtDisplay: "",
+    lastSelectionKey: "",
+    selection: null
+});
+const hasSnippetSelection = computed(() => {
+    if (!snippetSelection.text) return false;
+    return snippetSelection.text.trim().length > 0;
+});
+const snippetSelectionDisplay = computed(() => {
+    if (!hasSnippetSelection.value) {
+        return {
+            summary: "尚未選取任何內容",
+            rangeText: "",
+            lineCount: 0
+        };
+    }
+    const start = typeof snippetSelection.startLine === "number" ? snippetSelection.startLine : null;
+    const end = typeof snippetSelection.endLine === "number" ? snippetSelection.endLine : start;
+    let rangeText = "";
+    if (start !== null && end !== null) {
+        rangeText = start === end ? `第 ${start} 行` : `第 ${start}-${end} 行`;
+    }
+    const lineCount = snippetSelection.lineCount || (start !== null && end !== null ? Math.abs(end - start) + 1 : 0);
+    return {
+        summary: rangeText ? `已選取 ${rangeText}` : "已選取文字",
+        rangeText,
+        lineCount
+    };
+});
+const activeSnippetPath = computed(() => previewing.value.path || activeTreePath.value || "");
+const snippetCurrentKey = computed(() => {
+    if (!hasSnippetSelection.value) return "";
+    const start = typeof snippetSelection.startLine === "number" ? snippetSelection.startLine : "";
+    const end = typeof snippetSelection.endLine === "number" ? snippetSelection.endLine : start;
+    const text = snippetSelection.text || "";
+    const hashPreview = text.slice(0, 64);
+    const length = text.length;
+    const path = activeSnippetPath.value || "";
+    return `${path}::${start}-${end}::${length}::${hashPreview}`;
+});
+const snippetIsProcessing = computed(() => snippetState.status === "processing");
+const snippetReportReady = computed(() => snippetState.status === "ready");
+const snippetHasChunks = computed(() => Array.isArray(snippetState.chunks) && snippetState.chunks.length > 1);
+const canGenerateSnippet = computed(
+    () =>
+        isSnippetToolActive.value &&
+        hasSnippetSelection.value &&
+        previewing.value.kind === "text" &&
+        !snippetIsProcessing.value
+);
+
+const supportsSelectionTracking = typeof document !== "undefined";
+const TEXT_NODE = typeof Node !== "undefined" ? Node.TEXT_NODE : 3;
+
+function clearSnippetSelection() {
+    snippetSelection.startLine = null;
+    snippetSelection.endLine = null;
+    snippetSelection.lineCount = 0;
+    snippetSelection.text = "";
+    snippetSelection.path = "";
+}
+
+function resetSnippetResult() {
+    snippetState.status = "idle";
+    snippetState.error = "";
+    snippetState.report = "";
+    snippetState.chunks = [];
+    snippetState.conversationId = "";
+    snippetState.updatedAt = null;
+    snippetState.updatedAtDisplay = "";
+    snippetState.selection = null;
+}
+
+function clearSnippetSelectionAndResult() {
+    clearSnippetSelection();
+    resetSnippetResult();
+    snippetState.lastSelectionKey = "";
+}
+
+function isLineInSnippetSelection(lineNumber) {
+    if (!hasSnippetSelection.value) return false;
+    if (typeof lineNumber !== "number" || Number.isNaN(lineNumber)) return false;
+    const start = typeof snippetSelection.startLine === "number" ? snippetSelection.startLine : null;
+    const end = typeof snippetSelection.endLine === "number" ? snippetSelection.endLine : start;
+    if (start === null || end === null) return false;
+    const min = Math.min(start, end);
+    const max = Math.max(start, end);
+    return lineNumber >= min && lineNumber <= max;
+}
+
+function containerContainsNode(container, node) {
+    if (!container || !node) return false;
+    if (container.contains(node)) return true;
+    if (node.nodeType === TEXT_NODE) {
+        return containerContainsNode(container, node.parentNode);
+    }
+    return false;
+}
+
+function getLineNumberFromNode(node) {
+    if (!node) return null;
+    let current = node;
+    if (current.nodeType === TEXT_NODE) {
+        current = current.parentElement;
+    }
+    if (!(current instanceof HTMLElement)) {
+        return null;
+    }
+    const lineElement = current.closest("[data-line]");
+    if (!lineElement) return null;
+    const value = Number(lineElement.getAttribute("data-line"));
+    return Number.isFinite(value) ? value : null;
+}
+
+function updateSnippetSelectionFromDom() {
+    if (!isSnippetToolActive.value) {
+        return;
+    }
+    if (previewing.value.kind !== "text") {
+        if (snippetSelection.text) {
+            clearSnippetSelection();
+        }
+        return;
+    }
+    if (!supportsSelectionTracking) {
+        return;
+    }
+    const container = codeScrollRef.value;
+    if (!container) {
+        return;
+    }
+    const selection = document.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        if (snippetSelection.text) {
+            clearSnippetSelection();
+        }
+        return;
+    }
+    const range = selection.getRangeAt(0);
+    const { startContainer, endContainer } = range;
+    if (
+        !containerContainsNode(container, startContainer) ||
+        !containerContainsNode(container, endContainer)
+    ) {
+        if (snippetSelection.text) {
+            clearSnippetSelection();
+        }
+        return;
+    }
+    const selectedText = selection.toString();
+    if (!selectedText.trim()) {
+        clearSnippetSelection();
+        return;
+    }
+    const startLine = getLineNumberFromNode(startContainer);
+    const endLine = getLineNumberFromNode(endContainer);
+    let normalisedStart = startLine;
+    let normalisedEnd = endLine;
+    if (normalisedStart === null && normalisedEnd !== null) {
+        normalisedStart = normalisedEnd;
+    }
+    if (normalisedEnd === null && normalisedStart !== null) {
+        normalisedEnd = normalisedStart;
+    }
+    snippetSelection.startLine = normalisedStart;
+    snippetSelection.endLine = normalisedEnd;
+    snippetSelection.lineCount =
+        typeof normalisedStart === "number" && typeof normalisedEnd === "number"
+            ? Math.abs(normalisedEnd - normalisedStart) + 1
+            : 0;
+    snippetSelection.text = selectedText;
+    snippetSelection.path = activeSnippetPath.value || "";
+}
+
+const handleSelectionChange = () => {
+    updateSnippetSelectionFromDom();
+};
+
+watch(snippetCurrentKey, (key) => {
+    if (!key) {
+        if (snippetSelection.text) {
+            clearSnippetSelection();
+        }
+        resetSnippetResult();
+        snippetState.lastSelectionKey = "";
+        return;
+    }
+    if (snippetState.status === "processing") {
+        return;
+    }
+    if (snippetState.lastSelectionKey && snippetState.lastSelectionKey === key) {
+        return;
+    }
+    resetSnippetResult();
+});
+
+watch(
+    () => previewing.value.kind,
+    (kind) => {
+        if (kind !== "text") {
+            clearSnippetSelectionAndResult();
+        }
+    }
+);
+
+watch(
+    () => previewing.value.path,
+    () => {
+        clearSnippetSelectionAndResult();
+    }
+);
+
+watch(
+    isSnippetToolActive,
+    (active) => {
+        if (!supportsSelectionTracking) return;
+        if (active) {
+            document.addEventListener("selectionchange", handleSelectionChange);
+            nextTick(() => {
+                updateSnippetSelectionFromDom();
+            });
+        } else {
+            document.removeEventListener("selectionchange", handleSelectionChange);
+            clearSnippetSelection();
+            resetSnippetResult();
+        }
+    },
+    { immediate: true }
+);
 
 watch(isChatWindowOpen, (visible) => {
     if (visible) {
@@ -294,6 +541,10 @@ function toggleProjectTool() {
 
 function toggleReportTool() {
     activeRailTool.value = isReportToolActive.value ? null : "reports";
+}
+
+function toggleSnippetTool() {
+    activeRailTool.value = isSnippetToolActive.value ? null : "snippets";
 }
 
 function normaliseProjectId(projectId) {
@@ -679,6 +930,102 @@ async function generateProjectReports(project) {
     }
 }
 
+async function generateSnippetAnalysis() {
+    if (snippetIsProcessing.value) return;
+    if (!isSnippetToolActive.value) return;
+    if (!hasSnippetSelection.value) {
+        alert("請先在預覽中選取要分析的程式碼段落。");
+        return;
+    }
+    if (previewing.value.kind !== "text") {
+        alert("僅支援對純文字或程式碼檔案進行區塊審查。");
+        return;
+    }
+    const projectIdRaw = selectedProjectId.value;
+    if (!projectIdRaw) {
+        alert("請先選擇一個專案。");
+        return;
+    }
+    const path = activeSnippetPath.value;
+    if (!path) {
+        alert("請先從左側檔案樹選擇要分析的檔案。");
+        return;
+    }
+
+    const projectId = normaliseProjectId(projectIdRaw);
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const project = projectList.find((item) => normaliseProjectId(item.id) === projectId);
+
+    snippetState.status = "processing";
+    snippetState.error = "";
+    snippetState.report = "";
+    snippetState.chunks = [];
+    snippetState.conversationId = "";
+    snippetState.updatedAt = null;
+    snippetState.updatedAtDisplay = "";
+    snippetState.selection = null;
+
+    try {
+        const payload = await generateSnippetReportViaDify({
+            projectId,
+            projectName: project?.name,
+            path,
+            selection: {
+                startLine: snippetSelection.startLine,
+                endLine: snippetSelection.endLine,
+                content: snippetSelection.text
+            }
+        });
+        const completedAt = payload?.generatedAt ? new Date(payload.generatedAt) : new Date();
+        snippetState.status = "ready";
+        snippetState.report = payload?.report || "";
+        snippetState.chunks = Array.isArray(payload?.chunks) ? payload.chunks : [];
+        snippetState.conversationId = payload?.conversationId || "";
+        snippetState.updatedAt = completedAt;
+        snippetState.updatedAtDisplay = completedAt.toLocaleString();
+        const responseSelection = payload?.selection || {};
+        snippetState.selection = {
+            startLine:
+                typeof responseSelection.startLine === "number"
+                    ? responseSelection.startLine
+                    : snippetSelection.startLine,
+            endLine:
+                typeof responseSelection.endLine === "number"
+                    ? responseSelection.endLine
+                    : snippetSelection.endLine,
+            lineCount:
+                typeof responseSelection.lineCount === "number"
+                    ? responseSelection.lineCount
+                    : snippetSelectionDisplay.value.lineCount,
+            label: responseSelection.label || "",
+            path
+        };
+        snippetState.error = "";
+        snippetState.lastSelectionKey = snippetCurrentKey.value;
+    } catch (error) {
+        const message = error?.message ? String(error.message) : String(error);
+        snippetState.status = "error";
+        snippetState.error = message;
+        snippetState.report = "";
+        snippetState.chunks = [];
+        snippetState.conversationId = "";
+        const now = new Date();
+        snippetState.updatedAt = now;
+        snippetState.updatedAtDisplay = now.toLocaleString();
+        snippetState.selection = null;
+        console.error("[Snippet] Failed to generate snippet report", {
+            projectId,
+            path,
+            error
+        });
+        if (error?.name === "SecurityError" || error?.name === "NotAllowedError" || error?.name === "TypeError") {
+            await safeAlertFail("生成區塊報告失敗", error);
+        } else {
+            alert(`生成區塊報告失敗：${message}`);
+        }
+    }
+}
+
 watch(
     projects,
     (list) => {
@@ -972,6 +1319,9 @@ onBeforeUnmount(() => {
     window.removeEventListener("resize", clampReportSidebarWidth);
     stopChatDrag();
     stopChatResize();
+    if (supportsSelectionTracking) {
+        document.removeEventListener("selectionchange", handleSelectionChange);
+    }
 });
 </script>
 
@@ -1030,6 +1380,22 @@ onBeforeUnmount(() => {
                 </button>
                 <button
                     type="button"
+                    class="toolColumn_btn"
+                    :class="{ active: isSnippetToolActive }"
+                    @click="toggleSnippetTool"
+                    :aria-pressed="isSnippetToolActive"
+                    title="區塊審查"
+                >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="4" y="4" width="16" height="16" rx="2" fill="currentColor" opacity="0.18" />
+                        <path
+                            d="M8 8h8v2H8zm0 4h5v2H8zm-2 5h12v2H6z"
+                            fill="currentColor"
+                        />
+                    </svg>
+                </button>
+                <button
+                    type="button"
                     class="toolColumn_btn toolColumn_btn--chat"
                     :class="{ active: isChatWindowOpen }"
                     :disabled="isChatToggleDisabled"
@@ -1054,7 +1420,7 @@ onBeforeUnmount(() => {
                 :on-select-project="handleSelectProject"
                 :on-delete-project="deleteProject"
                 :is-tree-collapsed="isTreeCollapsed"
-                :show-content="isProjectToolActive || isReportToolActive"
+                :show-content="isProjectToolActive || isReportToolActive || isSnippetToolActive"
                 :tree="tree"
                 :active-tree-path="activeTreePath"
                 :is-loading-tree="isLoadingTree"
@@ -1083,7 +1449,7 @@ onBeforeUnmount(() => {
                 </template>
             </PanelRail>
 
-            <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive }">
+            <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive, 'workSpace--snippets': isSnippetToolActive }">
                 <template v-if="isReportToolActive">
                     <div class="panelHeader">報告檢視</div>
                     <template v-if="hasReadyReports || viewerHasContent">
@@ -1136,6 +1502,124 @@ onBeforeUnmount(() => {
                         </div>
                     </template>
                     <p v-else class="reportViewerPlaceholder">尚未生成任何報告，請先於左側檔案中啟動生成。</p>
+                </template>
+                <template v-else-if="isSnippetToolActive">
+                    <div class="snippetHeader">
+                        <div class="snippetInfo">
+                            <h3 class="snippetTitle">區塊審查</h3>
+                            <p class="snippetHint">選取程式碼行後即可將片段送至 AI 生成審查報告。</p>
+                            <p
+                                class="snippetStatus"
+                                :class="{ 'snippetStatus--empty': !hasSnippetSelection }"
+                            >
+                                <template v-if="hasSnippetSelection">
+                                    {{ snippetSelectionDisplay.summary }}
+                                    <span v-if="snippetSelectionDisplay.lineCount > 0">
+                                        （{{ snippetSelectionDisplay.lineCount }} 行）
+                                    </span>
+                                </template>
+                                <template v-else>
+                                    尚未選取任何內容
+                                </template>
+                            </p>
+                            <p v-if="previewing.kind !== 'text'" class="snippetStatus snippetStatus--warning">
+                                請在左側檔案樹選擇可編輯的文字檔案以進行選取。
+                            </p>
+                        </div>
+                        <div class="snippetActions">
+                            <button
+                                type="button"
+                                class="btn"
+                                :disabled="!canGenerateSnippet"
+                                @click="generateSnippetAnalysis"
+                            >
+                                {{ snippetIsProcessing ? "分析中…" : "分析選取段落" }}
+                            </button>
+                            <button
+                                type="button"
+                                class="btn outline"
+                                :disabled="!hasSnippetSelection"
+                                @click="clearSnippetSelectionAndResult"
+                            >
+                                清除選取
+                            </button>
+                        </div>
+                    </div>
+                    <div class="snippetLayout">
+                        <div class="snippetPreview">
+                            <template v-if="previewing.kind === 'text'">
+                                <div class="pvHeader">
+                                    <div class="pvName">{{ previewing.name }}</div>
+                                    <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
+                                </div>
+                                <div class="pvBox codeBox">
+                                    <div class="codeScroll" ref="codeScrollRef">
+                                        <div
+                                            v-for="line in previewLineItems"
+                                            :key="line.number"
+                                            class="codeLine"
+                                            :data-line="line.number"
+                                            :class="{ 'codeLine--selected': isLineInSnippetSelection(line.number) }"
+                                        >
+                                            <span class="codeLineNo">{{ line.number }}</span>
+                                            <span class="codeLineContent" v-text="line.content"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                            <template v-else>
+                                <div class="pvPlaceholder snippetPlaceholder">請先選擇純文字檔案以便選取程式碼。</div>
+                            </template>
+                        </div>
+                        <div class="snippetResultPanel">
+                            <div class="snippetResultHeader">
+                                <h3>分析結果</h3>
+                                <p v-if="snippetState.updatedAtDisplay" class="snippetResultTimestamp">
+                                    更新於 {{ snippetState.updatedAtDisplay }}
+                                </p>
+                            </div>
+                            <p v-if="snippetState.status === 'idle'" class="snippetResultHint">
+                                選取程式碼並點擊「分析選取段落」，結果會顯示在此處。
+                            </p>
+                            <p v-else-if="snippetState.status === 'processing'" class="snippetResultHint">
+                                正在生成區塊報告，請稍候…
+                            </p>
+                            <div v-else-if="snippetState.status === 'error'" class="reportErrorPanel">
+                                <p class="reportErrorText">生成失敗：{{ snippetState.error || '未知原因' }}</p>
+                                <p class="reportErrorHint">請檢查 Dify 設定或稍後再試。</p>
+                            </div>
+                            <template v-else-if="snippetReportReady">
+                                <p v-if="snippetState.selection" class="snippetResultSelection">
+                                    來源：
+                                    <span class="snippetResultPath">{{ snippetState.selection.path || '-' }}</span>
+                                    <span v-if="snippetState.selection.startLine !== null && snippetState.selection.startLine !== undefined">
+                                        （第 {{ snippetState.selection.startLine }}
+                                        <template v-if="snippetState.selection.endLine !== undefined && snippetState.selection.endLine !== snippetState.selection.startLine">
+                                            -{{ snippetState.selection.endLine }}
+                                        </template>
+                                        行
+                                        <template v-if="snippetState.selection.lineCount">
+                                            ，共 {{ snippetState.selection.lineCount }} 行
+                                        </template>
+                                        ）
+                                    </span>
+                                </p>
+                                <pre class="reportBody codeScroll snippetReportBody">{{ snippetState.report }}</pre>
+                                <details v-if="snippetHasChunks" class="reportChunks">
+                                    <summary>分段輸出（{{ snippetState.chunks.length }}）</summary>
+                                    <ol class="reportChunkList">
+                                        <li
+                                            v-for="chunk in snippetState.chunks"
+                                            :key="`${chunk.index}-${chunk.total}`"
+                                        >
+                                            <h4 class="reportChunkTitle">第 {{ chunk.index }} 段</h4>
+                                            <pre class="reportChunkBody codeScroll">{{ chunk.answer }}</pre>
+                                        </li>
+                                    </ol>
+                                </details>
+                            </template>
+                        </div>
+                    </div>
                 </template>
                 <template v-else-if="previewing.kind && previewing.kind !== 'error'">
                     <div class="pvHeader">
@@ -1445,6 +1929,18 @@ body,
         width: 100%;
         flex: 1 1 auto;
     }
+    .snippetLayout {
+        flex-direction: column;
+    }
+    .snippetPreview,
+    .snippetResultPanel {
+        flex: 1 1 auto;
+    }
+    .snippetActions {
+        width: 100%;
+        justify-content: flex-start;
+        flex-wrap: wrap;
+    }
 }
 .loading {
     padding: 10px;
@@ -1477,6 +1973,147 @@ body,
     background: #202020;
     border-color: #323232;
     overflow: auto;
+}
+
+.workSpace--snippets {
+    padding: 16px;
+    gap: 16px;
+    background: #202020;
+    border-color: #323232;
+}
+
+.snippetHeader {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.snippetInfo {
+    flex: 1 1 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: #e2e8f0;
+}
+
+.snippetTitle {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.snippetHint {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+.snippetStatus {
+    margin: 0;
+    font-size: 13px;
+    color: #38bdf8;
+}
+
+.snippetStatus--empty {
+    color: #cbd5e1;
+}
+
+.snippetStatus--warning {
+    color: #fbbf24;
+}
+
+.snippetActions {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.snippetLayout {
+    display: flex;
+    gap: 16px;
+    min-height: 0;
+}
+
+.snippetPreview {
+    flex: 1 1 55%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+}
+
+.snippetResultPanel {
+    flex: 1 1 45%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: #191919;
+    border: 1px solid #323232;
+    border-radius: 0;
+    padding: 16px;
+    min-height: 0;
+    box-sizing: border-box;
+}
+
+.snippetResultHeader {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.snippetResultHeader h3 {
+    margin: 0;
+    font-size: 16px;
+    color: #e2e8f0;
+}
+
+.snippetResultTimestamp {
+    margin: 0;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.snippetResultHint {
+    margin: 0;
+    font-size: 13px;
+    color: #cbd5e1;
+}
+
+.snippetResultSelection {
+    margin: 0;
+    font-size: 13px;
+    color: #a5b4fc;
+}
+
+.snippetResultPath {
+    font-weight: 600;
+}
+
+.snippetReportBody {
+    min-height: 160px;
+}
+
+.snippetPlaceholder {
+    background: #161616;
+    color: #94a3b8;
+    border: 1px dashed #374151;
+    padding: 24px;
+    text-align: center;
+    border-radius: 6px;
+}
+
+.codeLine--selected .codeLineContent {
+    background: rgba(59, 130, 246, 0.22);
+}
+
+.codeLine--selected .codeLineNo {
+    background: #1f2937;
+    color: #bfdbfe;
 }
 
 .panelHeader {

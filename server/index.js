@@ -115,6 +115,48 @@ function mapReportRow(row) {
     };
 }
 
+function normaliseSnippetSelection(selection) {
+    if (!selection || typeof selection !== "object") {
+        return null;
+    }
+    if (typeof selection.content !== "string") {
+        return null;
+    }
+    const content = selection.content;
+    const start = Number(selection.startLine);
+    const end = Number(selection.endLine);
+    const label = typeof selection.label === "string" ? selection.label.trim() : "";
+    const meta = {};
+    if (Number.isFinite(start)) {
+        meta.startLine = Math.max(1, Math.floor(start));
+    }
+    if (Number.isFinite(end)) {
+        meta.endLine = Math.max(1, Math.floor(end));
+    }
+    if (meta.startLine !== undefined && meta.endLine !== undefined && meta.endLine < meta.startLine) {
+        const temp = meta.startLine;
+        meta.startLine = meta.endLine;
+        meta.endLine = temp;
+    }
+    if (meta.startLine !== undefined && meta.endLine === undefined) {
+        meta.endLine = meta.startLine;
+    }
+    if (meta.endLine !== undefined && meta.startLine === undefined) {
+        meta.startLine = meta.endLine;
+    }
+    if (meta.startLine !== undefined && meta.endLine !== undefined) {
+        meta.lineCount = meta.endLine - meta.startLine + 1;
+    }
+    if (label) {
+        meta.label = label;
+    }
+    const hasMeta = Object.keys(meta).length > 0;
+    return {
+        content,
+        meta: hasMeta ? meta : null
+    };
+}
+
 async function upsertReport({
     projectId,
     path,
@@ -370,6 +412,55 @@ app.post("/api/reports/dify", async (req, res, next) => {
         console.error("[dify] Failed to generate report", error);
         const status = error?.message?.includes("not configured") ? 500 : 502;
         res.status(status).json({ message: error?.message || "Failed to generate report" });
+    }
+});
+
+app.post("/api/reports/dify/snippet", async (req, res, next) => {
+    try {
+        const { projectId, projectName, path, selection, userId, files } = req.body || {};
+        if (!projectId || !path) {
+            res.status(400).json({ message: "Missing projectId or path for snippet report generation" });
+            return;
+        }
+        const normalised = normaliseSnippetSelection(selection);
+        if (!normalised || typeof normalised.content !== "string") {
+            res.status(400).json({ message: "Missing selection content for snippet report generation" });
+            return;
+        }
+        if (!normalised.content.trim()) {
+            res.status(400).json({ message: "選取內容為空，無法生成報告" });
+            return;
+        }
+
+        const segments = partitionContent(normalised.content);
+        const summary = getDifyConfigSummary();
+        const rangeLabel = normalised.meta
+            ? `${normalised.meta.startLine ?? "-"}-${normalised.meta.endLine ?? "-"}`
+            : "full";
+        console.log(
+            `[dify] Generating snippet report project=${projectId} path=${path} segments=${segments.length} range=${rangeLabel} maxSegmentChars=${summary.maxSegmentChars}`
+        );
+
+        const result = await requestDifyReport({
+            projectName: projectName || projectId,
+            filePath: path,
+            content: normalised.content,
+            userId,
+            segments,
+            files,
+            selection: normalised.meta
+        });
+
+        res.json({
+            projectId,
+            path,
+            selection: normalised.meta || undefined,
+            ...result
+        });
+    } catch (error) {
+        console.error("[dify] Failed to generate snippet report", error);
+        const status = error?.message?.includes("not configured") ? 500 : 502;
+        res.status(status).json({ message: error?.message || "Failed to generate snippet report" });
     }
 });
 

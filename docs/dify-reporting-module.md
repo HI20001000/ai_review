@@ -38,6 +38,26 @@ DIFY_CHAT_ENDPOINT=/workflow/run
 
 後端服務與 `npm run db:init` 等指令會透過 `server/lib/env.js` 自動載入 `.env`，並在成功讀取時顯示 `[env] Loaded environment variables from ...`。重新啟動伺服器後，可從啟動日誌中的 `[env]`、`[dify]` 訊息確認設定是否生效。
 
+## 區塊審查（Snippet Review）
+
+除了整個檔案的報告外，工作區左側工具欄新增了「區塊審查」圖示，可在同一個兩欄版面中保留檔案樹，並於主視窗選取特定行段後一鍵送交 Dify。瀏覽器會監聽文字預覽區的選取範圍，自動記錄起迄行數與行數統計，並於成功回傳後在右側面板顯示最新的片段報告與分段輸出。
+
+前端透過 `POST /api/reports/dify/snippet` 呼叫後端，payload 需包含：
+
+```json
+{
+  "projectId": "demo",
+  "path": "src/components/Button.vue",
+  "selection": {
+    "startLine": 12,
+    "endLine": 42,
+    "content": "...實際選取的程式碼..."
+  }
+}
+```
+
+後端會重新切段（沿用 `partitionContent` 邏輯）並將選取行範圍附加在送往 Dify 的 `inputs` 與提示語中；此請求僅回傳結果，不會寫入 MySQL `reports` 表，方便針對大型檔案進行局部分析或迭代嘗試。若選取內容為空或 `.env` 未設定完整的 Dify 參數，API 會回傳 400/502 錯誤供前端顯示提示。
+
 ## 目標
 
 * 允許使用者針對當前項目或指定提交請求代碼審查報告。
