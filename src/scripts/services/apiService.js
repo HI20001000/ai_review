@@ -31,26 +31,50 @@ async function request(path, { method = "GET", body, headers = {} } = {}) {
     return await response.text();
 }
 
-export async function fetchProjects() {
+async function fetchProjects() {
     return await request("/projects");
 }
 
-export async function createOrUpdateProject(project) {
+async function createOrUpdateProject(project) {
     return await request("/projects", { method: "POST", body: project });
 }
 
-export async function deleteProjectById(projectId) {
+async function deleteProjectById(projectId) {
     await request(`/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
 }
 
-export async function fetchNodesByProject(projectId) {
+async function fetchNodesByProject(projectId) {
     return await request(`/projects/${encodeURIComponent(projectId)}/nodes`);
 }
 
-export async function replaceProjectNodes(projectId, nodes) {
+async function replaceProjectNodes(projectId, nodes) {
     await request(`/projects/${encodeURIComponent(projectId)}/nodes`, { method: "POST", body: { nodes } });
 }
 
-export async function deleteProjectNodes(projectId) {
+async function deleteProjectNodes(projectId) {
     await request(`/projects/${encodeURIComponent(projectId)}/nodes`, { method: "DELETE" });
 }
+
+async function generateReportViaDify(payload) {
+    return await request("/reports/dify", { method: "POST", body: payload });
+}
+
+export {
+    fetchProjects,
+    createOrUpdateProject,
+    deleteProjectById,
+    fetchNodesByProject,
+    replaceProjectNodes,
+    deleteProjectNodes,
+    generateReportViaDify,
+};
+
+export default {
+    fetchProjects,
+    createOrUpdateProject,
+    deleteProjectById,
+    fetchNodesByProject,
+    replaceProjectNodes,
+    deleteProjectNodes,
+    generateReportViaDify,
+};
