@@ -54,3 +54,7 @@ export async function replaceProjectNodes(projectId, nodes) {
 export async function deleteProjectNodes(projectId) {
     await request(`/projects/${encodeURIComponent(projectId)}/nodes`, { method: "DELETE" });
 }
+
+export async function generateReportViaDify(payload) {
+    return await request("/reports/dify", { method: "POST", body: payload });
+}

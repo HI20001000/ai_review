@@ -5,6 +5,7 @@ import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
 import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
+import { generateReportViaDify } from "../scripts/services/apiService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
 import ReportPanel from "../components/reports/ReportPanel.vue";
@@ -43,7 +44,9 @@ const {
     handleDragOver,
     handleFolderInput,
     pickFolderAndImport,
-    updateCapabilityFlags
+    updateCapabilityFlags,
+    getProjectRootHandleById,
+    safeAlertFail
 } = projectsStore;
 
 const {
@@ -112,6 +115,7 @@ const hasInitializedChatWindow = ref(false);
 const isTreeCollapsed = ref(false);
 const reportStates = reactive({});
 const reportTreeCache = reactive({});
+const reportBatchStates = reactive({});
 const activeReportTarget = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
@@ -162,7 +166,7 @@ const activeReport = computed(() => {
     const key = toReportKey(target.projectId, target.path);
     if (!key) return null;
     const state = reportStates[key];
-    if (!state || state.status !== "ready") return null;
+    if (!state || (state.status !== "ready" && state.status !== "error")) return null;
     const projectList = Array.isArray(projects.value) ? projects.value : [];
     const project = projectList.find((item) => String(item.id) === target.projectId);
     if (!project) return null;
@@ -171,6 +175,19 @@ const activeReport = computed(() => {
         state,
         path: target.path
     };
+});
+
+const viewerHasContent = computed(() => {
+    const report = activeReport.value;
+    if (!report) return false;
+    return report.state.status === "ready" || report.state.status === "error";
+});
+
+const hasChunkDetails = computed(() => {
+    const report = activeReport.value;
+    if (!report) return false;
+    const chunks = report.state.chunks;
+    return Array.isArray(chunks) && chunks.length > 1;
 });
 const middlePaneStyle = computed(() => {
     const width = isProjectToolActive.value ? middlePaneWidth.value : 0;
@@ -318,7 +335,10 @@ function createDefaultReportState() {
         status: "idle",
         report: "",
         updatedAt: null,
-        updatedAtDisplay: null
+        updatedAtDisplay: null,
+        error: "",
+        chunks: [],
+        conversationId: ""
     };
 }
 
@@ -334,6 +354,25 @@ function ensureReportTreeEntry(projectId) {
         };
     }
     return reportTreeCache[key];
+}
+
+function ensureProjectBatchState(projectId) {
+    const key = normaliseProjectId(projectId);
+    if (!key) return null;
+    if (!Object.prototype.hasOwnProperty.call(reportBatchStates, key)) {
+        reportBatchStates[key] = {
+            running: false,
+            processed: 0,
+            total: 0
+        };
+    }
+    return reportBatchStates[key];
+}
+
+function getProjectBatchState(projectId) {
+    const key = normaliseProjectId(projectId);
+    if (!key) return null;
+    return reportBatchStates[key] || null;
 }
 
 function ensureFileReportState(projectId, path) {
@@ -355,6 +394,8 @@ function getStatusLabel(status) {
             return "處理中";
         case "ready":
             return "已完成";
+        case "error":
+            return "失敗";
         default:
             return "待生成";
     }
@@ -448,50 +489,151 @@ function selectReport(projectId, path) {
     };
 }
 
-async function generateReportForFile(project, node) {
-    if (!project || !node || node.type !== "file") return;
+async function generateReportForFile(project, node, options = {}) {
+    const { autoSelect = true, silent = false } = options;
+    if (!project || !node || node.type !== "file") {
+        return { status: "skipped" };
+    }
     const projectId = normaliseProjectId(project.id);
     const state = ensureFileReportState(projectId, node.path);
-    if (!state || state.status === "processing") return;
+    if (!state || state.status === "processing") {
+        return { status: "processing" };
+    }
 
     state.status = "processing";
+    state.error = "";
+    state.report = "";
+    state.chunks = [];
+    state.conversationId = "";
 
-    await new Promise((resolve) => setTimeout(resolve, 1800));
+    try {
+        const root = await getProjectRootHandleById(project.id);
+        const fileHandle = await fileSystemService.getFileHandleByPath(root, node.path);
+        const file = await fileHandle.getFile();
+        const mime = node.mime || file.type || "";
+        if (!preview.isTextLike(node.name, mime)) {
+            throw new Error("目前僅支援純文字或程式碼檔案的審查");
+        }
+        const text = await file.text();
+        if (!text.trim()) {
+            throw new Error("檔案內容為空");
+        }
 
-    const completedAt = new Date();
-    state.status = "ready";
-    state.updatedAt = completedAt;
-    state.updatedAtDisplay = completedAt.toLocaleString();
-    state.report = buildReportContent(project, node, completedAt);
+        const payload = await generateReportViaDify({
+            projectId,
+            projectName: project.name,
+            path: node.path,
+            content: text
+        });
 
-    activeReportTarget.value = {
-        projectId,
-        path: node.path
-    };
+        const completedAt = payload?.generatedAt ? new Date(payload.generatedAt) : new Date();
+        state.status = "ready";
+        state.updatedAt = completedAt;
+        state.updatedAtDisplay = completedAt.toLocaleString();
+        state.report = payload?.report || "";
+        state.chunks = Array.isArray(payload?.chunks) ? payload.chunks : [];
+        state.conversationId = payload?.conversationId || "";
+        state.error = "";
+
+        if (autoSelect) {
+            activeReportTarget.value = {
+                projectId,
+                path: node.path
+            };
+        }
+
+        return { status: "ready" };
+    } catch (error) {
+        const message = error?.message ? String(error.message) : String(error);
+        state.status = "error";
+        state.error = message;
+        state.report = "";
+        state.chunks = [];
+        state.conversationId = "";
+        const now = new Date();
+        state.updatedAt = now;
+        state.updatedAtDisplay = now.toLocaleString();
+
+        console.error("[Report] Failed to generate report", {
+            projectId,
+            path: node?.path,
+            error
+        });
+
+        if (autoSelect) {
+            activeReportTarget.value = {
+                projectId,
+                path: node.path
+            };
+        }
+
+        if (!silent) {
+            if (error?.name === "SecurityError" || error?.name === "NotAllowedError" || error?.name === "TypeError") {
+                await safeAlertFail("生成報告失敗", error);
+            } else {
+                alert(`生成報告失敗：${message}`);
+            }
+        }
+
+        return { status: "error", error };
+    }
 }
 
-function buildReportContent(project, node, completedAt) {
-    const timestamp = completedAt?.toLocaleString() ?? new Date().toLocaleString();
-    const infoLines = [
-        `# ${node?.name ?? "文件"} 審查報告`,
-        "",
-        `- 所屬專案：${project?.name ?? "專案"}`,
-        `- 文件路徑：${node?.path ?? ""}`,
-        `- 生成時間：${timestamp}`
-    ];
-    infoLines.push(
-        "",
-        "## 審查摘要",
-        "1. 整合 Dify 單文件輸出，摘錄主要風險與異常。",
-        "2. 評估程式碼風格、可維護性與測試覆蓋情況。",
-        "3. 標記需要人工複核的段落或外部依賴。",
-        "",
-        "## 後續建議",
-        "- 若檔案相依其他模組，建議同步追加審查。",
-        "- 重新生成報告時保留本次輸出以利差異比對。",
-        "- 若需更進階分析，可於 Dify 任務中追加上下文。"
-    );
-    return infoLines.join("\n");
+async function generateProjectReports(project) {
+    if (!project) return;
+    const projectId = normaliseProjectId(project.id);
+    const batchState = ensureProjectBatchState(projectId);
+    if (!batchState || batchState.running) return;
+
+    const entry = ensureReportTreeEntry(project.id);
+    if (!entry.nodes.length) {
+        await loadReportTreeForProject(project.id);
+    }
+
+    if (entry.loading) {
+        await new Promise((resolve) => {
+            const stop = watch(
+                () => entry.loading,
+                (loading) => {
+                    if (!loading) {
+                        stop();
+                        resolve();
+                    }
+                }
+            );
+        });
+    }
+
+    if (entry.error) {
+        console.warn("[Report] Cannot start batch generation due to tree error", entry.error);
+        alert(`無法生成報告：${entry.error}`);
+        return;
+    }
+
+    const nodes = collectFileNodes(entry.nodes);
+    if (!nodes.length) {
+        alert("此專案尚未索引可供審查的檔案");
+        return;
+    }
+
+    batchState.running = true;
+    batchState.processed = 0;
+    batchState.total = nodes.length;
+
+    try {
+        for (const node of nodes) {
+            await generateReportForFile(project, node, { autoSelect: false, silent: true });
+            batchState.processed += 1;
+        }
+    } finally {
+        batchState.running = false;
+        if (nodes.length) {
+            activeReportTarget.value = {
+                projectId,
+                path: nodes[nodes.length - 1].path
+            };
+        }
+    }
 }
 
 watch(
@@ -510,6 +652,12 @@ watch(
         Object.keys(reportTreeCache).forEach((projectId) => {
             if (!currentIds.has(projectId)) {
                 delete reportTreeCache[projectId];
+            }
+        });
+
+        Object.keys(reportBatchStates).forEach((projectId) => {
+            if (!currentIds.has(projectId)) {
+                delete reportBatchStates[projectId];
             }
         });
 
@@ -923,14 +1071,16 @@ onBeforeUnmount(() => {
                             :on-select="selectReport"
                             :get-status-label="getStatusLabel"
                             :on-reload-project="loadReportTreeForProject"
+                            :on-generate-project="generateProjectReports"
+                            :get-project-batch-state="getProjectBatchState"
                             :active-target="activeReportTarget"
                             :is-resizing="isReportSidebarResizing"
                             @resize-start="startReportSidebarResize"
                         />
                         <section class="reportViewer">
                             <div class="panelHeader">報告檢視</div>
-                            <template v-if="hasReadyReports">
-                                <div class="reportTabs">
+                            <template v-if="hasReadyReports || viewerHasContent">
+                                <div v-if="readyReports.length" class="reportTabs">
                                     <button
                                         v-for="entry in readyReports"
                                         :key="entry.key"
@@ -947,7 +1097,7 @@ onBeforeUnmount(() => {
                                         {{ entry.project.name }} / {{ entry.path }}
                                     </button>
                                 </div>
-                                <div v-if="activeReport" class="reportViewerContent">
+                                <div v-if="activeReport && viewerHasContent" class="reportViewerContent">
                                     <h2 class="reportTitle">{{ activeReport.project.name }} / {{ activeReport.path }}</h2>
                                     <p
                                         v-if="activeReport.state.updatedAtDisplay"
@@ -955,7 +1105,28 @@ onBeforeUnmount(() => {
                                     >
                                         生成時間：{{ activeReport.state.updatedAtDisplay }}
                                     </p>
-                                    <pre class="reportBody">{{ activeReport.state.report }}</pre>
+                                    <div
+                                        v-if="activeReport.state.status === 'error'"
+                                        class="reportErrorPanel"
+                                    >
+                                        <p class="reportErrorText">生成失敗：{{ activeReport.state.error || '未知原因' }}</p>
+                                        <p class="reportErrorHint">請檢查檔案權限、Dify 設定或稍後再試。</p>
+                                    </div>
+                                    <template v-else>
+                                        <pre class="reportBody codeScroll">{{ activeReport.state.report }}</pre>
+                                        <details v-if="hasChunkDetails" class="reportChunks">
+                                            <summary>分段輸出（{{ activeReport.state.chunks.length }}）</summary>
+                                            <ol class="reportChunkList">
+                                                <li
+                                                    v-for="chunk in activeReport.state.chunks"
+                                                    :key="`${chunk.index}-${chunk.total}`"
+                                                >
+                                                    <h4 class="reportChunkTitle">第 {{ chunk.index }} 段</h4>
+                                                    <pre class="reportChunkBody codeScroll">{{ chunk.answer }}</pre>
+                                                </li>
+                                            </ol>
+                                        </details>
+                                    </template>
                                 </div>
                                 <div v-else class="reportViewerPlaceholder">請從左側選擇檔案報告。</div>
                             </template>
@@ -1381,12 +1552,80 @@ body,
     flex: 1 1 auto;
     margin: 0;
     padding: 16px;
-    border-radius: 0;
-    background: #111827;
-    border: 1px solid #1f2937;
-    color: #e5e7eb;
+    border-radius: 6px;
+    background: #1b1b1b;
+    border: 1px solid #2f2f2f;
+    color: #d1d5db;
     font-family: Consolas, "Courier New", monospace;
     font-size: 13px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow: auto;
+}
+
+.reportErrorPanel {
+    margin: 0;
+    padding: 16px;
+    border-radius: 6px;
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    background: rgba(248, 113, 113, 0.08);
+    color: #fda4af;
+}
+
+.reportErrorText {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.reportErrorHint {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: #fecaca;
+}
+
+.reportChunks {
+    margin-top: 16px;
+    border-radius: 6px;
+    border: 1px solid #2f2f2f;
+    background: #111827;
+    padding: 12px 16px;
+    color: #e2e8f0;
+}
+
+.reportChunks > summary {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.reportChunkList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportChunkTitle {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportChunkBody {
+    margin: 0;
+    padding: 12px;
+    border-radius: 4px;
+    border: 1px solid #2f2f2f;
+    background: #1b1b1b;
+    color: #d1d5db;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.45;
     white-space: pre-wrap;
     word-break: break-word;
     overflow: auto;
