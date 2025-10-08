@@ -13,14 +13,18 @@ const {
     DIFY_USER_ID = "code-reviewer"
 } = env;
 
-const baseUrl = DIFY_API_BASE_URL.replace(/\/$/, "");
+const baseUrl = typeof DIFY_API_BASE_URL === "string"
+    ? DIFY_API_BASE_URL.trim().replace(/\/$/, "")
+    : "";
 
 if (!baseUrl) {
     console.warn("[dify] DIFY_API_BASE_URL is not configured; report generation will fail until it is set.");
 }
 
-const endpointPath = DIFY_CHAT_ENDPOINT.startsWith("/") ? DIFY_CHAT_ENDPOINT : `/${DIFY_CHAT_ENDPOINT}`;
-const requestUrl = `${baseUrl}${endpointPath}`;
+const endpointPath = (typeof DIFY_CHAT_ENDPOINT === "string" && DIFY_CHAT_ENDPOINT.trim())
+    ? (DIFY_CHAT_ENDPOINT.trim().startsWith("/") ? DIFY_CHAT_ENDPOINT.trim() : `/${DIFY_CHAT_ENDPOINT.trim()}`)
+    : "/chat-messages";
+const requestUrl = baseUrl ? `${baseUrl}${endpointPath}` : endpointPath;
 
 const responseMode = (() => {
     const mode = typeof DIFY_RESPONSE_MODE === "string" && DIFY_RESPONSE_MODE.trim()
@@ -133,6 +137,10 @@ export async function requestDifyReport({ projectName, filePath, content, userId
     for (let index = 0; index < segments.length; index += 1) {
         const segment = segments[index];
         const chunkIndex = index + 1;
+        const resolvedUserId = typeof userId === "string" && userId.trim() ? userId.trim() : DIFY_USER_ID;
+        if (!resolvedUserId) {
+            throw new Error("Dify user identifier is required; set DIFY_USER_ID or pass userId");
+        }
         const body = {
             inputs: {
                 project_name: projectName || "",
@@ -149,17 +157,17 @@ export async function requestDifyReport({ projectName, filePath, content, userId
             }),
             response_mode: responseMode,
             conversation_id: conversationId,
-            user: userId || DIFY_USER_ID,
+            user: resolvedUserId,
             files: fileAttachments
         };
         let response;
         try {
+            const headers = new Headers();
+            headers.set("Authorization", `Bearer ${DIFY_API_KEY}`);
+            headers.set("Content-Type", "application/json");
             response = await fetchImpl(requestUrl, {
                 method: "POST",
-                headers: {
-                    Authorization: `Bearer ${DIFY_API_KEY}`,
-                    "Content-Type": "application/json"
-                },
+                headers,
                 body: JSON.stringify(body)
             });
         } catch (error) {

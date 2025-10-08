@@ -67,6 +67,73 @@ function mapNodeRow(row) {
     };
 }
 
+async function upsertReport({
+    projectId,
+    path,
+    report,
+    chunks,
+    segments,
+    conversationId,
+    userId,
+    generatedAt
+}) {
+    if (!projectId || !path) {
+        throw new Error("Report upsert requires projectId and path");
+    }
+    const now = Date.now();
+    const generatedTime = (() => {
+        if (!generatedAt) return Number.NaN;
+        if (typeof generatedAt === "number") {
+            return generatedAt;
+        }
+        const parsed = Date.parse(generatedAt);
+        return Number.isNaN(parsed) ? Number.NaN : parsed;
+    })();
+    const storedGeneratedAt = Number.isFinite(generatedTime) ? generatedTime : now;
+    const serialisedChunks = JSON.stringify(Array.isArray(chunks) ? chunks : []);
+    const serialisedSegments = JSON.stringify(Array.isArray(segments) ? segments : []);
+    const safeProjectId = typeof projectId === "string" ? projectId : String(projectId);
+    const safePath = typeof path === "string" ? path : String(path);
+    const safeReport = typeof report === "string" ? report : "";
+    const safeConversationId = typeof conversationId === "string" ? conversationId : "";
+    const safeUserId = typeof userId === "string" ? userId : "";
+
+    await pool.query(
+        `INSERT INTO reports (
+            project_id,
+            path,
+            report,
+            chunks_json,
+            segments_json,
+            conversation_id,
+            user_id,
+            generated_at,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            report = VALUES(report),
+            chunks_json = VALUES(chunks_json),
+            segments_json = VALUES(segments_json),
+            conversation_id = VALUES(conversation_id),
+            user_id = VALUES(user_id),
+            generated_at = VALUES(generated_at),
+            updated_at = VALUES(updated_at)`,
+        [
+            safeProjectId,
+            safePath,
+            safeReport,
+            serialisedChunks,
+            serialisedSegments,
+            safeConversationId,
+            safeUserId,
+            storedGeneratedAt,
+            now,
+            now
+        ]
+    );
+}
+
 app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
 });
@@ -213,11 +280,24 @@ app.post("/api/reports/dify", async (req, res, next) => {
             segments,
             files
         });
-
+        const resolvedGeneratedAt = result?.generatedAt || new Date().toISOString();
+        const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+        await upsertReport({
+            projectId,
+            path,
+            report: result?.report,
+            chunks: result?.chunks,
+            segments: result?.segments,
+            conversationId: result?.conversationId,
+            userId: resolvedUserId,
+            generatedAt: resolvedGeneratedAt
+        });
+        const savedAtIso = new Date().toISOString();
         res.json({
             projectId,
             path,
-            ...result
+            ...result,
+            savedAt: savedAtIso
         });
     } catch (error) {
         console.error("[dify] Failed to generate report", error);

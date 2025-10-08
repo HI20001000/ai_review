@@ -5,14 +5,22 @@ function readEnvBase() {
     if (fromWindow) {
         return String(fromWindow).trim();
     }
-    if (typeof import.meta !== "undefined" && import.meta.env && typeof import.meta.env.VITE_API_BASE_URL === "string") {
-        const value = import.meta.env.VITE_API_BASE_URL.trim();
-        if (value) return value;
+    const metaEnv = typeof import.meta !== "undefined" ? import.meta.env : undefined;
+    const processEnv = typeof process !== "undefined" ? process.env : undefined;
+
+    const candidates = [
+        metaEnv?.VITE_API_BASE_URL,
+        metaEnv?.VITE_BACKEND_URL,
+        processEnv?.VITE_API_BASE_URL,
+        processEnv?.VITE_BACKEND_URL
+    ];
+
+    for (const candidate of candidates) {
+        if (typeof candidate === "string" && candidate.trim()) {
+            return candidate.trim();
+        }
     }
-    if (typeof process !== "undefined" && typeof process.env?.VITE_API_BASE_URL === "string") {
-        const value = process.env.VITE_API_BASE_URL.trim();
-        if (value) return value;
-    }
+
     return "";
 }
 
@@ -25,6 +33,25 @@ function normaliseBase(base) {
 }
 
 const apiBase = normaliseBase(readEnvBase());
+
+function readReportUserId() {
+    const fromWindow = typeof window !== "undefined" && window.__AI_PLATFORM_REPORT_USER__;
+    if (fromWindow) {
+        return String(fromWindow).trim();
+    }
+    const metaEnv = typeof import.meta !== "undefined" ? import.meta.env : undefined;
+    const processEnv = typeof process !== "undefined" ? process.env : undefined;
+    const candidates = [
+        metaEnv?.VITE_DIFY_USER_ID,
+        processEnv?.VITE_DIFY_USER_ID
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === "string" && candidate.trim()) {
+            return candidate.trim();
+        }
+    }
+    return "workspace-client";
+}
 
 function joinPaths(base, path) {
     if (!base) return path;
@@ -87,7 +114,11 @@ async function postJson(path, payload) {
 }
 
 export async function generateReportViaDify(payload) {
-    return await postJson("/reports/dify", payload);
+    const enrichedPayload = {
+        ...payload,
+        userId: payload?.userId || readReportUserId()
+    };
+    return await postJson("/reports/dify", enrichedPayload);
 }
 
 export default {

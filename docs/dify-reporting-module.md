@@ -34,6 +34,8 @@ DIFY_CHAT_ENDPOINT=/workflow/run
 
 修改後重新啟動後端伺服器或執行 `npm run server`，即可使新的路徑與 Port 設定生效。伺服器啟動時會在日誌輸出 `[env]` 及 `[dify]` 前綴的訊息，顯示使用的 `.env` 來源、目前採用的 `baseUrl`、端點、response mode 與是否偵測到 API Key，方便確認設定是否正確。
 
+從這個版本起，後端會把每次生成的審查結果寫入 MySQL `reports` 表（參考 `server/sql/schema.sql`），以 `project_id + path` 做唯一鍵。當再次請求相同檔案時，新的結果會覆寫同一筆紀錄，方便後續擴充歷史查詢或導出功能。
+
 後端服務與 `npm run db:init` 等指令會透過 `server/lib/env.js` 自動載入 `.env`，並在成功讀取時顯示 `[env] Loaded environment variables from ...`。重新啟動伺服器後，可從啟動日誌中的 `[env]`、`[dify]` 訊息確認設定是否生效。
 
 ## 目標
