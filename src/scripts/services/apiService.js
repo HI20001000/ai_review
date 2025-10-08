@@ -9,7 +9,7 @@ const apiBase = (() => {
     return DEFAULT_BASE;
 })();
 
-async function request(path, { method = "GET", body, headers = {} } = {}) {
+const request = async (path, { method = "GET", body, headers = {} } = {}) => {
     const url = `${apiBase}${path}`;
     const opts = { method, headers: { ...headers } };
     if (body !== undefined) {
@@ -29,35 +29,45 @@ async function request(path, { method = "GET", body, headers = {} } = {}) {
         return await response.json();
     }
     return await response.text();
-}
+};
 
-export async function fetchProjects() {
+const fetchProjects = async () => {
     return await request("/projects");
-}
+};
 
-export async function createOrUpdateProject(project) {
+const createOrUpdateProject = async (project) => {
     return await request("/projects", { method: "POST", body: project });
-}
+};
 
-export async function deleteProjectById(projectId) {
+const deleteProjectById = async (projectId) => {
     await request(`/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
-}
+};
 
-export async function fetchNodesByProject(projectId) {
+const fetchNodesByProject = async (projectId) => {
     return await request(`/projects/${encodeURIComponent(projectId)}/nodes`);
-}
+};
 
-export async function replaceProjectNodes(projectId, nodes) {
+const replaceProjectNodes = async (projectId, nodes) => {
     await request(`/projects/${encodeURIComponent(projectId)}/nodes`, { method: "POST", body: { nodes } });
-}
+};
 
-export async function deleteProjectNodes(projectId) {
+const deleteProjectNodes = async (projectId) => {
     await request(`/projects/${encodeURIComponent(projectId)}/nodes`, { method: "DELETE" });
-}
+};
 
-export async function generateReportViaDify(payload) {
+const generateReportViaDify = async (payload) => {
     return await request("/reports/dify", { method: "POST", body: payload });
-}
+};
+
+export {
+    fetchProjects,
+    createOrUpdateProject,
+    deleteProjectById,
+    fetchNodesByProject,
+    replaceProjectNodes,
+    deleteProjectNodes,
+    generateReportViaDify,
+};
 
 const apiService = {
     fetchProjects,
