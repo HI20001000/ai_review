@@ -91,9 +91,6 @@ const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
-const reportReviewRef = ref(null);
-const reportSidebarWidth = ref(320);
-const isReportSidebarResizing = ref(false);
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
 const chatDragState = reactive({ active: false, offsetX: 0, offsetY: 0 });
 const chatResizeState = reactive({
@@ -119,6 +116,7 @@ const reportBatchStates = reactive({});
 const activeReportTarget = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
+const panelMode = computed(() => (isReportToolActive.value ? "reports" : "projects"));
 const reportProjectEntries = computed(() => {
     const list = Array.isArray(projects.value) ? projects.value : [];
     return list.map((project) => {
@@ -193,17 +191,13 @@ const hasChunkDetails = computed(() => {
     return Array.isArray(chunks) && chunks.length > 1;
 });
 const middlePaneStyle = computed(() => {
-    const width = isProjectToolActive.value ? middlePaneWidth.value : 0;
+    const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
+    const width = hasActiveTool ? middlePaneWidth.value : 0;
     return {
         flex: `0 0 ${width}px`,
         width: `${width}px`
     };
 });
-
-const reportSidebarStyle = computed(() => ({
-    flex: `0 0 ${reportSidebarWidth.value}px`,
-    width: `${reportSidebarWidth.value}px`
-}));
 
 const chatWindowStyle = computed(() => ({
     width: `${chatWindowState.width}px`,
@@ -233,14 +227,6 @@ watch(isChatWindowOpen, (visible) => {
         });
     } else {
         closeAssistantSession();
-    }
-});
-
-watch(isReportToolActive, (active) => {
-    if (active) {
-        nextTick(() => {
-            clampReportSidebarWidth();
-        });
     }
 });
 
@@ -824,55 +810,6 @@ function startPreviewResize(event) {
     window.addEventListener("pointercancel", stop);
 }
 
-const REPORT_SIDEBAR_MIN_WIDTH = 260;
-const REPORT_VIEWER_MIN_WIDTH = 360;
-
-function getReportSidebarBounds() {
-    const reviewEl = reportReviewRef.value;
-    if (!reviewEl) return null;
-    const rect = reviewEl.getBoundingClientRect();
-    if (!rect?.width) return null;
-    const min = REPORT_SIDEBAR_MIN_WIDTH;
-    const max = Math.max(min, rect.width - REPORT_VIEWER_MIN_WIDTH);
-    return { min, max };
-}
-
-function clampReportSidebarWidth() {
-    const bounds = getReportSidebarBounds();
-    if (!bounds) return;
-    reportSidebarWidth.value = clamp(reportSidebarWidth.value, bounds.min, bounds.max);
-}
-
-function startReportSidebarResize(event) {
-    if (event.button !== 0 && event.pointerType !== "touch") return;
-    event.preventDefault();
-
-    const bounds = getReportSidebarBounds();
-    if (!bounds) return;
-
-    const startX = event.clientX;
-    const startWidth = reportSidebarWidth.value;
-    isReportSidebarResizing.value = true;
-
-    const handleMove = (pointerEvent) => {
-        const delta = pointerEvent.clientX - startX;
-        const currentBounds = getReportSidebarBounds() || bounds;
-        const nextWidth = clamp(startWidth + delta, currentBounds.min, currentBounds.max);
-        reportSidebarWidth.value = nextWidth;
-    };
-
-    const stop = () => {
-        isReportSidebarResizing.value = false;
-        window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", stop);
-        window.removeEventListener("pointercancel", stop);
-    };
-
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-}
-
 async function handleAddActiveContext() {
     const added = await addActiveNode();
     if (added) {
@@ -1111,96 +1048,94 @@ onBeforeUnmount(() => {
             </nav>
             <PanelRail
                 :style-width="middlePaneStyle"
+                :mode="panelMode"
                 :projects="projects"
                 :selected-project-id="selectedProjectId"
                 :on-select-project="handleSelectProject"
                 :on-delete-project="deleteProject"
                 :is-tree-collapsed="isTreeCollapsed"
-                :show-content="isProjectToolActive"
+                :show-content="isProjectToolActive || isReportToolActive"
                 :tree="tree"
                 :active-tree-path="activeTreePath"
                 :is-loading-tree="isLoadingTree"
                 :open-node="openNode"
                 :select-tree-node="selectTreeNode"
                 @resize-start="startPreviewResize"
-            />
+            >
+                <template v-if="isReportToolActive">
+                    <ReportPanel
+                        :style-width="{ flex: '1 1 auto', width: '100%' }"
+                        :entries="reportProjectEntries"
+                        :normalise-project-id="normaliseProjectId"
+                        :is-node-expanded="isReportNodeExpanded"
+                        :toggle-node="toggleReportNode"
+                        :get-report-state="getReportStateForFile"
+                        :on-generate="generateReportForFile"
+                        :on-select="selectReport"
+                        :get-status-label="getStatusLabel"
+                        :on-reload-project="loadReportTreeForProject"
+                        :on-generate-project="generateProjectReports"
+                        :get-project-batch-state="getProjectBatchState"
+                        :active-target="activeReportTarget"
+                        :is-resizing="false"
+                        :enable-resize-edge="false"
+                    />
+                </template>
+            </PanelRail>
 
             <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive }">
                 <template v-if="isReportToolActive">
-                    <div class="reportReview" ref="reportReviewRef">
-                        <ReportPanel
-                            :style-width="reportSidebarStyle"
-                            :entries="reportProjectEntries"
-                            :normalise-project-id="normaliseProjectId"
-                            :is-node-expanded="isReportNodeExpanded"
-                            :toggle-node="toggleReportNode"
-                            :get-report-state="getReportStateForFile"
-                            :on-generate="generateReportForFile"
-                            :on-select="selectReport"
-                            :get-status-label="getStatusLabel"
-                            :on-reload-project="loadReportTreeForProject"
-                            :on-generate-project="generateProjectReports"
-                            :get-project-batch-state="getProjectBatchState"
-                            :active-target="activeReportTarget"
-                            :is-resizing="isReportSidebarResizing"
-                            @resize-start="startReportSidebarResize"
-                        />
-                        <section class="reportViewer">
-                            <div class="panelHeader">報告檢視</div>
-                            <template v-if="hasReadyReports || viewerHasContent">
-                                <div v-if="readyReports.length" class="reportTabs">
-                                    <button
-                                        v-for="entry in readyReports"
-                                        :key="entry.key"
-                                        type="button"
-                                        class="reportTab"
-                                        :class="{
-                                            active:
-                                                activeReport &&
-                                                normaliseProjectId(entry.project.id) === normaliseProjectId(activeReport.project.id) &&
-                                                entry.path === activeReport.path
-                                        }"
-                                        @click="selectReport(entry.project.id, entry.path)"
-                                    >
-                                        {{ entry.project.name }} / {{ entry.path }}
-                                    </button>
+                    <div class="panelHeader">報告檢視</div>
+                    <template v-if="hasReadyReports || viewerHasContent">
+                        <div v-if="readyReports.length" class="reportTabs">
+                            <button
+                                v-for="entry in readyReports"
+                                :key="entry.key"
+                                type="button"
+                                class="reportTab"
+                                :class="{
+                                    active:
+                                        activeReport &&
+                                        normaliseProjectId(entry.project.id) === normaliseProjectId(activeReport.project.id) &&
+                                        entry.path === activeReport.path
+                                }"
+                                @click="selectReport(entry.project.id, entry.path)"
+                            >
+                                {{ entry.project.name }} / {{ entry.path }}
+                            </button>
+                        </div>
+                        <div class="reportViewerContent">
+                            <template v-if="activeReport">
+                                <div class="reportViewerHeader">
+                                    <h3 class="reportTitle">{{ activeReport.project.name }} / {{ activeReport.path }}</h3>
+                                    <p class="reportViewerTimestamp">更新於 {{ activeReport.state.updatedAtDisplay || '-' }}</p>
                                 </div>
-                                <div v-if="activeReport && viewerHasContent" class="reportViewerContent">
-                                    <h2 class="reportTitle">{{ activeReport.project.name }} / {{ activeReport.path }}</h2>
-                                    <p
-                                        v-if="activeReport.state.updatedAtDisplay"
-                                        class="reportViewerTimestamp"
-                                    >
-                                        生成時間：{{ activeReport.state.updatedAtDisplay }}
-                                    </p>
-                                    <div
-                                        v-if="activeReport.state.status === 'error'"
-                                        class="reportErrorPanel"
-                                    >
-                                        <p class="reportErrorText">生成失敗：{{ activeReport.state.error || '未知原因' }}</p>
-                                        <p class="reportErrorHint">請檢查檔案權限、Dify 設定或稍後再試。</p>
-                                    </div>
-                                    <template v-else>
-                                        <pre class="reportBody codeScroll">{{ activeReport.state.report }}</pre>
-                                        <details v-if="hasChunkDetails" class="reportChunks">
-                                            <summary>分段輸出（{{ activeReport.state.chunks.length }}）</summary>
-                                            <ol class="reportChunkList">
-                                                <li
-                                                    v-for="chunk in activeReport.state.chunks"
-                                                    :key="`${chunk.index}-${chunk.total}`"
-                                                >
-                                                    <h4 class="reportChunkTitle">第 {{ chunk.index }} 段</h4>
-                                                    <pre class="reportChunkBody codeScroll">{{ chunk.answer }}</pre>
-                                                </li>
-                                            </ol>
-                                        </details>
-                                    </template>
+                                <div v-if="activeReport.state.status === 'error'" class="reportErrorPanel">
+                                    <p class="reportErrorText">生成失敗：{{ activeReport.state.error || '未知原因' }}</p>
+                                    <p class="reportErrorHint">請檢查檔案權限、Dify 設定或稍後再試。</p>
                                 </div>
-                                <div v-else class="reportViewerPlaceholder">請從左側選擇檔案報告。</div>
+                                <template v-else>
+                                    <pre class="reportBody codeScroll">{{ activeReport.state.report }}</pre>
+                                    <details v-if="hasChunkDetails" class="reportChunks">
+                                        <summary>分段輸出（{{ activeReport.state.chunks.length }}）</summary>
+                                        <ol class="reportChunkList">
+                                            <li
+                                                v-for="chunk in activeReport.state.chunks"
+                                                :key="`${chunk.index}-${chunk.total}`"
+                                            >
+                                                <h4 class="reportChunkTitle">第 {{ chunk.index }} 段</h4>
+                                                <pre class="reportChunkBody codeScroll">{{ chunk.answer }}</pre>
+                                            </li>
+                                        </ol>
+                                    </details>
+                                </template>
                             </template>
-                            <p v-else class="reportViewerPlaceholder">尚未生成任何報告，請先於左側檔案中啟動生成。</p>
-                        </section>
-                    </div>
+                            <template v-else>
+                                <div class="reportViewerPlaceholder">請從左側選擇檔案報告。</div>
+                            </template>
+                        </div>
+                    </template>
+                    <p v-else class="reportViewerPlaceholder">尚未生成任何報告，請先於左側檔案中啟動生成。</p>
                 </template>
                 <template v-else-if="previewing.kind && previewing.kind !== 'error'">
                     <div class="pvHeader">
@@ -1537,20 +1472,11 @@ body,
 }
 
 .workSpace--reports {
-    padding: 0;
-    gap: 0;
+    padding: 16px;
+    gap: 16px;
     background: #202020;
     border-color: #323232;
-    overflow: hidden;
-}
-
-.reportReview {
-    flex: 1 1 auto;
-    display: flex;
-    gap: 0;
-    min-height: 0;
-    min-width: 0;
-    align-items: stretch;
+    overflow: auto;
 }
 
 .panelHeader {
@@ -1559,18 +1485,25 @@ body,
     font-size: 14px;
 }
 
-.reportViewer {
+.reportViewerContent {
     flex: 1 1 auto;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
     background: #191919;
     border: 1px solid #323232;
     border-radius: 0;
     padding: 16px;
-    min-width: 0;
     box-sizing: border-box;
-    min-width: 360px;
+    min-width: 0;
+}
+
+.reportViewerHeader {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
 .reportTabs {
@@ -1595,14 +1528,6 @@ body,
     border-color: rgba(59, 130, 246, 0.5);
 }
 
-.reportViewerContent {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-height: 0;
-    overflow: hidden;
-}
 
 .reportTitle {
     margin: 0;

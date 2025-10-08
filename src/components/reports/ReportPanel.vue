@@ -1,11 +1,15 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import ReportTreeNode from "./ReportTreeNode.vue";
 
 const props = defineProps({
     styleWidth: {
         type: Object,
         required: true
+    },
+    enableResizeEdge: {
+        type: Boolean,
+        default: true
     },
     entries: {
         type: Array,
@@ -66,6 +70,7 @@ const emit = defineEmits(["resizeStart"]);
 const hasEntries = computed(() => (props.entries || []).length > 0);
 
 const isHoveringResizeEdge = ref(false);
+const showHoverEdge = computed(() => props.enableResizeEdge && isHoveringResizeEdge.value);
 
 const EDGE_THRESHOLD = 8;
 
@@ -82,6 +87,7 @@ function updateResizeHoverState(event) {
 }
 
 function handlePointerMove(event) {
+    if (!props.enableResizeEdge) return;
     updateResizeHoverState(event);
 }
 
@@ -90,6 +96,7 @@ function handlePointerLeave() {
 }
 
 function handlePointerDown(event) {
+    if (!props.enableResizeEdge) return;
     const hovering = updateResizeHoverState(event);
     if (!hovering) return;
     emit("resizeStart", event);
@@ -110,13 +117,22 @@ function batchProgress(projectId) {
     if (!state?.running) return "";
     return `${state.processed}/${state.total}`;
 }
+
+watch(
+    () => props.enableResizeEdge,
+    (enabled) => {
+        if (!enabled) {
+            isHoveringResizeEdge.value = false;
+        }
+    }
+);
 </script>
 
 <template>
     <aside
         class="reportProjects"
         :class="{
-            'reportProjects--hoverEdge': isHoveringResizeEdge,
+            'reportProjects--hoverEdge': showHoverEdge,
             'reportProjects--resizing': isResizing
         }"
         :style="styleWidth"
