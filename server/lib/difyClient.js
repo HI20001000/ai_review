@@ -21,6 +21,27 @@ if (!baseUrl) {
 const endpointPath = DIFY_CHAT_ENDPOINT.startsWith("/") ? DIFY_CHAT_ENDPOINT : `/${DIFY_CHAT_ENDPOINT}`;
 const requestUrl = `${baseUrl}${endpointPath}`;
 
+let cachedFetch = null;
+
+async function resolveFetch() {
+    if (typeof fetch === "function") {
+        return fetch.bind(globalThis);
+    }
+    if (cachedFetch) {
+        return cachedFetch;
+    }
+    try {
+        const undici = await import("node:undici");
+        cachedFetch = undici.fetch;
+        return cachedFetch;
+    } catch (error) {
+        const reason = error?.message ? ` (original error: ${error.message})` : "";
+        throw new Error(
+            `Fetch API is not available in this Node.js runtime. Please upgrade to Node 18+ or ensure node:undici can be imported${reason}.`
+        );
+    }
+}
+
 const tokenLimit = Math.max(1000, Number(DIFY_TOKEN_LIMIT) || 32000);
 const approxCharsPerToken = Math.max(1, Number(DIFY_APPROX_CHARS_PER_TOKEN) || 4);
 const safetyMargin = Math.min(1, Math.max(0.1, Number(DIFY_SAFETY_MARGIN) || 0.8));
@@ -92,6 +113,7 @@ export async function requestDifyReport({ projectName, filePath, content, userId
         : partitionContent(content || "");
     const results = [];
     let conversationId = "";
+    const fetchImpl = await resolveFetch();
     for (let index = 0; index < segments.length; index += 1) {
         const segment = segments[index];
         const chunkIndex = index + 1;
@@ -113,14 +135,23 @@ export async function requestDifyReport({ projectName, filePath, content, userId
             conversation_id: conversationId,
             user: userId || DIFY_USER_ID
         };
-        const response = await fetch(requestUrl, {
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${DIFY_API_KEY}`,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(body)
-        });
+        let response;
+        try {
+            response = await fetchImpl(requestUrl, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${DIFY_API_KEY}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(body)
+            });
+        } catch (error) {
+            const cause = error?.cause;
+            const addressHint = cause?.address ? ` ${cause.address}` : "";
+            const networkHint = cause?.code ? ` (code: ${cause.code}${addressHint})` : "";
+            const reason = error?.message || "Unknown error";
+            throw new Error(`Failed to reach Dify endpoint ${requestUrl}${networkHint}: ${reason}`);
+        }
         if (!response.ok) {
             const text = await response.text().catch(() => "");
             throw new Error(
