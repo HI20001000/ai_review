@@ -1,5 +1,5 @@
 import { ref } from "vue";
-import { idbDelete, idbDeleteNodesByProject, idbGetAll, idbPut, idbPutMany } from "../services/indexedDbService.js";
+import { createOrUpdateProject, deleteProjectById, deleteProjectNodes, fetchProjects, replaceProjectNodes } from "../services/apiService.js";
 import { parentOf } from "../utils/path.js";
 
 export function useProjectsStore({ preview, fileSystem }) {
@@ -21,19 +21,19 @@ export function useProjectsStore({ preview, fileSystem }) {
     }
 
     async function saveProjectRecord(record, handleIfAny) {
-        await idbPut("projects", sanitizeRecord(record));
+        await createOrUpdateProject(sanitizeRecord(record));
         if (handleIfAny) inMemoryHandles.set(record.id, handleIfAny);
     }
 
     async function loadProjectsFromDB() {
-        const saved = await idbGetAll("projects");
+        const saved = await fetchProjects();
         projects.value = saved.map(sanitizeRecord).sort((a, b) => a.name.localeCompare(b.name));
     }
 
     async function cleanupLegacyHandles() {
-        const all = await idbGetAll("projects");
+        const all = await fetchProjects();
         for (const rec of all) {
-            if ("handle" in rec) await idbPut("projects", sanitizeRecord(rec));
+            if ("handle" in rec) await createOrUpdateProject(sanitizeRecord(rec));
         }
     }
 
@@ -135,7 +135,7 @@ export function useProjectsStore({ preview, fileSystem }) {
                 ? await opfsRoot.getDirectoryHandle(projectName)
                 : dirHandle;
 
-            await idbDeleteNodesByProject(record.id);
+            await deleteProjectNodes(record.id);
             await treeStore.scanAndIndexProject(record.id, rootHandle);
             treeStore.tree.value = await treeStore.loadTreeFromDB(record.id);
         } catch (error) {
@@ -160,8 +160,7 @@ export function useProjectsStore({ preview, fileSystem }) {
         const ok = confirm(`Delete project ${project.name}? (OPFS files stay on disk)`);
         if (!ok) return;
         try {
-            await idbDelete("projects", project.id);
-            await idbDeleteNodesByProject(project.id);
+            await deleteProjectById(project.id);
             inMemoryHandles.delete(project.id);
             location.reload();
         } catch (error) {
@@ -202,7 +201,7 @@ export function useProjectsStore({ preview, fileSystem }) {
 
         const record = { id: projectId, name: rootName, mode: "external", createdAt: Date.now() };
         await saveProjectRecord(record, null);
-        await idbDeleteNodesByProject(projectId);
+        await deleteProjectNodes(projectId);
 
         const dirSet = new Set();
         const fileNodes = [];
@@ -246,7 +245,7 @@ export function useProjectsStore({ preview, fileSystem }) {
             parent: parentOf(path)
         }));
 
-        await idbPutMany("nodes", [...dirNodes, ...fileNodes]);
+        await replaceProjectNodes(projectId, [...dirNodes, ...fileNodes]);
         await loadProjectsFromDB();
         selectedProjectId.value = projectId;
         const built = await treeStore.loadTreeFromDB(projectId);
