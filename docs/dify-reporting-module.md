@@ -1,5 +1,23 @@
 # Dify 驅動的代碼審查報告模塊設計
 
+## 快速開始：設定 Dify 連線資訊
+
+在啟用 Dify 報告功能前，請於專案根目錄建立或更新 `.env` 檔案，並新增以下環境變數：
+
+```
+DIFY_API_BASE_URL=https://your-dify-host/v1
+DIFY_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
+DIFY_CHAT_ENDPOINT=/chat-messages
+DIFY_TOKEN_LIMIT=32000
+```
+
+* `DIFY_API_BASE_URL`：Dify 服務的 API 位址，通常以 `/v1` 結尾。
+* `DIFY_API_KEY`：在 Dify 後台建立的 API Token，用於驗證請求。
+* `DIFY_CHAT_ENDPOINT`：要呼叫的工作流端點，預設為 `/chat-messages`。
+* `DIFY_TOKEN_LIMIT`：模型可處理的 Token 上限，預設 32000，可依實際方案調整。
+
+後端服務與 `npm run db:init` 等指令會透過 `server/lib/env.js` 自動載入 `.env`，因此只要在部署環境設定上述變數即可。重新啟動伺服器後，可從後端啟動日誌中的 `[dify]` 訊息確認設定是否生效。
+
 ## 目標
 
 * 允許使用者針對當前項目或指定提交請求代碼審查報告。
