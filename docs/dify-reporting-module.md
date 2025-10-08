@@ -1,5 +1,41 @@
 # Dify 驅動的代碼審查報告模塊設計
 
+## 快速開始：設定 Dify 連線資訊
+
+在啟用 Dify 報告功能前，請於專案根目錄建立或更新 `.env` 檔案，並新增以下環境變數：
+
+```
+DIFY_API_BASE_URL=https://your-dify-host/v1
+DIFY_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
+DIFY_CHAT_ENDPOINT=/chat-messages
+DIFY_RESPONSE_MODE=blocking
+DIFY_TOKEN_LIMIT=32000
+```
+
+* `DIFY_API_BASE_URL`：Dify 服務的 API 位址，通常以 `/v1` 結尾。
+* `DIFY_API_KEY`：在 Dify 後台建立的 API Token，用於驗證請求。
+* `DIFY_CHAT_ENDPOINT`：要呼叫的工作流端點，預設為 `/chat-messages`。
+* `DIFY_RESPONSE_MODE`：Dify 回傳模式，可設定為 `blocking`（預設）或 `streaming`。
+* `DIFY_TOKEN_LIMIT`：模型可處理的 Token 上限，預設 32000，可依實際方案調整。
+
+### 設定 Dify 主機、Port 與路徑的範例
+
+`DIFY_API_BASE_URL` 應填入完整的協定、主機名稱（或 IP）、Port 以及 API 前綴路徑。例如自架 Dify 服務並透過 5001 Port 提供 `/v1` API，可在 `.env` 中寫成：
+
+```ini
+DIFY_API_BASE_URL=http://10.0.10.38:5001/v1
+```
+
+如果您的 Workflow 不是使用預設的 `/chat-messages` 路徑，請同步調整 `DIFY_CHAT_ENDPOINT`，例如：
+
+```ini
+DIFY_CHAT_ENDPOINT=/workflow/run
+```
+
+修改後重新啟動後端伺服器或執行 `npm run server`，即可使新的路徑與 Port 設定生效。伺服器啟動時會在日誌輸出 `[env]` 及 `[dify]` 前綴的訊息，顯示使用的 `.env` 來源、目前採用的 `baseUrl`、端點、response mode 與是否偵測到 API Key，方便確認設定是否正確。
+
+後端服務與 `npm run db:init` 等指令會透過 `server/lib/env.js` 自動載入 `.env`，並在成功讀取時顯示 `[env] Loaded environment variables from ...`。重新啟動伺服器後，可從啟動日誌中的 `[env]`、`[dify]` 訊息確認設定是否生效。
+
 ## 目標
 
 * 允許使用者針對當前項目或指定提交請求代碼審查報告。
