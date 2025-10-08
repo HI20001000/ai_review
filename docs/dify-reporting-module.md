@@ -8,12 +8,14 @@
 DIFY_API_BASE_URL=https://your-dify-host/v1
 DIFY_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
 DIFY_CHAT_ENDPOINT=/chat-messages
+DIFY_RESPONSE_MODE=blocking
 DIFY_TOKEN_LIMIT=32000
 ```
 
 * `DIFY_API_BASE_URL`：Dify 服務的 API 位址，通常以 `/v1` 結尾。
 * `DIFY_API_KEY`：在 Dify 後台建立的 API Token，用於驗證請求。
 * `DIFY_CHAT_ENDPOINT`：要呼叫的工作流端點，預設為 `/chat-messages`。
+* `DIFY_RESPONSE_MODE`：Dify 回傳模式，可設定為 `blocking`（預設）或 `streaming`。
 * `DIFY_TOKEN_LIMIT`：模型可處理的 Token 上限，預設 32000，可依實際方案調整。
 
 ### 設定 Dify 主機、Port 與路徑的範例
@@ -30,9 +32,9 @@ DIFY_API_BASE_URL=http://10.0.10.38:5001/v1
 DIFY_CHAT_ENDPOINT=/workflow/run
 ```
 
-修改後重新啟動後端伺服器或執行 `npm run server`，即可使新的路徑與 Port 設定生效。伺服器啟動時會在日誌輸出 `[dify]` 前綴的訊息，顯示目前採用的 `baseUrl` 與端點，方便確認設定是否正確。
+修改後重新啟動後端伺服器或執行 `npm run server`，即可使新的路徑與 Port 設定生效。伺服器啟動時會在日誌輸出 `[env]` 及 `[dify]` 前綴的訊息，顯示使用的 `.env` 來源、目前採用的 `baseUrl`、端點、response mode 與是否偵測到 API Key，方便確認設定是否正確。
 
-後端服務與 `npm run db:init` 等指令會透過 `server/lib/env.js` 自動載入 `.env`，因此只要在部署環境設定上述變數即可。重新啟動伺服器後，可從後端啟動日誌中的 `[dify]` 訊息確認設定是否生效。
+後端服務與 `npm run db:init` 等指令會透過 `server/lib/env.js` 自動載入 `.env`，並在成功讀取時顯示 `[env] Loaded environment variables from ...`。重新啟動伺服器後，可從啟動日誌中的 `[env]`、`[dify]` 訊息確認設定是否生效。
 
 ## 目標
 

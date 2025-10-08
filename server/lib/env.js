@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 let hasLoaded = false;
 let cachedEnv = null;
+let lastLoadMeta = null;
 
 function findEnvPath() {
     const candidates = [];
@@ -49,7 +50,7 @@ function parseEnv(content) {
         if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
             value = value.slice(1, -1);
         }
-        result[key] = value;
+        result[key] = value.trim();
     }
     return result;
 }
@@ -64,12 +65,15 @@ export function loadEnv() {
         try {
             process.loadEnvFile();
             cachedEnv = { ...process.env };
+            lastLoadMeta = { source: "process.loadEnvFile" };
+            console.log("[env] Loaded environment variables via process.loadEnvFile()");
             return cachedEnv;
         } catch (error) {
             if (error?.code !== "ENOENT") {
                 console.warn("Failed to load .env via process.loadEnvFile", error?.message || error);
             } else {
                 cachedEnv = { ...process.env };
+                lastLoadMeta = { source: "process.env" };
                 return cachedEnv;
             }
         }
@@ -85,12 +89,18 @@ export function loadEnv() {
             }
         }
         cachedEnv = { ...process.env };
+        lastLoadMeta = { source: "file", path: envPath };
+        console.log(`[env] Loaded environment variables from ${envPath}`);
         return cachedEnv;
     } catch (error) {
         if (error?.code !== "ENOENT") {
             console.warn("Failed to load .env file", error?.message || error);
+        } else if (!lastLoadMeta) {
+            const attemptedPath = findEnvPath();
+            console.warn(`[env] .env file not found at ${attemptedPath}; falling back to process.env`);
         }
         cachedEnv = { ...process.env };
+        lastLoadMeta = { source: "process.env" };
         return cachedEnv;
     }
 }

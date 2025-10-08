@@ -6,6 +6,7 @@ const {
     DIFY_API_BASE_URL = "",
     DIFY_API_KEY = "",
     DIFY_CHAT_ENDPOINT = "/chat-messages",
+    DIFY_RESPONSE_MODE = "blocking",
     DIFY_TOKEN_LIMIT = "32000",
     DIFY_APPROX_CHARS_PER_TOKEN = "4",
     DIFY_SAFETY_MARGIN = "0.8",
@@ -20,6 +21,13 @@ if (!baseUrl) {
 
 const endpointPath = DIFY_CHAT_ENDPOINT.startsWith("/") ? DIFY_CHAT_ENDPOINT : `/${DIFY_CHAT_ENDPOINT}`;
 const requestUrl = `${baseUrl}${endpointPath}`;
+
+const responseMode = (() => {
+    const mode = typeof DIFY_RESPONSE_MODE === "string" && DIFY_RESPONSE_MODE.trim()
+        ? DIFY_RESPONSE_MODE.trim().toLowerCase()
+        : "blocking";
+    return mode === "streaming" ? "streaming" : "blocking";
+})();
 
 let cachedFetch = null;
 
@@ -48,6 +56,13 @@ const safetyMargin = Math.min(1, Math.max(0.1, Number(DIFY_SAFETY_MARGIN) || 0.8
 const maxSegmentChars = Math.max(
     500,
     Math.floor(tokenLimit * approxCharsPerToken * safetyMargin)
+);
+
+const hasApiKey = Boolean(DIFY_API_KEY && DIFY_API_KEY.length);
+
+console.log(
+    `[dify] Resolved config baseUrl=${baseUrl || "(unset)"} endpoint=${endpointPath} responseMode=${responseMode} tokenLimit=${tokenLimit} ` +
+        `approxCharsPerToken=${approxCharsPerToken} safetyMargin=${safetyMargin} maxSegmentChars=${maxSegmentChars} apiKey=${hasApiKey ? "set" : "missing"}`
 );
 
 function sliceByNewline(content, start, size) {
@@ -106,7 +121,7 @@ function assertConfig() {
     }
 }
 
-export async function requestDifyReport({ projectName, filePath, content, userId, segments: presetSegments }) {
+export async function requestDifyReport({ projectName, filePath, content, userId, segments: presetSegments, files }) {
     assertConfig();
     const segments = Array.isArray(presetSegments) && presetSegments.length
         ? presetSegments
@@ -114,6 +129,7 @@ export async function requestDifyReport({ projectName, filePath, content, userId
     const results = [];
     let conversationId = "";
     const fetchImpl = await resolveFetch();
+    const fileAttachments = Array.isArray(files) ? files : [];
     for (let index = 0; index < segments.length; index += 1) {
         const segment = segments[index];
         const chunkIndex = index + 1;
@@ -131,9 +147,10 @@ export async function requestDifyReport({ projectName, filePath, content, userId
                 chunkIndex,
                 chunkTotal: segments.length
             }),
-            response_mode: "blocking",
+            response_mode: responseMode,
             conversation_id: conversationId,
-            user: userId || DIFY_USER_ID
+            user: userId || DIFY_USER_ID,
+            files: fileAttachments
         };
         let response;
         try {
@@ -190,6 +207,8 @@ export function getDifyConfigSummary() {
         tokenLimit,
         approxCharsPerToken,
         safetyMargin,
-        maxSegmentChars
+        maxSegmentChars,
+        responseMode,
+        hasApiKey
     };
 }

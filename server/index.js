@@ -189,7 +189,7 @@ app.post("/api/projects/:projectId/nodes", async (req, res, next) => {
 
 app.post("/api/reports/dify", async (req, res, next) => {
     try {
-        const { projectId, projectName, path, content, userId } = req.body || {};
+        const { projectId, projectName, path, content, userId, files } = req.body || {};
         if (!projectId || !path || typeof content !== "string") {
             res.status(400).json({ message: "Missing projectId, path, or content for report generation" });
             return;
@@ -210,7 +210,8 @@ app.post("/api/reports/dify", async (req, res, next) => {
             filePath: path,
             content,
             userId,
-            segments
+            segments,
+            files
         });
 
         res.json({
