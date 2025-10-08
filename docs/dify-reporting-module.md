@@ -16,6 +16,22 @@ DIFY_TOKEN_LIMIT=32000
 * `DIFY_CHAT_ENDPOINT`：要呼叫的工作流端點，預設為 `/chat-messages`。
 * `DIFY_TOKEN_LIMIT`：模型可處理的 Token 上限，預設 32000，可依實際方案調整。
 
+### 設定 Dify 主機、Port 與路徑的範例
+
+`DIFY_API_BASE_URL` 應填入完整的協定、主機名稱（或 IP）、Port 以及 API 前綴路徑。例如自架 Dify 服務並透過 5001 Port 提供 `/v1` API，可在 `.env` 中寫成：
+
+```ini
+DIFY_API_BASE_URL=http://10.0.10.38:5001/v1
+```
+
+如果您的 Workflow 不是使用預設的 `/chat-messages` 路徑，請同步調整 `DIFY_CHAT_ENDPOINT`，例如：
+
+```ini
+DIFY_CHAT_ENDPOINT=/workflow/run
+```
+
+修改後重新啟動後端伺服器或執行 `npm run server`，即可使新的路徑與 Port 設定生效。伺服器啟動時會在日誌輸出 `[dify]` 前綴的訊息，顯示目前採用的 `baseUrl` 與端點，方便確認設定是否正確。
+
 後端服務與 `npm run db:init` 等指令會透過 `server/lib/env.js` 自動載入 `.env`，因此只要在部署環境設定上述變數即可。重新啟動伺服器後，可從後端啟動日誌中的 `[dify]` 訊息確認設定是否生效。
 
 ## 目標
