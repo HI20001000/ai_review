@@ -63,6 +63,7 @@ const {
     contextItems,
     messages,
     addActiveNode,
+    addSnippetContext,
     removeContext,
     clearContext,
     sendUserMessage,
@@ -117,7 +118,6 @@ const reportBatchStates = reactive({});
 const activeReportTarget = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
-const isSnippetToolActive = computed(() => activeRailTool.value === "snippets");
 const panelMode = computed(() => (isReportToolActive.value ? "reports" : "projects"));
 const reportProjectEntries = computed(() => {
     const list = Array.isArray(projects.value) ? projects.value : [];
@@ -193,8 +193,7 @@ const hasChunkDetails = computed(() => {
     return Array.isArray(chunks) && chunks.length > 1;
 });
 const middlePaneStyle = computed(() => {
-    const hasActiveTool =
-        isProjectToolActive.value || isReportToolActive.value || isSnippetToolActive.value;
+    const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
     const width = hasActiveTool ? middlePaneWidth.value : 0;
     return {
         flex: `0 0 ${width}px`,
@@ -270,10 +269,18 @@ const snippetReportReady = computed(() => snippetState.status === "ready");
 const snippetHasChunks = computed(() => Array.isArray(snippetState.chunks) && snippetState.chunks.length > 1);
 const canGenerateSnippet = computed(
     () =>
-        isSnippetToolActive.value &&
         hasSnippetSelection.value &&
         previewing.value.kind === "text" &&
         !snippetIsProcessing.value
+);
+const canSendSnippetToChat = computed(
+    () =>
+        hasSnippetSelection.value &&
+        previewing.value.kind === "text" &&
+        snippetSelection.text.trim().length > 0
+);
+const snippetTrackingEnabled = computed(
+    () => supportsSelectionTracking && previewing.value.kind === "text"
 );
 
 const supportsSelectionTracking = typeof document !== "undefined";
@@ -340,7 +347,7 @@ function getLineNumberFromNode(node) {
 }
 
 function updateSnippetSelectionFromDom() {
-    if (!isSnippetToolActive.value) {
+    if (!snippetTrackingEnabled.value) {
         return;
     }
     if (previewing.value.kind !== "text") {
@@ -438,10 +445,10 @@ watch(
 );
 
 watch(
-    isSnippetToolActive,
-    (active) => {
+    snippetTrackingEnabled,
+    (enabled) => {
         if (!supportsSelectionTracking) return;
-        if (active) {
+        if (enabled) {
             document.addEventListener("selectionchange", handleSelectionChange);
             nextTick(() => {
                 updateSnippetSelectionFromDom();
@@ -541,10 +548,6 @@ function toggleProjectTool() {
 
 function toggleReportTool() {
     activeRailTool.value = isReportToolActive.value ? null : "reports";
-}
-
-function toggleSnippetTool() {
-    activeRailTool.value = isSnippetToolActive.value ? null : "snippets";
 }
 
 function normaliseProjectId(projectId) {
@@ -932,7 +935,6 @@ async function generateProjectReports(project) {
 
 async function generateSnippetAnalysis() {
     if (snippetIsProcessing.value) return;
-    if (!isSnippetToolActive.value) return;
     if (!hasSnippetSelection.value) {
         alert("請先在預覽中選取要分析的程式碼段落。");
         return;
@@ -1023,6 +1025,60 @@ async function generateSnippetAnalysis() {
         } else {
             alert(`生成區塊報告失敗：${message}`);
         }
+    }
+}
+
+async function sendSnippetToChat() {
+    if (!canSendSnippetToChat.value) {
+        alert("請先在預覽中選取要分享給 Chat AI 的程式碼段落。");
+        return;
+    }
+    const projectIdRaw = selectedProjectId.value;
+    if (!projectIdRaw) {
+        alert("請先選擇一個專案。");
+        return;
+    }
+    const path = snippetSelection.path || activeSnippetPath.value || "";
+    if (!path) {
+        alert("請先從左側檔案樹選擇要分享的檔案。");
+        return;
+    }
+
+    const startLine = typeof snippetSelection.startLine === "number" ? snippetSelection.startLine : null;
+    const endLine = typeof snippetSelection.endLine === "number" ? snippetSelection.endLine : startLine;
+    const lineCount = snippetSelection.lineCount || (startLine !== null && endLine !== null ? Math.abs(endLine - startLine) + 1 : 0);
+    const snippetText = snippetSelection.text || "";
+    if (!snippetText.trim()) {
+        alert("目前沒有可用的程式碼選取。");
+        return;
+    }
+
+    const labelSegments = [];
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const projectId = normaliseProjectId(projectIdRaw);
+    const project = projectList.find((item) => normaliseProjectId(item.id) === projectId);
+    if (project) {
+        labelSegments.push(project.name);
+    }
+    labelSegments.push(path);
+    if (startLine !== null) {
+        const rangeText = endLine !== null && endLine !== startLine ? `${startLine}-${endLine}` : `${startLine}`;
+        labelSegments.push(`行 ${rangeText}`);
+    }
+    const label = labelSegments.join(" / ");
+
+    const success = await addSnippetContext({
+        id: `snippet-${Date.now()}`,
+        label,
+        path,
+        startLine,
+        endLine,
+        lineCount,
+        content: snippetText
+    });
+
+    if (success) {
+        openChatWindow();
     }
 }
 
@@ -1380,22 +1436,6 @@ onBeforeUnmount(() => {
                 </button>
                 <button
                     type="button"
-                    class="toolColumn_btn"
-                    :class="{ active: isSnippetToolActive }"
-                    @click="toggleSnippetTool"
-                    :aria-pressed="isSnippetToolActive"
-                    title="區塊審查"
-                >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="4" y="4" width="16" height="16" rx="2" fill="currentColor" opacity="0.18" />
-                        <path
-                            d="M8 8h8v2H8zm0 4h5v2H8zm-2 5h12v2H6z"
-                            fill="currentColor"
-                        />
-                    </svg>
-                </button>
-                <button
-                    type="button"
                     class="toolColumn_btn toolColumn_btn--chat"
                     :class="{ active: isChatWindowOpen }"
                     :disabled="isChatToggleDisabled"
@@ -1420,7 +1460,7 @@ onBeforeUnmount(() => {
                 :on-select-project="handleSelectProject"
                 :on-delete-project="deleteProject"
                 :is-tree-collapsed="isTreeCollapsed"
-                :show-content="isProjectToolActive || isReportToolActive || isSnippetToolActive"
+                :show-content="isProjectToolActive || isReportToolActive"
                 :tree="tree"
                 :active-tree-path="activeTreePath"
                 :is-loading-tree="isLoadingTree"
@@ -1449,7 +1489,7 @@ onBeforeUnmount(() => {
                 </template>
             </PanelRail>
 
-            <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive, 'workSpace--snippets': isSnippetToolActive }">
+            <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive }">
                 <template v-if="isReportToolActive">
                     <div class="panelHeader">報告檢視</div>
                     <template v-if="hasReadyReports || viewerHasContent">
@@ -1503,85 +1543,83 @@ onBeforeUnmount(() => {
                     </template>
                     <p v-else class="reportViewerPlaceholder">尚未生成任何報告，請先於左側檔案中啟動生成。</p>
                 </template>
-                <template v-else-if="isSnippetToolActive">
-                    <div class="snippetHeader">
-                        <div class="snippetInfo">
-                            <h3 class="snippetTitle">區塊審查</h3>
-                            <p class="snippetHint">選取程式碼行後即可將片段送至 AI 生成審查報告。</p>
-                            <p
-                                class="snippetStatus"
-                                :class="{ 'snippetStatus--empty': !hasSnippetSelection }"
-                            >
-                                <template v-if="hasSnippetSelection">
-                                    {{ snippetSelectionDisplay.summary }}
-                                    <span v-if="snippetSelectionDisplay.lineCount > 0">
-                                        （{{ snippetSelectionDisplay.lineCount }} 行）
-                                    </span>
-                                </template>
-                                <template v-else>
-                                    尚未選取任何內容
-                                </template>
-                            </p>
-                            <p v-if="previewing.kind !== 'text'" class="snippetStatus snippetStatus--warning">
-                                請在左側檔案樹選擇可編輯的文字檔案以進行選取。
-                            </p>
-                        </div>
-                        <div class="snippetActions">
-                            <button
-                                type="button"
-                                class="btn"
-                                :disabled="!canGenerateSnippet"
-                                @click="generateSnippetAnalysis"
-                            >
-                                {{ snippetIsProcessing ? "分析中…" : "分析選取段落" }}
-                            </button>
-                            <button
-                                type="button"
-                                class="btn outline"
-                                :disabled="!hasSnippetSelection"
-                                @click="clearSnippetSelectionAndResult"
-                            >
-                                清除選取
-                            </button>
-                        </div>
+                <template v-else-if="previewing.kind && previewing.kind !== 'error'">
+                    <div class="pvHeader">
+                        <div class="pvName">{{ previewing.name }}</div>
+                        <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
                     </div>
-                    <div class="snippetLayout">
-                        <div class="snippetPreview">
-                            <template v-if="previewing.kind === 'text'">
-                                <div class="pvHeader">
-                                    <div class="pvName">{{ previewing.name }}</div>
-                                    <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
-                                </div>
-                                <div class="pvBox codeBox">
-                                    <div class="codeScroll" ref="codeScrollRef">
-                                        <div
-                                            v-for="line in previewLineItems"
-                                            :key="line.number"
-                                            class="codeLine"
-                                            :data-line="line.number"
-                                            :class="{ 'codeLine--selected': isLineInSnippetSelection(line.number) }"
-                                        >
-                                            <span class="codeLineNo">{{ line.number }}</span>
-                                            <span class="codeLineContent" v-text="line.content"></span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </template>
-                            <template v-else>
-                                <div class="pvPlaceholder snippetPlaceholder">請先選擇純文字檔案以便選取程式碼。</div>
-                            </template>
+
+                    <template v-if="previewing.kind === 'text'">
+                        <div class="snippetInlinePanel">
+                            <div class="snippetInlinePanel__info">
+                                <h3 class="snippetInlinePanel__title">程式碼選取</h3>
+                                <p class="snippetInlinePanel__hint">拖曳以選取程式碼段落，可直接送交 Dify 或 Chat AI。</p>
+                                <p
+                                    class="snippetInlinePanel__status"
+                                    :class="{ 'snippetInlinePanel__status--empty': !hasSnippetSelection }"
+                                >
+                                    <template v-if="hasSnippetSelection">
+                                        {{ snippetSelectionDisplay.summary }}
+                                        <span v-if="snippetSelectionDisplay.lineCount > 0">
+                                            （{{ snippetSelectionDisplay.lineCount }} 行）
+                                        </span>
+                                    </template>
+                                    <template v-else>
+                                        尚未選取任何內容
+                                    </template>
+                                </p>
+                            </div>
+                            <div class="snippetInlinePanel__actions">
+                                <button
+                                    type="button"
+                                    class="btn"
+                                    :disabled="!canGenerateSnippet"
+                                    @click="generateSnippetAnalysis"
+                                >
+                                    {{ snippetIsProcessing ? "分析中…" : "分析選取段落" }}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn outline"
+                                    :disabled="!canSendSnippetToChat"
+                                    @click="sendSnippetToChat"
+                                >
+                                    加入 Chat AI
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn ghost"
+                                    :disabled="!hasSnippetSelection"
+                                    @click="clearSnippetSelectionAndResult"
+                                >
+                                    清除選取
+                                </button>
+                            </div>
                         </div>
-                        <div class="snippetResultPanel">
-                            <div class="snippetResultHeader">
-                                <h3>分析結果</h3>
-                                <p v-if="snippetState.updatedAtDisplay" class="snippetResultTimestamp">
+
+                        <div class="pvBox codeBox">
+                            <div class="codeScroll" ref="codeScrollRef">
+                                <div
+                                    v-for="line in previewLineItems"
+                                    :key="line.number"
+                                    class="codeLine"
+                                    :data-line="line.number"
+                                    :class="{ 'codeLine--selected': isLineInSnippetSelection(line.number) }"
+                                >
+                                    <span class="codeLineNo">{{ line.number }}</span>
+                                    <span class="codeLineContent" v-text="line.content"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div v-if="snippetState.status !== 'idle'" class="snippetResultCard">
+                            <div class="snippetResultCard__header">
+                                <h3>區塊分析</h3>
+                                <p v-if="snippetState.updatedAtDisplay" class="snippetResultCard__timestamp">
                                     更新於 {{ snippetState.updatedAtDisplay }}
                                 </p>
                             </div>
-                            <p v-if="snippetState.status === 'idle'" class="snippetResultHint">
-                                選取程式碼並點擊「分析選取段落」，結果會顯示在此處。
-                            </p>
-                            <p v-else-if="snippetState.status === 'processing'" class="snippetResultHint">
+                            <p v-if="snippetState.status === 'processing'" class="snippetResultCard__hint">
                                 正在生成區塊報告，請稍候…
                             </p>
                             <div v-else-if="snippetState.status === 'error'" class="reportErrorPanel">
@@ -1619,26 +1657,7 @@ onBeforeUnmount(() => {
                                 </details>
                             </template>
                         </div>
-                    </div>
-                </template>
-                <template v-else-if="previewing.kind && previewing.kind !== 'error'">
-                    <div class="pvHeader">
-                        <div class="pvName">{{ previewing.name }}</div>
-                        <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
-                    </div>
-
-                    <div v-if="previewing.kind === 'text'" class="pvBox codeBox">
-                        <div class="codeScroll">
-                            <div
-                                v-for="line in previewLineItems"
-                                :key="line.number"
-                                class="codeLine"
-                            >
-                                <span class="codeLineNo">{{ line.number }}</span>
-                                <span class="codeLineContent" v-text="line.content"></span>
-                            </div>
-                        </div>
-                    </div>
+                    </template>
 
                     <div v-else-if="previewing.kind === 'image'" class="pvBox imgBox">
                         <img :src="previewing.url" :alt="previewing.name" />
@@ -1929,17 +1948,12 @@ body,
         width: 100%;
         flex: 1 1 auto;
     }
-    .snippetLayout {
+    .snippetInlinePanel {
         flex-direction: column;
+        align-items: stretch;
     }
-    .snippetPreview,
-    .snippetResultPanel {
-        flex: 1 1 auto;
-    }
-    .snippetActions {
-        width: 100%;
+    .snippetInlinePanel__actions {
         justify-content: flex-start;
-        flex-wrap: wrap;
     }
 }
 .loading {
@@ -1975,110 +1989,87 @@ body,
     overflow: auto;
 }
 
-.workSpace--snippets {
-    padding: 16px;
-    gap: 16px;
-    background: #202020;
-    border-color: #323232;
-}
-
-.snippetHeader {
+.snippetInlinePanel {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 16px;
+    gap: 12px;
+    background: #1b1b1b;
+    border: 1px solid #2f2f2f;
+    border-radius: 6px;
+    padding: 12px;
 }
 
-.snippetInfo {
-    flex: 1 1 320px;
+.snippetInlinePanel__info {
+    flex: 1 1 280px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
     color: #e2e8f0;
 }
 
-.snippetTitle {
+.snippetInlinePanel__title {
     margin: 0;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
 }
 
-.snippetHint {
+.snippetInlinePanel__hint {
     margin: 0;
-    color: #94a3b8;
     font-size: 13px;
+    color: #94a3b8;
 }
 
-.snippetStatus {
+.snippetInlinePanel__status {
     margin: 0;
     font-size: 13px;
     color: #38bdf8;
 }
 
-.snippetStatus--empty {
+.snippetInlinePanel__status--empty {
     color: #cbd5e1;
 }
 
-.snippetStatus--warning {
-    color: #fbbf24;
-}
-
-.snippetActions {
+.snippetInlinePanel__actions {
     flex: 0 0 auto;
     display: flex;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 8px;
     align-items: center;
+    justify-content: flex-end;
 }
 
-.snippetLayout {
-    display: flex;
-    gap: 16px;
-    min-height: 0;
-}
-
-.snippetPreview {
-    flex: 1 1 55%;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-height: 0;
-}
-
-.snippetResultPanel {
-    flex: 1 1 45%;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+.snippetResultCard {
     background: #191919;
     border: 1px solid #323232;
-    border-radius: 0;
+    border-radius: 6px;
     padding: 16px;
-    min-height: 0;
-    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
-.snippetResultHeader {
+.snippetResultCard__header {
     display: flex;
-    flex-direction: row;
     justify-content: space-between;
     align-items: baseline;
     gap: 8px;
 }
 
-.snippetResultHeader h3 {
+.snippetResultCard__header h3 {
     margin: 0;
     font-size: 16px;
     color: #e2e8f0;
 }
 
-.snippetResultTimestamp {
+.snippetResultCard__timestamp {
     margin: 0;
     font-size: 12px;
     color: #94a3b8;
 }
 
-.snippetResultHint {
+.snippetResultCard__hint {
     margin: 0;
     font-size: 13px;
     color: #cbd5e1;
@@ -2096,15 +2087,6 @@ body,
 
 .snippetReportBody {
     min-height: 160px;
-}
-
-.snippetPlaceholder {
-    background: #161616;
-    color: #94a3b8;
-    border: 1px dashed #374151;
-    padding: 24px;
-    text-align: center;
-    border-radius: 6px;
 }
 
 .codeLine--selected .codeLineContent {
