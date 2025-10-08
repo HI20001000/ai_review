@@ -21,7 +21,7 @@
    * 其他欄位請依需求調整。
 
 ## 3. 初始化資料表
-專案提供 `server/sql/schema.sql` 的建表腳本與 `server/scripts/initDatabase.js` 的初始化指令。執行以下命令會讀取 `.env` 並套用 schema；它僅會在您指定的資料庫中建立 `projects`、`nodes` 與 `reports` 等必要資料表，不會另外建立新的資料庫：
+專案提供 `server/sql/schema.sql` 的建表腳本與 `server/scripts/initDatabase.js` 的初始化指令。執行以下命令會讀取 `.env` 並套用 schema；它僅會在您指定的資料庫中建立 `projects`、`nodes` 與 `reports` 等必要資料表，不會另外建立新的資料庫。`reports` 表為了相容 `utf8mb4` 索引長度限制，採用 `project_id + path_hash` 的唯一鍵並將 `path` 欄位限制為 512 字元：
 ```bash
 npm run db:init
 ```

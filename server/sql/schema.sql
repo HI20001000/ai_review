@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS nodes (
 CREATE TABLE IF NOT EXISTS reports (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     project_id VARCHAR(255) NOT NULL,
-    path VARCHAR(1024) NOT NULL,
+    path VARCHAR(512) NOT NULL,
+    path_hash BINARY(32) AS (UNHEX(SHA2(path, 256))) STORED,
     report LONGTEXT NOT NULL,
     chunks_json LONGTEXT NOT NULL,
     segments_json LONGTEXT NOT NULL,
@@ -37,7 +38,8 @@ CREATE TABLE IF NOT EXISTS reports (
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
     PRIMARY KEY (id),
-    UNIQUE KEY uniq_reports_project_path (project_id, path),
+    UNIQUE KEY uniq_reports_project_path_hash (project_id, path_hash),
     INDEX idx_reports_project (project_id),
+    INDEX idx_reports_project_path (project_id, path(191)),
     CONSTRAINT fk_reports_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
