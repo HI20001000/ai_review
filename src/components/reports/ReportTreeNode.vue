@@ -60,6 +60,8 @@ const statusClass = computed(() => {
 
 const isProcessing = computed(() => fileState.value?.status === "processing");
 const isReady = computed(() => fileState.value?.status === "ready");
+const isError = computed(() => fileState.value?.status === "error");
+const isViewable = computed(() => isReady.value || isError.value);
 
 function handleToggle() {
     if (!isDirectory.value) return;
@@ -71,7 +73,7 @@ function handleRowClick() {
         handleToggle();
         return;
     }
-    if (isReady.value) {
+    if (isViewable.value) {
         props.onSelect(props.projectId, props.node.path);
     }
 }
@@ -121,15 +123,21 @@ function handleSelect(event) {
                     <span v-else>生成報告</span>
                 </button>
                 <button
-                    v-if="isReady"
+                    v-if="isViewable"
                     type="button"
                     class="reportViewBtn"
                     @click="handleSelect"
                 >
-                    查看
+                    {{ isError ? "檢視錯誤" : "查看" }}
                 </button>
             </template>
         </div>
+        <p
+            v-if="isFile && fileState?.status === 'error' && fileState?.error"
+            class="reportErrorMessage"
+        >
+            {{ fileState.error }}
+        </p>
         <p v-if="isFile && fileState?.status === 'ready' && fileState?.updatedAtDisplay" class="reportTimestamp">
             最後更新：{{ fileState.updatedAtDisplay }}
         </p>
@@ -235,6 +243,11 @@ function handleSelect(event) {
     color: #4ade80;
 }
 
+.statusBadge--error {
+    background: rgba(248, 113, 113, 0.2);
+    color: #f87171;
+}
+
 .reportActionBtn {
     flex: 0 0 auto;
     padding: 6px 12px;
@@ -275,6 +288,13 @@ function handleSelect(event) {
 
 .reportViewBtn:hover {
     background: rgba(148, 163, 184, 0.2);
+}
+
+.reportErrorMessage {
+    margin: 0;
+    font-size: 12px;
+    color: #f87171;
+    padding-left: 54px;
 }
 
 .reportTimestamp {
