@@ -1,7 +1,6 @@
 import express from "express";
 import pool from "./lib/db.js";
 import { ensureSchema } from "./lib/ensureSchema.js";
-import { getDifyConfigSummary, partitionContent, requestDifyReport } from "./lib/difyClient.js";
 
 const app = express();
 
@@ -184,44 +183,6 @@ app.post("/api/projects/:projectId/nodes", async (req, res, next) => {
         next(error);
     } finally {
         connection.release();
-    }
-});
-
-app.post("/api/reports/dify", async (req, res, next) => {
-    try {
-        const { projectId, projectName, path, content, userId } = req.body || {};
-        if (!projectId || !path || typeof content !== "string") {
-            res.status(400).json({ message: "Missing projectId, path, or content for report generation" });
-            return;
-        }
-        if (!content.trim()) {
-            res.status(400).json({ message: "檔案內容為空，無法生成報告" });
-            return;
-        }
-
-        const segments = partitionContent(content);
-        const summary = getDifyConfigSummary();
-        console.log(
-            `[dify] Generating report project=${projectId} path=${path} segments=${segments.length} maxSegmentChars=${summary.maxSegmentChars}`
-        );
-
-        const result = await requestDifyReport({
-            projectName: projectName || projectId,
-            filePath: path,
-            content,
-            userId,
-            segments
-        });
-
-        res.json({
-            projectId,
-            path,
-            ...result
-        });
-    } catch (error) {
-        console.error("[dify] Failed to generate report", error);
-        const status = error?.message?.includes("not configured") ? 500 : 502;
-        res.status(status).json({ message: error?.message || "Failed to generate report" });
     }
 });
 
