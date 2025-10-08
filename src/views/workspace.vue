@@ -5,7 +5,7 @@ import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
 import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
-import { generateReportViaDify } from "../scripts/services/reportService.js";
+import { generateReportViaDify, fetchProjectReports } from "../scripts/services/reportService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
 import ReportPanel from "../components/reports/ReportPanel.vue";
@@ -129,7 +129,10 @@ const reportProjectEntries = computed(() => {
                 nodes: [],
                 loading: false,
                 error: "",
-                expandedPaths: []
+                expandedPaths: [],
+                hydratedReports: false,
+                hydratingReports: false,
+                reportHydrationError: ""
             }
         };
     });
@@ -338,6 +341,7 @@ function createDefaultReportState() {
         updatedAtDisplay: null,
         error: "",
         chunks: [],
+        segments: [],
         conversationId: ""
     };
 }
@@ -350,7 +354,10 @@ function ensureReportTreeEntry(projectId) {
             nodes: [],
             loading: false,
             error: "",
-            expandedPaths: []
+            expandedPaths: [],
+            hydratedReports: false,
+            hydratingReports: false,
+            reportHydrationError: ""
         };
     }
     return reportTreeCache[key];
@@ -454,6 +461,52 @@ function ensureStatesForProject(projectId, nodes) {
     });
 }
 
+function parseHydratedTimestamp(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return new Date(value);
+    }
+    if (typeof value === "string" && value.trim()) {
+        const parsed = Date.parse(value);
+        if (!Number.isNaN(parsed)) {
+            return new Date(parsed);
+        }
+    }
+    return null;
+}
+
+async function hydrateReportsForProject(projectId) {
+    const entry = ensureReportTreeEntry(projectId);
+    if (!entry) return;
+    if (entry.hydratedReports || entry.hydratingReports) return;
+    entry.hydratingReports = true;
+    entry.reportHydrationError = "";
+    try {
+        const records = await fetchProjectReports(projectId);
+        for (const record of records) {
+            if (!record || !record.path) continue;
+            const state = ensureFileReportState(projectId, record.path);
+            if (!state) continue;
+            state.status = record.report ? "ready" : "idle";
+            state.report = record.report || "";
+            state.error = "";
+            state.chunks = Array.isArray(record.chunks) ? record.chunks : [];
+            state.segments = Array.isArray(record.segments) ? record.segments : [];
+            state.conversationId = record.conversationId || "";
+            const timestamp = parseHydratedTimestamp(record.generatedAt || record.updatedAt || record.createdAt);
+            state.updatedAt = timestamp;
+            state.updatedAtDisplay = timestamp ? timestamp.toLocaleString() : null;
+        }
+        entry.hydratedReports = true;
+    } catch (error) {
+        console.error("[Report] Failed to hydrate saved reports", { projectId, error });
+        entry.reportHydrationError = error?.message ? String(error.message) : String(error);
+    } finally {
+        entry.hydratingReports = false;
+    }
+}
+
 async function loadReportTreeForProject(projectId) {
     const entry = ensureReportTreeEntry(projectId);
     if (!entry || entry.loading) return;
@@ -463,6 +516,7 @@ async function loadReportTreeForProject(projectId) {
         const nodes = await treeStore.loadTreeFromDB(projectId);
         entry.nodes = nodes;
         ensureStatesForProject(projectId, nodes);
+        await hydrateReportsForProject(projectId);
         const nextExpanded = new Set(entry.expandedPaths);
         for (const node of nodes) {
             if (node.type === "dir") {
@@ -504,6 +558,7 @@ async function generateReportForFile(project, node, options = {}) {
     state.error = "";
     state.report = "";
     state.chunks = [];
+    state.segments = [];
     state.conversationId = "";
 
     try {
@@ -532,6 +587,7 @@ async function generateReportForFile(project, node, options = {}) {
         state.updatedAtDisplay = completedAt.toLocaleString();
         state.report = payload?.report || "";
         state.chunks = Array.isArray(payload?.chunks) ? payload.chunks : [];
+        state.segments = Array.isArray(payload?.segments) ? payload.segments : [];
         state.conversationId = payload?.conversationId || "";
         state.error = "";
 
@@ -549,6 +605,7 @@ async function generateReportForFile(project, node, options = {}) {
         state.error = message;
         state.report = "";
         state.chunks = [];
+        state.segments = [];
         state.conversationId = "";
         const now = new Date();
         state.updatedAt = now;
@@ -647,6 +704,14 @@ watch(
             if (isReportToolActive.value && entry && !entry.nodes.length && !entry.loading) {
                 loadReportTreeForProject(project.id);
             }
+            if (
+                isReportToolActive.value &&
+                entry &&
+                !entry.hydratedReports &&
+                !entry.hydratingReports
+            ) {
+                hydrateReportsForProject(project.id);
+            }
         });
 
         Object.keys(reportTreeCache).forEach((projectId) => {
@@ -685,6 +750,9 @@ watch(
             const entry = ensureReportTreeEntry(project.id);
             if (entry && !entry.nodes.length && !entry.loading) {
                 loadReportTreeForProject(project.id);
+            }
+            if (entry && !entry.hydratedReports && !entry.hydratingReports) {
+                hydrateReportsForProject(project.id);
             }
         });
     }

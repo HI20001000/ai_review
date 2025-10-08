@@ -113,6 +113,38 @@ async function postJson(path, payload) {
     return await response.text();
 }
 
+async function getJson(path) {
+    const url = buildRequestUrl(path);
+    let response;
+    try {
+        response = await fetch(url, { method: "GET" });
+    } catch (error) {
+        if (error && typeof error.message === "string" && /Invalid name/i.test(error.message)) {
+            const hint =
+                "請確認 VITE_API_BASE_URL 或瀏覽器注入的 API Base 設定是否包含非法字元，例如換行或額外的表頭。";
+            throw new Error(`${error.message}。${hint}`);
+        }
+        throw error;
+    }
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`API request failed: ${response.status} ${response.statusText}${text ? ` - ${text}` : ""}`);
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+        return await response.json();
+    }
+
+    const text = await response.text();
+    try {
+        return JSON.parse(text);
+    } catch (_error) {
+        return text;
+    }
+}
+
 export async function generateReportViaDify(payload) {
     const enrichedPayload = {
         ...payload,
@@ -121,6 +153,20 @@ export async function generateReportViaDify(payload) {
     return await postJson("/reports/dify", enrichedPayload);
 }
 
+export async function fetchProjectReports(projectId) {
+    if (!projectId) return [];
+    const encodedId = encodeURIComponent(projectId);
+    const response = await getJson(`/projects/${encodedId}/reports`);
+    if (Array.isArray(response)) {
+        return response;
+    }
+    if (Array.isArray(response?.reports)) {
+        return response.reports;
+    }
+    return [];
+}
+
 export default {
-    generateReportViaDify
+    generateReportViaDify,
+    fetchProjectReports
 };

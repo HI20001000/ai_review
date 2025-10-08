@@ -67,6 +67,54 @@ function mapNodeRow(row) {
     };
 }
 
+function safeParseArray(jsonText, { fallback = [] } = {}) {
+    if (!jsonText) return Array.isArray(fallback) ? fallback : [];
+    try {
+        const parsed = JSON.parse(jsonText);
+        return Array.isArray(parsed) ? parsed : Array.isArray(fallback) ? fallback : [];
+    } catch (error) {
+        console.warn("[reports] Failed to parse JSON column", { jsonText, error });
+        return Array.isArray(fallback) ? fallback : [];
+    }
+}
+
+function toIsoString(value) {
+    if (value === null || value === undefined) return null;
+    if (value instanceof Date) {
+        const time = value.getTime();
+        if (Number.isFinite(time)) {
+            return new Date(time).toISOString();
+        }
+        return null;
+    }
+    if (typeof value === "number") {
+        if (!Number.isFinite(value)) return null;
+        return new Date(value).toISOString();
+    }
+    if (typeof value === "string" && value.trim()) {
+        const parsed = Date.parse(value);
+        if (!Number.isNaN(parsed)) {
+            return new Date(parsed).toISOString();
+        }
+    }
+    return null;
+}
+
+function mapReportRow(row) {
+    return {
+        projectId: row.project_id,
+        path: row.path,
+        report: row.report || "",
+        chunks: safeParseArray(row.chunks_json),
+        segments: safeParseArray(row.segments_json),
+        conversationId: row.conversation_id || "",
+        userId: row.user_id || "",
+        generatedAt: toIsoString(row.generated_at),
+        createdAt: toIsoString(row.created_at),
+        updatedAt: toIsoString(row.updated_at)
+    };
+}
+
 async function upsertReport({
     projectId,
     path,
@@ -251,6 +299,25 @@ app.post("/api/projects/:projectId/nodes", async (req, res, next) => {
         next(error);
     } finally {
         connection.release();
+    }
+});
+
+app.get("/api/projects/:projectId/reports", async (req, res, next) => {
+    try {
+        const { projectId } = req.params;
+        const [rows] = await pool.query(
+            `SELECT project_id, path, report, chunks_json, segments_json, conversation_id, user_id, generated_at, created_at, updated_at
+             FROM reports
+             WHERE project_id = ?
+             ORDER BY path ASC`,
+            [projectId]
+        );
+        res.json({
+            projectId,
+            reports: rows.map(mapReportRow)
+        });
+    } catch (error) {
+        next(error);
     }
 });
 
