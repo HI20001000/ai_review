@@ -253,6 +253,54 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         }
     }
 
+    function normaliseLine(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function normaliseColumn(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number > 0 ? Math.floor(number) : null;
+    }
+
+    function normalisePositiveInteger(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number > 0 ? Math.floor(number) : null;
+    }
+
+    function buildSnippetRangeParts(meta = {}) {
+        const startLine = normaliseLine(meta.startLine);
+        const endLine = normaliseLine(meta.endLine ?? startLine);
+        const startColumn = normaliseColumn(meta.startColumn);
+        const endColumn = normaliseColumn(meta.endColumn);
+        const lineCount = normalisePositiveInteger(meta.lineCount);
+        const parts = [];
+        if (startLine !== null && endLine !== null) {
+            parts.push(startLine === endLine ? `行 ${startLine}` : `行 ${startLine}-${endLine}`);
+        } else if (startLine !== null) {
+            parts.push(`行 ${startLine}`);
+        } else if (endLine !== null) {
+            parts.push(`行 ${endLine}`);
+        }
+        const isSingleLine = startLine !== null && endLine !== null && startLine === endLine;
+        if (isSingleLine) {
+            if (startColumn !== null && endColumn !== null) {
+                parts.push(startColumn === endColumn ? `字元 ${startColumn}` : `字元 ${startColumn}-${endColumn}`);
+            } else if (startColumn !== null) {
+                parts.push(`字元 ${startColumn} 起`);
+            } else if (endColumn !== null) {
+                parts.push(`字元 ${endColumn} 止`);
+            }
+        } else {
+            if (startColumn !== null) parts.push(`起始字元 ${startColumn}`);
+            if (endColumn !== null) parts.push(`結束字元 ${endColumn}`);
+        }
+        if (lineCount !== null) {
+            parts.push(`共 ${lineCount} 行`);
+        }
+        return parts;
+    }
+
     async function addActiveNode() {
         if (isInteractionLocked.value) return false;
         const activePath = treeStore?.activeTreePath?.value;
@@ -431,6 +479,7 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         contextItems,
         messages,
         addActiveNode,
+        addSnippetContext,
         removeContext,
         clearContext,
         sendUserMessage,
