@@ -552,6 +552,50 @@ function getLineContentElement(lineElement) {
 function measureColumnOffset(lineElement, container, offset, inclusiveStart) {
     const content = getLineContentElement(lineElement);
     if (!content) return null;
+
+    const SHOW_TEXT = typeof NodeFilter !== "undefined" ? NodeFilter.SHOW_TEXT : 4;
+
+    const clamp = (value, min, max) => {
+        if (!Number.isFinite(value)) return min;
+        return Math.max(min, Math.min(max, value));
+    };
+
+    const accumulateFromTextNodes = (targetNode, targetOffset, includeStartColumn) => {
+        const walker = document.createTreeWalker(content, SHOW_TEXT, null);
+        let total = 0;
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            const length = typeof node.textContent === "string" ? node.textContent.length : 0;
+            if (node === targetNode) {
+                const safeOffset = clamp(targetOffset, 0, length);
+                const base = total + safeOffset;
+                return includeStartColumn ? base + 1 : base;
+            }
+            total += length;
+        }
+        return null;
+    };
+
+    if (container && container.nodeType === TEXT_NODE) {
+        const measured = accumulateFromTextNodes(container, offset, inclusiveStart);
+        if (measured !== null) {
+            return measured;
+        }
+    }
+
+    if (container === content && container.childNodes) {
+        const children = Array.from(container.childNodes);
+        const safeIndex = clamp(offset, 0, children.length);
+        let count = 0;
+        for (let index = 0; index < safeIndex; index += 1) {
+            const child = children[index];
+            if (child && typeof child.textContent === "string") {
+                count += child.textContent.length;
+            }
+        }
+        return inclusiveStart ? count + 1 : count;
+    }
+
     try {
         const range = document.createRange();
         range.selectNodeContents(content);
