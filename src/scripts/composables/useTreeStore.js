@@ -1,6 +1,6 @@
 import { parentOf } from "../utils/path.js";
 import { ref } from "vue";
-import { idbGetAllByIndex, idbPutMany } from "../services/indexedDbService.js";
+import { fetchNodesByProject, replaceProjectNodes } from "../services/apiService.js";
 
 export function useTreeStore({
     getProjectRootHandleById,
@@ -42,7 +42,7 @@ export function useTreeStore({
     }
 
     async function loadTreeFromDB(projectId) {
-        const flat = await idbGetAllByIndex("nodes", "byProject", projectId);
+        const flat = await fetchNodesByProject(projectId);
         console.log(`[Tree] loaded flat nodes for ${projectId}:`, flat.length);
         return buildTreeFromFlat(flat);
     }
@@ -92,7 +92,7 @@ export function useTreeStore({
             }
         }
 
-        await idbPutMany("nodes", nodes);
+        await replaceProjectNodes(projectId, nodes);
     }
 
     async function openNode(node) {
@@ -111,12 +111,30 @@ export function useTreeStore({
 
             if (mime.startsWith("image/")) {
                 const url = URL.createObjectURL(file);
-                previewing.value = { name: node.name, mime, size, text: "", url, kind: "image", error: "" };
+                previewing.value = {
+                    name: node.name,
+                    mime,
+                    size,
+                    text: "",
+                    url,
+                    kind: "image",
+                    error: "",
+                    path: node.path
+                };
                 return;
             }
             if (mime === "application/pdf" || node.path.toLowerCase().endsWith(".pdf")) {
                 const url = URL.createObjectURL(file);
-                previewing.value = { name: node.name, mime, size, text: "", url, kind: "pdf", error: "" };
+                previewing.value = {
+                    name: node.name,
+                    mime,
+                    size,
+                    text: "",
+                    url,
+                    kind: "pdf",
+                    error: "",
+                    path: node.path
+                };
                 return;
             }
             if (isTextLike(node.name, mime) && size <= MAX_TEXT_BYTES) {
@@ -128,7 +146,8 @@ export function useTreeStore({
                     text,
                     url: "",
                     kind: "text",
-                    error: ""
+                    error: "",
+                    path: node.path
                 };
                 return;
             }
@@ -140,7 +159,8 @@ export function useTreeStore({
                 text: "",
                 url,
                 kind: "other",
-                error: ""
+                error: "",
+                path: node.path
             };
         } catch (error) {
             previewing.value = {
@@ -150,7 +170,8 @@ export function useTreeStore({
                 text: "",
                 url: "",
                 kind: "error",
-                error: String(error)
+                error: String(error),
+                path: node?.path || ""
             };
         }
     }
