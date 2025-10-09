@@ -2763,9 +2763,19 @@ body,
 }
 
 .codeEditor::selection,
-.codeEditor *::selection {
-    background: rgba(56, 189, 248, 0.35);
-    color: #f8fafc;
+.codeEditor *::selection,
+.codeEditor::-moz-selection,
+.codeEditor *::-moz-selection {
+    background: transparent;
+    color: inherit;
+}
+
+.codeLine::selection,
+.codeLine *::selection,
+.codeLine::-moz-selection,
+.codeLine *::-moz-selection {
+    background: transparent;
+    color: inherit;
 }
 
 .codeLine {
@@ -2783,6 +2793,9 @@ body,
     background: #141414;
     border-right: 1px solid #2f2f2f;
     user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    pointer-events: none;
     font-variant-numeric: tabular-nums;
 }
 
