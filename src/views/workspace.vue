@@ -92,13 +92,8 @@ const previewLineItems = computed(() => {
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const codeScrollRef = ref(null);
-const snippetPointerState = reactive({
-    activePointerId: null,
-    anchor: null,
-    focus: null,
-    isSelecting: false
-});
-let detachSnippetPointerListeners = null;
+const codeEditorRef = ref(null);
+let detachSelectionChangeListener = null;
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
@@ -619,52 +614,10 @@ function measureColumnOffset(lineElement, container, offset, inclusiveStart) {
     }
 }
 
-function resolveCaretFromEvent(event) {
-    if (!supportsSelectionTracking) return null;
-    if (!event || typeof event.clientX !== "number" || typeof event.clientY !== "number") {
-        return null;
-    }
-    const doc = event.view?.document || document;
-    if (!doc) return null;
-    if (typeof doc.caretRangeFromPoint === "function") {
-        const range = doc.caretRangeFromPoint(event.clientX, event.clientY);
-        if (range) {
-            return { container: range.startContainer, offset: range.startOffset };
-        }
-    }
-    if (typeof doc.caretPositionFromPoint === "function") {
-        const position = doc.caretPositionFromPoint(event.clientX, event.clientY);
-        if (position) {
-            return { container: position.offsetNode, offset: position.offset };
-        }
-    }
-    return null;
-}
-
-function buildRangeFromCarets(anchor, focus) {
-    if (!supportsSelectionTracking) return null;
-    if (!anchor || !focus) return null;
-    if (!anchor.container || !focus.container) return null;
-    const range = document.createRange();
-    try {
-        range.setStart(anchor.container, anchor.offset ?? 0);
-        range.setEnd(focus.container, focus.offset ?? 0);
-        return range;
-    } catch (_error) {
-        try {
-            range.setStart(focus.container, focus.offset ?? 0);
-            range.setEnd(anchor.container, anchor.offset ?? 0);
-            return range;
-        } catch (__error) {
-            return null;
-        }
-    }
-}
-
 function applyRangeSelection(range) {
     if (!supportsSelectionTracking) return false;
     if (!range) return false;
-    const container = codeScrollRef.value;
+    const container = codeEditorRef.value || codeScrollRef.value;
     if (!container) return false;
     const { startContainer, endContainer } = range;
     if (
@@ -742,116 +695,94 @@ function applyRangeSelection(range) {
     return true;
 }
 
-function updateSnippetSelectionFromCarets(anchor, focus) {
-    if (!supportsSelectionTracking) return false;
-    if (!anchor || !focus) return false;
-    const range = buildRangeFromCarets(anchor, focus);
-    if (!range) {
-        return false;
-    }
-    return applyRangeSelection(range);
-}
-
-function detachSnippetPointerTracking() {
-    if (typeof detachSnippetPointerListeners === "function") {
-        detachSnippetPointerListeners();
-        detachSnippetPointerListeners = null;
-    }
-}
-
 function resetSnippetPointerState() {
-    if (!supportsSelectionTracking) return;
-    const container = codeScrollRef.value;
-    if (
-        container &&
-        typeof snippetPointerState.activePointerId === "number" &&
-        typeof container.releasePointerCapture === "function"
-    ) {
-        try {
-            container.releasePointerCapture(snippetPointerState.activePointerId);
-        } catch (_error) {
-            // ignore
-        }
-    }
-    snippetPointerState.activePointerId = null;
-    snippetPointerState.anchor = null;
-    snippetPointerState.focus = null;
-    snippetPointerState.isSelecting = false;
-    detachSnippetPointerTracking();
 }
 
-function beginCodeScrollSelection(event) {
+function syncSnippetSelectionFromNativeRange() {
     if (!snippetTrackingEnabled.value || !supportsSelectionTracking) return;
-    if (event?.button !== undefined && event.button !== 0) {
+    if (previewing.value.kind !== "text") return;
+    const container = codeEditorRef.value || codeScrollRef.value;
+    if (!container) return;
+    const selection = document.getSelection?.();
+    if (!selection || selection.rangeCount === 0) {
         return;
     }
-    const caret = resolveCaretFromEvent(event);
-    if (!caret) {
+    const range = selection.getRangeAt(0);
+    if (!range || range.collapsed) {
         return;
     }
-    snippetPointerState.isSelecting = true;
-    snippetPointerState.anchor = caret;
-    snippetPointerState.focus = caret;
-    snippetPointerState.activePointerId = typeof event.pointerId === "number" ? event.pointerId : null;
-    const target = event.currentTarget || codeScrollRef.value;
-    if (
-        target &&
-        typeof snippetPointerState.activePointerId === "number" &&
-        typeof target.setPointerCapture === "function"
-    ) {
-        try {
-            target.setPointerCapture(snippetPointerState.activePointerId);
-        } catch (_error) {
-            // ignore pointer capture failures
-        }
+    const { startContainer, endContainer } = range;
+    if (!containerContainsNode(container, startContainer) || !containerContainsNode(container, endContainer)) {
+        return;
     }
-    if (!detachSnippetPointerListeners) {
-        const handlePointerMove = (pointerEvent) => {
-            if (!snippetPointerState.isSelecting) return;
-            if (
-                typeof snippetPointerState.activePointerId === "number" &&
-                typeof pointerEvent.pointerId === "number" &&
-                pointerEvent.pointerId !== snippetPointerState.activePointerId
-            ) {
-                return;
-            }
-            const nextCaret = resolveCaretFromEvent(pointerEvent);
-            if (!nextCaret) return;
-            snippetPointerState.focus = nextCaret;
-            pointerEvent.preventDefault();
-            updateSnippetSelectionFromCarets(snippetPointerState.anchor, nextCaret);
-        };
-        const handlePointerFinish = (pointerEvent) => {
-            finalizeCodeScrollSelection(pointerEvent);
-        };
-        window.addEventListener("pointermove", handlePointerMove);
-        window.addEventListener("pointerup", handlePointerFinish);
-        window.addEventListener("pointercancel", handlePointerFinish);
-        detachSnippetPointerListeners = () => {
-            window.removeEventListener("pointermove", handlePointerMove);
-            window.removeEventListener("pointerup", handlePointerFinish);
-            window.removeEventListener("pointercancel", handlePointerFinish);
-            detachSnippetPointerListeners = null;
-        };
+    applyRangeSelection(range);
+}
+
+function attachSelectionChangeListener() {
+    if (typeof document === "undefined") return;
+    if (typeof detachSelectionChangeListener === "function") {
+        return;
     }
+    const handler = () => {
+        syncSnippetSelectionFromNativeRange();
+    };
+    document.addEventListener("selectionchange", handler);
+    detachSelectionChangeListener = () => {
+        document.removeEventListener("selectionchange", handler);
+        detachSelectionChangeListener = null;
+    };
+}
+
+function detachSelectionChangeListenerIfNeeded() {
+    if (typeof detachSelectionChangeListener === "function") {
+        detachSelectionChangeListener();
+    }
+}
+
+function handleCodeEditorBeforeInput(event) {
+    if (!event) return;
     event.preventDefault();
 }
 
-function finalizeCodeScrollSelection(event) {
-    if (!snippetPointerState.isSelecting) {
+function handleCodeEditorKeydown(event) {
+    if (!event) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) {
         return;
     }
-    if (event && typeof event.preventDefault === "function") {
+    const allowedKeys = new Set([
+        "ArrowLeft",
+        "ArrowRight",
+        "ArrowUp",
+        "ArrowDown",
+        "PageUp",
+        "PageDown",
+        "Home",
+        "End",
+        "Shift",
+        "Escape",
+        "Tab"
+    ]);
+    if (!allowedKeys.has(event.key)) {
         event.preventDefault();
     }
-    if (event) {
-        const caret = resolveCaretFromEvent(event);
-        if (caret) {
-            snippetPointerState.focus = caret;
-            updateSnippetSelectionFromCarets(snippetPointerState.anchor, caret);
-        }
-    }
-    resetSnippetPointerState();
+}
+
+function handleCodeEditorKeyup() {
+    syncSnippetSelectionFromNativeRange();
+}
+
+function handleCodeEditorMouseup() {
+    syncSnippetSelectionFromNativeRange();
+}
+
+function handleCodeEditorPaste(event) {
+    if (!event) return;
+    event.preventDefault();
+}
+
+function handleCodeEditorDrop(event) {
+    if (!event) return;
+    event.preventDefault();
 }
 
 watch(snippetCurrentKey, (key) => {
@@ -896,6 +827,19 @@ watch(
             resetSnippetPointerState();
             clearSnippetSelection();
             resetSnippetResult();
+        }
+    },
+    { immediate: true }
+);
+
+watch(
+    () => snippetTrackingEnabled.value && previewing.value.kind === "text",
+    (enabled) => {
+        if (!supportsSelectionTracking) return;
+        if (enabled) {
+            attachSelectionChangeListener();
+        } else {
+            detachSelectionChangeListenerIfNeeded();
         }
     },
     { immediate: true }
@@ -1838,7 +1782,7 @@ onBeforeUnmount(() => {
     window.removeEventListener("resize", clampReportSidebarWidth);
     stopChatDrag();
     stopChatResize();
-    resetSnippetPointerState();
+    detachSelectionChangeListenerIfNeeded();
 });
 </script>
 
@@ -2057,22 +2001,31 @@ onBeforeUnmount(() => {
                         </div>
 
                         <div class="pvBox codeBox">
-                            <div
-                                class="codeScroll"
-                                ref="codeScrollRef"
-                                @pointerdown="beginCodeScrollSelection"
-                                @pointerup="finalizeCodeScrollSelection"
-                                @pointercancel="finalizeCodeScrollSelection"
-                            >
+                            <div class="codeScroll" ref="codeScrollRef">
                                 <div
-                                    v-for="line in previewLineItems"
-                                    :key="line.number"
-                                    class="codeLine"
-                                    :data-line="line.number"
-                                    :class="{ 'codeLine--selected': isLineInSnippetSelection(line.number) }"
+                                    class="codeEditor"
+                                    ref="codeEditorRef"
+                                    contenteditable="true"
+                                    spellcheck="false"
+                                    autocorrect="off"
+                                    autocapitalize="off"
+                                    @beforeinput="handleCodeEditorBeforeInput"
+                                    @keydown="handleCodeEditorKeydown"
+                                    @keyup="handleCodeEditorKeyup"
+                                    @mouseup="handleCodeEditorMouseup"
+                                    @paste="handleCodeEditorPaste"
+                                    @drop="handleCodeEditorDrop"
                                 >
-                                    <span class="codeLineNo">{{ line.number }}</span>
-                                    <span class="codeLineContent" v-html="renderLineContent(line)"></span>
+                                    <div
+                                        v-for="line in previewLineItems"
+                                        :key="line.number"
+                                        class="codeLine"
+                                        :data-line="line.number"
+                                        :class="{ 'codeLine--selected': isLineInSnippetSelection(line.number) }"
+                                    >
+                                        <span class="codeLineNo">{{ line.number }}</span>
+                                        <span class="codeLineContent" v-html="renderLineContent(line)"></span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -2571,7 +2524,7 @@ body,
     border-radius: 3px;
     padding: 0 1px;
     color: inherit;
-    user-select: none;
+    user-select: text;
 }
 
 .codeLineHighlight--full {
@@ -2774,13 +2727,31 @@ body,
     color: #d1d5db;
     background: #1b1b1b;
     cursor: text;
-    user-select: none;
+    user-select: text;
+}
+
+.codeEditor {
+    min-width: max-content;
+    display: inline-block;
+    outline: none;
+    user-select: text;
+    caret-color: transparent;
+}
+
+.codeEditor:focus {
+    outline: none;
+}
+
+.codeEditor::selection,
+.codeEditor *::selection {
+    background: rgba(56, 189, 248, 0.35);
+    color: #f8fafc;
 }
 
 .codeLine {
     display: flex;
     min-width: max-content;
-    user-select: none;
+    user-select: text;
 }
 
 .codeLineNo {
@@ -2800,7 +2771,7 @@ body,
     padding: 0 12px;
     white-space: pre;
     min-width: max-content;
-    user-select: none;
+    user-select: text;
 }
 
 
