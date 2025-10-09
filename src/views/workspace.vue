@@ -93,11 +93,8 @@ const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const codeScrollRef = ref(null);
 const codeEditorRef = ref(null);
-const isCodeEditorSelecting = ref(false);
 let detachCodePointerListeners = null;
-let lastCodeScrollElement = null;
 let detachSelectionChangeListener = null;
-let clearNativeSelectionFrame = null;
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
@@ -497,8 +494,6 @@ function clearSnippetSelection() {
     snippetSelection.text = "";
     snippetSelection.path = "";
     clearNativeSelectionRange();
-    isCodeEditorSelecting.value = false;
-    applyCodeEditorSelectability();
 }
 
 function resetSnippetResult() {
@@ -696,30 +691,10 @@ function applyRangeSelection(range) {
     return true;
 }
 
-function applyCodeEditorSelectability() {
-    const current = codeScrollRef.value;
-    if (lastCodeScrollElement && lastCodeScrollElement !== current) {
-        lastCodeScrollElement.classList.remove("codeScroll--selecting");
-    }
-    if (!current) {
-        lastCodeScrollElement = null;
-        return;
-    }
-    lastCodeScrollElement = current;
-    const shouldAllowSelection = snippetTrackingEnabled.value && isCodeEditorSelecting.value;
-    current.classList.toggle("codeScroll--selecting", shouldAllowSelection);
-}
-
 function resetSnippetPointerState() {
-    if (clearNativeSelectionFrame !== null && typeof window !== "undefined") {
-        window.cancelAnimationFrame(clearNativeSelectionFrame);
-        clearNativeSelectionFrame = null;
-    }
     if (typeof detachCodePointerListeners === "function") {
         detachCodePointerListeners();
     }
-    isCodeEditorSelecting.value = false;
-    applyCodeEditorSelectability();
 }
 
 function syncSnippetSelectionFromNativeRange() {
@@ -740,18 +715,6 @@ function syncSnippetSelectionFromNativeRange() {
         return;
     }
     applyRangeSelection(range);
-}
-
-function queueNativeSelectionClear() {
-    if (typeof window === "undefined") return;
-    if (!snippetSelection.text || !snippetSelection.text.trim()) return;
-    if (clearNativeSelectionFrame !== null) {
-        window.cancelAnimationFrame(clearNativeSelectionFrame);
-    }
-    clearNativeSelectionFrame = window.requestAnimationFrame(() => {
-        clearNativeSelectionFrame = null;
-        clearNativeSelectionRange();
-    });
 }
 
 function clearNativeSelectionRange() {
@@ -793,8 +756,6 @@ function handleCodeEditorPointerdown(event) {
     if (event && typeof event.button === "number" && event.button !== 0) {
         return;
     }
-    isCodeEditorSelecting.value = true;
-    applyCodeEditorSelectability();
     if (typeof window === "undefined") {
         return;
     }
@@ -805,8 +766,6 @@ function handleCodeEditorPointerdown(event) {
         window.removeEventListener("pointerup", stop);
         window.removeEventListener("pointercancel", stop);
         detachCodePointerListeners = null;
-        isCodeEditorSelecting.value = false;
-        applyCodeEditorSelectability();
     };
     detachCodePointerListeners = stop;
     window.addEventListener("pointerup", stop);
@@ -843,17 +802,12 @@ function handleCodeEditorKeydown(event) {
 
 function handleCodeEditorKeyup() {
     syncSnippetSelectionFromNativeRange();
-    queueNativeSelectionClear();
 }
 
 function handleCodeEditorMouseup() {
     syncSnippetSelectionFromNativeRange();
-    queueNativeSelectionClear();
     if (typeof detachCodePointerListeners === "function") {
         detachCodePointerListeners();
-    } else {
-        isCodeEditorSelecting.value = false;
-        applyCodeEditorSelectability();
     }
 }
 
@@ -923,18 +877,6 @@ watch(
         } else {
             detachSelectionChangeListenerIfNeeded();
         }
-    },
-    { immediate: true }
-);
-
-watch(
-    [
-        () => codeScrollRef.value,
-        () => snippetTrackingEnabled.value,
-        () => isCodeEditorSelecting.value
-    ],
-    () => {
-        applyCodeEditorSelectability();
     },
     { immediate: true }
 );
@@ -1879,14 +1821,6 @@ onBeforeUnmount(() => {
     detachSelectionChangeListenerIfNeeded();
     if (typeof detachCodePointerListeners === "function") {
         detachCodePointerListeners();
-    }
-    if (clearNativeSelectionFrame !== null && typeof window !== "undefined") {
-        window.cancelAnimationFrame(clearNativeSelectionFrame);
-        clearNativeSelectionFrame = null;
-    }
-    if (lastCodeScrollElement) {
-        lastCodeScrollElement.classList.remove("codeScroll--selecting");
-        lastCodeScrollElement = null;
     }
 });
 </script>
@@ -2865,16 +2799,6 @@ body,
     padding: 0 12px;
     white-space: pre;
     min-width: max-content;
-}
-
-.codeScroll.codeScroll--selecting,
-.codeScroll.codeScroll--selecting .codeEditor,
-.codeScroll.codeScroll--selecting .codeLine,
-.codeScroll.codeScroll--selecting .codeLineContent {
-    -webkit-user-select: text;
-    -moz-user-select: text;
-    -ms-user-select: text;
-    user-select: text;
 }
 
 
