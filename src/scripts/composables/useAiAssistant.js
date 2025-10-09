@@ -253,63 +253,6 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         return parts;
     }
 
-    async function addSnippetContext(snippet) {
-        const text = (snippet?.content || "").trim();
-        if (!text) {
-            pushMessage("assistant", "請先選取有效的程式碼片段。", { synthetic: true, status: "error" });
-            return false;
-        }
-
-        const path = snippet?.path || "";
-        const startLine = normaliseLine(snippet?.startLine);
-        const endLine = normaliseLine(snippet?.endLine ?? startLine);
-        const startColumn = normaliseColumn(snippet?.startColumn);
-        const endColumn = normaliseColumn(snippet?.endColumn);
-        const rawLineCount = Number.isFinite(snippet?.lineCount)
-            ? Number(snippet.lineCount)
-            : startLine !== null && endLine !== null
-                ? Math.abs(endLine - startLine) + 1
-                : null;
-        const lineCount = normalisePositiveInteger(rawLineCount);
-
-        const duplicate = contextItems.value.find(
-            (item) =>
-                item.type === "snippet" &&
-                item.snippet?.path === path &&
-                item.snippet?.startLine === startLine &&
-                item.snippet?.endLine === endLine &&
-                item.snippet?.startColumn === startColumn &&
-                item.snippet?.endColumn === endColumn &&
-                item.content === text
-        );
-        if (duplicate) {
-            return true;
-        }
-
-        const id = snippet?.id || `snippet-${++ctxId}`;
-        const rangeParts = buildSnippetRangeParts({ startLine, endLine, startColumn, endColumn, lineCount });
-        const rangeLabel = rangeParts.length ? ` (${rangeParts.join(", ")})` : "";
-        const label = snippet?.label || (path ? `${path}${rangeLabel}` : `Snippet ${ctxId}`);
-
-        contextItems.value.push({
-            id,
-            type: "snippet",
-            label,
-            path,
-            content: text,
-            snippet: {
-                path,
-                startLine,
-                endLine,
-                startColumn,
-                endColumn,
-                lineCount
-            }
-        });
-
-        return true;
-    }
-
     async function addActiveNode() {
         if (isInteractionLocked.value) return false;
         const activePath = treeStore?.activeTreePath?.value;
