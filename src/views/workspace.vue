@@ -2554,7 +2554,10 @@ body,
     border-radius: 3px;
     padding: 0 1px;
     color: inherit;
-    user-select: text;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
 }
 
 .codeLineHighlight--full {
