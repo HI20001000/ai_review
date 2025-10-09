@@ -1471,36 +1471,43 @@ body,
     height: calc(100vh - 60px);
     max-height: calc(100vh - 60px);
     overflow: hidden;
-    scrollbar-width: thin;
-    scrollbar-color: #3d3d3d #1b1b1b;
+    scrollbar-width: auto;
+    scrollbar-color: #4b4b4b #141414;
 }
 
 .mainContent::-webkit-scrollbar {
-    width: 10px;
+    width: 15px;
 }
 
 .mainContent::-webkit-scrollbar-track {
-    background: #1b1b1b;
+    background: #141414;
 }
 
 .mainContent::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, #3b82f6, #0ea5e9);
+    background: #4b4b4b;
     border-radius: 999px;
-    border: 2px solid #1b1b1b;
+    border: 3px solid #141414;
 }
 
 .mainContent::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, #60a5fa, #22d3ee);
+    background: #646464;
 }
 
 .workSpace {
     flex: 1 1 auto;
     display: flex;
     flex-direction: column;
+    gap: 16px;
     min-height: 0;
     height: 100%;
     max-height: 100%;
+    min-width: 0;
     overflow: hidden;
+    background: #191919;
+    border: 1px solid #323232;
+    border-radius: 0;
+    padding: 16px;
+    box-sizing: border-box;
 }
 
 .workSpace--reports {
@@ -1674,42 +1681,42 @@ body,
 .reportBody,
 .reportChunkBody,
 .codeScroll {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(59, 130, 246, 0.45) rgba(15, 23, 42, 0.75);
+    scrollbar-width: auto;
+    scrollbar-color: #4b4b4b #111111;
 }
 
 .reportBody::-webkit-scrollbar,
 .reportChunkBody::-webkit-scrollbar,
 .codeScroll::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 15px;
+    height: 15px;
 }
 
 .reportBody::-webkit-scrollbar-track,
 .reportChunkBody::-webkit-scrollbar-track,
 .codeScroll::-webkit-scrollbar-track {
-    background: rgba(17, 24, 39, 0.8);
+    background: #111111;
     border-radius: 999px;
 }
 
 .reportBody::-webkit-scrollbar-thumb,
 .reportChunkBody::-webkit-scrollbar-thumb,
 .codeScroll::-webkit-scrollbar-thumb {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.6), rgba(14, 165, 233, 0.6));
+    background: #4b4b4b;
     border-radius: 999px;
-    border: 2px solid rgba(17, 24, 39, 0.8);
+    border: 3px solid #111111;
 }
 
 .reportBody::-webkit-scrollbar-thumb:hover,
 .reportChunkBody::-webkit-scrollbar-thumb:hover,
 .codeScroll::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(135deg, rgba(96, 165, 250, 0.75), rgba(20, 184, 166, 0.75));
+    background: #636363;
 }
 
 .reportBody::-webkit-scrollbar-corner,
 .reportChunkBody::-webkit-scrollbar-corner,
 .codeScroll::-webkit-scrollbar-corner {
-    background: rgba(17, 24, 39, 0.8);
+    background: #111111;
 }
 
 .reportErrorPanel {
