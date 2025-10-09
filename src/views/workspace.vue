@@ -63,6 +63,7 @@ const {
     contextItems,
     messages,
     addActiveNode,
+    addSnippetContext,
     removeContext,
     clearContext,
     sendUserMessage,
@@ -90,6 +91,7 @@ const previewLineItems = computed(() => {
 
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
+const codeScrollRef = ref(null);
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
@@ -222,6 +224,96 @@ function renderLineContent(line) {
     const rawText = typeof line?.raw === "string" ? line.raw : (line?.content || "").replace(/ /g, " ");
     const safe = escapeHtml(rawText);
     return safe.length ? safe : "&nbsp;";
+}
+
+function resolveLineInfo(node) {
+    if (!node) return null;
+    let current = node.nodeType === 3 ? node.parentElement : node;
+    while (current && current !== codeScrollRef.value) {
+        if (current.classList && current.classList.contains("codeLine")) {
+            const lineNumber = Number.parseInt(current.dataset?.line || "", 10);
+            const contentEl = current.querySelector(".codeLineContent");
+            return {
+                lineEl: current,
+                contentEl,
+                lineNumber: Number.isFinite(lineNumber) ? lineNumber : null
+            };
+        }
+        current = current.parentElement;
+    }
+    return null;
+}
+
+function normaliseSelectionRangeText(range) {
+    return range
+        .toString()
+        .replace(/\u00A0/g, " ")
+        .replace(/\r\n|\r/g, "\n");
+}
+
+function measureColumn(lineInfo, container, offset, mode) {
+    if (!lineInfo?.contentEl || typeof document === "undefined") return null;
+    const targetContainer = container?.nodeType === 3 ? container : container;
+    if (!lineInfo.contentEl.contains(targetContainer)) {
+        if (mode === "end") {
+            const fullRange = document.createRange();
+            fullRange.selectNodeContents(lineInfo.contentEl);
+            return normaliseSelectionRangeText(fullRange).length || null;
+        }
+        return 1;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(lineInfo.contentEl);
+    try {
+        range.setEnd(container, offset);
+    } catch (error) {
+        return null;
+    }
+    const length = normaliseSelectionRangeText(range).length;
+    if (mode === "start") {
+        return Math.max(1, length + 1);
+    }
+    return Math.max(1, length);
+}
+
+function buildSelectedSnippet() {
+    if (typeof window === "undefined") return null;
+    const root = codeScrollRef.value;
+    if (!root) return null;
+    const selection = window.getSelection?.();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
+        return null;
+    }
+
+    const rawText = normaliseSelectionRangeText(range);
+    if (!rawText.trim()) return null;
+
+    const startInfo = resolveLineInfo(range.startContainer);
+    const endInfo = resolveLineInfo(range.endContainer);
+    if (!startInfo || !endInfo) return null;
+
+    const startLine = startInfo.lineNumber;
+    const endLine = endInfo.lineNumber;
+    const startColumn = measureColumn(startInfo, range.startContainer, range.startOffset, "start");
+    const endColumn = measureColumn(endInfo, range.endContainer, range.endOffset, "end");
+    const lineCount = startLine !== null && endLine !== null ? endLine - startLine + 1 : null;
+
+    const path = previewing.value.path || treeStore.activeTreePath.value || "";
+    const name = previewing.value.name || path || "選取片段";
+
+    return {
+        path,
+        name,
+        label: name,
+        startLine,
+        endLine,
+        startColumn,
+        endColumn,
+        lineCount,
+        text: rawText
+    };
 }
 
 watch(isChatWindowOpen, (visible) => {
@@ -833,6 +925,20 @@ async function handleAddActiveContext() {
     }
 }
 
+function handleAddSelectionContext() {
+    const snippet = buildSelectedSnippet();
+    if (!snippet) {
+        if (typeof safeAlertFail === "function") {
+            safeAlertFail("請先在程式碼預覽中選取想加入的內容。");
+        }
+        return;
+    }
+    const added = addSnippetContext({ ...snippet });
+    if (added) {
+        openChatWindow();
+    }
+}
+
 async function handleSendMessage(content) {
     const text = (content || "").trim();
     if (!text) return;
@@ -1161,7 +1267,7 @@ onBeforeUnmount(() => {
 
                     <template v-if="previewing.kind === 'text'">
                         <div class="pvBox codeBox">
-                            <div class="codeScroll">
+                            <div class="codeScroll" ref="codeScrollRef">
                                 <div class="codeEditor">
                                     <div
                                         v-for="line in previewLineItems"
@@ -1214,6 +1320,7 @@ onBeforeUnmount(() => {
                 :disabled="isChatLocked"
                 :connection="connection"
                 @add-active="handleAddActiveContext"
+                @add-selection="handleAddSelectionContext"
                 @clear-context="clearContext"
                 @remove-context="removeContext"
                 @send-message="handleSendMessage"
@@ -1545,6 +1652,7 @@ body,
     white-space: pre-wrap;
     word-break: break-word;
     overflow: auto;
+    max-height: 100%;
 }
 
 .reportBody,
@@ -1687,8 +1795,12 @@ body,
     border-radius: 6px;
     border: 1px solid #2f2f2f;
     padding: 12px;
-    overflow: auto;
+    overflow: hidden;
     display: flex;
+}
+
+.pvBox:not(.codeBox) {
+    overflow: auto;
 }
 
 .pvBox.codeBox {
@@ -1710,10 +1822,10 @@ body,
 
 .reportBody.codeScroll,
 .reportChunkBody.codeScroll {
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
-    user-select: none;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
 }
 
 .codeEditor {

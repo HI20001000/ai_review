@@ -277,13 +277,78 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         contextItems.value = [];
     }
 
-    function addSnippetContext() {
-        pushMessage(
-            "assistant",
-            "目前未提供程式碼片段加入上下文的功能。",
-            { synthetic: true, status: "info" }
-        );
-        return false;
+    function formatSnippetLabel(snippetMeta, fallbackId) {
+        const name = snippetMeta?.label || snippetMeta?.name || snippetMeta?.path;
+        const startLine = normaliseLine(snippetMeta?.startLine);
+        const endLine = normaliseLine(snippetMeta?.endLine ?? snippetMeta?.startLine);
+        if (!name) return `Snippet ${fallbackId}`;
+        if (startLine === null) return name;
+        if (endLine === null || endLine === startLine) {
+            return `${name} (行 ${startLine})`;
+        }
+        return `${name} (行 ${startLine}-${endLine})`;
+    }
+
+    function formatSnippetPayload(path, text) {
+        const header = path ? `File: ${path}` : "Selected snippet";
+        const normalised = (text || "").replace(/\r\n|\r/g, "\n");
+        const body = normalised.replace(/\u00A0/g, " ");
+        const payload = `${header}\n\n${body}`.trimEnd();
+        return { payload, body: body.trimEnd() };
+    }
+
+    function addSnippetContext(snippetMeta = {}) {
+        if (isInteractionLocked.value) return false;
+        try {
+            const projectId = projectsStore?.selectedProjectId?.value;
+            if (!projectId) {
+                throw new Error("請先從左側開啟一個專案。");
+            }
+
+            const snippetText = typeof snippetMeta.text === "string" ? snippetMeta.text : snippetMeta.content;
+            if (!(snippetText || "").trim()) {
+                throw new Error("請先在程式碼檢視中選取想加入的程式碼片段。");
+            }
+
+            const path = snippetMeta.path || treeStore?.activeTreePath?.value;
+            if (!path) {
+                throw new Error("無法辨識程式碼片段所屬的檔案，請重新選取。");
+            }
+
+            const startLine = normaliseLine(snippetMeta.startLine);
+            const endLine = normaliseLine(snippetMeta.endLine ?? snippetMeta.startLine);
+            const startColumn = normaliseColumn(snippetMeta.startColumn);
+            const endColumn = normaliseColumn(snippetMeta.endColumn);
+            const inferredLineCount = endLine !== null && startLine !== null ? endLine - startLine + 1 : null;
+            const lineCount = normalisePositiveInteger(snippetMeta.lineCount) ?? inferredLineCount;
+
+            const id = `snippet-${++ctxId}`;
+            const label = formatSnippetLabel(snippetMeta, ctxId);
+            const { payload, body } = formatSnippetPayload(path, snippetText);
+
+            const entry = {
+                id,
+                label,
+                type: "snippet",
+                path,
+                snippet: {
+                    path,
+                    startLine,
+                    endLine,
+                    startColumn,
+                    endColumn,
+                    lineCount,
+                    text: body
+                },
+                content: payload
+            };
+
+            contextItems.value.push(entry);
+            return true;
+        } catch (error) {
+            pushMessage("assistant", `${ERROR_PREFIX}${formatError(error)}`, { synthetic: true, status: "error" });
+            return false;
+        }
     }
 
     async function sendUserMessage(raw) {

@@ -48,6 +48,14 @@
                             </button>
                             <button
                                 type="button"
+                                class="chatWindow__btn"
+                                :disabled="controlsDisabled"
+                                @click="emit('add-selection')"
+                            >
+                                Add selection
+                            </button>
+                            <button
+                                type="button"
                                 class="chatWindow__btn ghost"
                                 :disabled="clearDisabled"
                                 @click="emit('clear-context')"
@@ -151,6 +159,7 @@ const emit = defineEmits([
     "remove-context",
     "clear-context",
     "add-active",
+    "add-selection",
     "send-message",
     "close",
     "drag-start",
