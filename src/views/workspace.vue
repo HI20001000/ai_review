@@ -1664,15 +1664,10 @@ body,
     color: #d1d5db;
     background: #1b1b1b;
     cursor: text;
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
-    user-select: none;
 }
 
 .reportBody.codeScroll,
-.reportChunkBody.codeScroll,
-.codeLineContent {
+.reportChunkBody.codeScroll {
     -webkit-user-select: none;
     -moz-user-select: none;
     -ms-user-select: none;
@@ -1715,6 +1710,10 @@ body,
     padding: 0 12px;
     white-space: pre;
     min-width: max-content;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
 }
 
 
