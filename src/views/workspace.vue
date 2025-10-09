@@ -1360,6 +1360,7 @@ body,
 
 .page {
     min-height: 100vh;
+    height: 100vh;
     display: flex;
     flex-direction: column;
     background-color: #1e1e1e;
@@ -1469,8 +1470,7 @@ body,
     padding: 0;
     height: calc(100vh - 60px);
     max-height: calc(100vh - 60px);
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: hidden;
     scrollbar-width: thin;
     scrollbar-color: #3d3d3d #1b1b1b;
 }
@@ -1491,6 +1491,22 @@ body,
 
 .mainContent::-webkit-scrollbar-thumb:hover {
     background: linear-gradient(180deg, #60a5fa, #22d3ee);
+}
+
+.workSpace {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+}
+
+.workSpace--reports {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
 }
 
 .toolColumn {
