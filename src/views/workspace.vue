@@ -92,6 +92,7 @@ const previewLineItems = computed(() => {
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const codeScrollRef = ref(null);
+const codeSelection = ref(null);
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
@@ -222,8 +223,34 @@ function escapeHtml(value) {
 
 function renderLineContent(line) {
     const rawText = typeof line?.raw === "string" ? line.raw : (line?.content || "").replace(/ /g, " ");
+    const selection = codeSelection.value;
     const safe = escapeHtml(rawText);
-    return safe.length ? safe : "&nbsp;";
+
+    if (!selection || !selection.startLine || !selection.endLine || !Number.isFinite(line?.number)) {
+        return safe.length ? safe : "&nbsp;";
+    }
+
+    const lineNumber = line.number;
+    if (lineNumber < selection.startLine || lineNumber > selection.endLine) {
+        return safe.length ? safe : "&nbsp;";
+    }
+
+    const plain = rawText;
+    const lineLength = plain.length;
+    const startIndex = lineNumber === selection.startLine ? Math.max(0, (selection.startColumn ?? 1) - 1) : 0;
+    const endIndex = lineNumber === selection.endLine
+        ? Math.min(lineLength, selection.endColumn ?? lineLength)
+        : lineLength;
+
+    const safeBefore = escapeHtml(plain.slice(0, startIndex));
+    const highlightEnd = Math.max(startIndex, endIndex);
+    const middleRaw = plain.slice(startIndex, highlightEnd);
+    const safeMiddle = escapeHtml(middleRaw);
+    const safeAfter = escapeHtml(plain.slice(highlightEnd));
+
+    const highlighted = `<span class="codeSelectionHighlight">${safeMiddle.length ? safeMiddle : "&nbsp;"}</span>`;
+    const combined = `${safeBefore}${highlighted}${safeAfter}`;
+    return combined.length ? combined : "&nbsp;";
 }
 
 function resolveLineInfo(node) {
@@ -303,7 +330,7 @@ function buildSelectedSnippet() {
     const path = previewing.value.path || treeStore.activeTreePath.value || "";
     const name = previewing.value.name || path || "選取片段";
 
-    return {
+    const snippet = {
         path,
         name,
         label: name,
@@ -314,6 +341,27 @@ function buildSelectedSnippet() {
         lineCount,
         text: rawText
     };
+
+    codeSelection.value = snippet;
+    return snippet;
+}
+
+function handleDocumentSelectionChange() {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+    if (previewing.value.kind !== "text") return;
+    const root = codeScrollRef.value;
+    if (!root) return;
+    const selection = window.getSelection?.();
+    if (!selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
+    buildSelectedSnippet();
+}
+
+function handleDocumentPointerUp(event) {
+    if (!codeScrollRef.value) return;
+    if (!codeScrollRef.value.contains(event?.target)) return;
+    handleDocumentSelectionChange();
 }
 
 watch(isChatWindowOpen, (visible) => {
@@ -337,6 +385,31 @@ watch(isChatWindowOpen, (visible) => {
         closeAssistantSession();
     }
 });
+
+watch(
+    () => previewing.value.kind,
+    (kind) => {
+        if (kind !== "text") {
+            codeSelection.value = null;
+        }
+    }
+);
+
+watch(
+    () => previewing.value.path,
+    () => {
+        codeSelection.value = null;
+    }
+);
+
+watch(
+    () => previewing.value.text,
+    () => {
+        if (previewing.value.kind === "text") {
+            codeSelection.value = null;
+        }
+    }
+);
 
 async function ensureActiveProject() {
     const list = Array.isArray(projects.value) ? projects.value : [];
@@ -926,7 +999,10 @@ async function handleAddActiveContext() {
 }
 
 function handleAddSelectionContext() {
-    const snippet = buildSelectedSnippet();
+    let snippet = buildSelectedSnippet();
+    if (!snippet) {
+        snippet = codeSelection.value ? { ...codeSelection.value } : null;
+    }
     if (!snippet) {
         if (typeof safeAlertFail === "function") {
             safeAlertFail("請先在程式碼預覽中選取想加入的內容。");
@@ -1087,6 +1163,10 @@ onMounted(async () => {
     await loadProjectsFromDB();
     window.addEventListener("resize", ensureChatWindowInView);
     window.addEventListener("resize", clampReportSidebarWidth);
+    if (typeof document !== "undefined") {
+        document.addEventListener("selectionchange", handleDocumentSelectionChange);
+        document.addEventListener("mouseup", handleDocumentPointerUp);
+    }
 });
 
 onBeforeUnmount(() => {
@@ -1094,6 +1174,10 @@ onBeforeUnmount(() => {
     window.removeEventListener("resize", clampReportSidebarWidth);
     stopChatDrag();
     stopChatResize();
+    if (typeof document !== "undefined") {
+        document.removeEventListener("selectionchange", handleDocumentSelectionChange);
+        document.removeEventListener("mouseup", handleDocumentPointerUp);
+    }
 });
 </script>
 
@@ -1891,6 +1975,12 @@ body,
     -moz-user-select: text;
     -ms-user-select: text;
     user-select: text;
+}
+
+.codeSelectionHighlight {
+    background: rgba(59, 130, 246, 0.35);
+    color: #f8fafc;
+    border-radius: 2px;
 }
 
 .reportBody::selection,
