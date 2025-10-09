@@ -35,10 +35,20 @@ function formatContextSummary(items) {
     if (!Array.isArray(items) || !items.length) return "";
     const lines = items.map((item, index) => {
         const label = item.label || item.path || `Item ${index + 1}`;
-        const segments = [
-            `${index + 1}. \u6a94\u6848: ${label}`
-        ];
-        if (item.path) segments.push(`\u8def\u5f91: ${item.path}`);
+        const isSnippet = item.type === "snippet";
+        const header = isSnippet ? `\u7a0b\u5f0f\u78bc\u7247\u6bb5: ${label}` : `\u6a94\u6848: ${label}`;
+        const segments = [`${index + 1}. ${header}`];
+        if (isSnippet) {
+            if (item.snippet?.path) {
+                segments.push(`\u4f86\u6e90\u6a94\u6848: ${item.snippet.path}`);
+            }
+            const rangeParts = buildSnippetRangeParts(item.snippet || {});
+            if (rangeParts.length) {
+                segments.push(`\u7bc4\u570d: ${rangeParts.join("\uff0c")}`);
+            }
+        } else if (item.path) {
+            segments.push(`\u8def\u5f91: ${item.path}`);
+        }
         if (item.content) segments.push(item.content);
         return segments.join("\n");
     });
@@ -195,6 +205,54 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         }
     }
 
+    function normaliseLine(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function normaliseColumn(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number > 0 ? Math.floor(number) : null;
+    }
+
+    function normalisePositiveInteger(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number > 0 ? Math.floor(number) : null;
+    }
+
+    function buildSnippetRangeParts(meta = {}) {
+        const startLine = normaliseLine(meta.startLine);
+        const endLine = normaliseLine(meta.endLine ?? startLine);
+        const startColumn = normaliseColumn(meta.startColumn);
+        const endColumn = normaliseColumn(meta.endColumn);
+        const lineCount = normalisePositiveInteger(meta.lineCount);
+        const parts = [];
+        if (startLine !== null && endLine !== null) {
+            parts.push(startLine === endLine ? `行 ${startLine}` : `行 ${startLine}-${endLine}`);
+        } else if (startLine !== null) {
+            parts.push(`行 ${startLine}`);
+        } else if (endLine !== null) {
+            parts.push(`行 ${endLine}`);
+        }
+        const isSingleLine = startLine !== null && endLine !== null && startLine === endLine;
+        if (isSingleLine) {
+            if (startColumn !== null && endColumn !== null) {
+                parts.push(startColumn === endColumn ? `字元 ${startColumn}` : `字元 ${startColumn}-${endColumn}`);
+            } else if (startColumn !== null) {
+                parts.push(`字元 ${startColumn} 起`);
+            } else if (endColumn !== null) {
+                parts.push(`字元 ${endColumn} 止`);
+            }
+        } else {
+            if (startColumn !== null) parts.push(`起始字元 ${startColumn}`);
+            if (endColumn !== null) parts.push(`結束字元 ${endColumn}`);
+        }
+        if (lineCount !== null) {
+            parts.push(`共 ${lineCount} 行`);
+        }
+        return parts;
+    }
+
     async function addActiveNode() {
         if (isInteractionLocked.value) return false;
         const activePath = treeStore?.activeTreePath?.value;
@@ -217,6 +275,80 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
     function clearContext() {
         if (isInteractionLocked.value) return;
         contextItems.value = [];
+    }
+
+    function formatSnippetLabel(snippetMeta, fallbackId) {
+        const name = snippetMeta?.label || snippetMeta?.name || snippetMeta?.path;
+        const startLine = normaliseLine(snippetMeta?.startLine);
+        const endLine = normaliseLine(snippetMeta?.endLine ?? snippetMeta?.startLine);
+        if (!name) return `Snippet ${fallbackId}`;
+        if (startLine === null) return name;
+        if (endLine === null || endLine === startLine) {
+            return `${name} (行 ${startLine})`;
+        }
+        return `${name} (行 ${startLine}-${endLine})`;
+    }
+
+    function formatSnippetPayload(path, text) {
+        const header = path ? `File: ${path}` : "Selected snippet";
+        const normalised = (text || "").replace(/\r\n|\r/g, "\n");
+        const body = normalised.replace(/\u00A0/g, " ");
+        const payload = `${header}\n\n${body}`.trimEnd();
+        return { payload, body: body.trimEnd() };
+    }
+
+    function addSnippetContext(snippetMeta = {}) {
+        if (isInteractionLocked.value) return false;
+        try {
+            const projectId = projectsStore?.selectedProjectId?.value;
+            if (!projectId) {
+                throw new Error("請先從左側開啟一個專案。");
+            }
+
+            const snippetText = typeof snippetMeta.text === "string" ? snippetMeta.text : snippetMeta.content;
+            if (!(snippetText || "").trim()) {
+                throw new Error("請先在程式碼檢視中選取想加入的程式碼片段。");
+            }
+
+            const path = snippetMeta.path || treeStore?.activeTreePath?.value;
+            if (!path) {
+                throw new Error("無法辨識程式碼片段所屬的檔案，請重新選取。");
+            }
+
+            const startLine = normaliseLine(snippetMeta.startLine);
+            const endLine = normaliseLine(snippetMeta.endLine ?? snippetMeta.startLine);
+            const startColumn = normaliseColumn(snippetMeta.startColumn);
+            const endColumn = normaliseColumn(snippetMeta.endColumn);
+            const inferredLineCount = endLine !== null && startLine !== null ? endLine - startLine + 1 : null;
+            const lineCount = normalisePositiveInteger(snippetMeta.lineCount) ?? inferredLineCount;
+
+            const id = `snippet-${++ctxId}`;
+            const label = formatSnippetLabel(snippetMeta, ctxId);
+            const { payload, body } = formatSnippetPayload(path, snippetText);
+
+            const entry = {
+                id,
+                label,
+                type: "snippet",
+                path,
+                snippet: {
+                    path,
+                    startLine,
+                    endLine,
+                    startColumn,
+                    endColumn,
+                    lineCount,
+                    text: body
+                },
+                content: payload
+            };
+
+            contextItems.value.push(entry);
+            return true;
+        } catch (error) {
+            pushMessage("assistant", `${ERROR_PREFIX}${formatError(error)}`, { synthetic: true, status: "error" });
+            return false;
+        }
     }
 
     async function sendUserMessage(raw) {
@@ -304,7 +436,8 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         removeContext,
         clearContext,
         sendUserMessage,
-        retryHandshake
+        retryHandshake,
+        addSnippetContext
     };
 }
 
