@@ -1547,6 +1547,47 @@ body,
     overflow: auto;
 }
 
+.reportBody,
+.reportChunkBody,
+.codeScroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(59, 130, 246, 0.45) rgba(15, 23, 42, 0.75);
+}
+
+.reportBody::-webkit-scrollbar,
+.reportChunkBody::-webkit-scrollbar,
+.codeScroll::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.reportBody::-webkit-scrollbar-track,
+.reportChunkBody::-webkit-scrollbar-track,
+.codeScroll::-webkit-scrollbar-track {
+    background: rgba(17, 24, 39, 0.8);
+    border-radius: 999px;
+}
+
+.reportBody::-webkit-scrollbar-thumb,
+.reportChunkBody::-webkit-scrollbar-thumb,
+.codeScroll::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.6), rgba(14, 165, 233, 0.6));
+    border-radius: 999px;
+    border: 2px solid rgba(17, 24, 39, 0.8);
+}
+
+.reportBody::-webkit-scrollbar-thumb:hover,
+.reportChunkBody::-webkit-scrollbar-thumb:hover,
+.codeScroll::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, rgba(96, 165, 250, 0.75), rgba(20, 184, 166, 0.75));
+}
+
+.reportBody::-webkit-scrollbar-corner,
+.reportChunkBody::-webkit-scrollbar-corner,
+.codeScroll::-webkit-scrollbar-corner {
+    background: rgba(17, 24, 39, 0.8);
+}
+
 .reportErrorPanel {
     margin: 0;
     padding: 16px;
@@ -1658,6 +1699,7 @@ body,
 .codeScroll {
     flex: 1 1 auto;
     overflow: auto;
+    max-height: 100%;
     font-family: Consolas, "Courier New", monospace;
     font-size: 13px;
     line-height: 1.45;
@@ -1714,6 +1756,30 @@ body,
     -moz-user-select: text;
     -ms-user-select: text;
     user-select: text;
+}
+
+.reportBody::selection,
+.reportBody *::selection,
+.reportChunkBody::selection,
+.reportChunkBody *::selection,
+.codeScroll::selection,
+.codeScroll *::selection,
+.codeLineContent::selection,
+.codeLineContent *::selection {
+    background: rgba(59, 130, 246, 0.45);
+    color: #f8fafc;
+}
+
+.reportBody::-moz-selection,
+.reportBody *::-moz-selection,
+.reportChunkBody::-moz-selection,
+.reportChunkBody *::-moz-selection,
+.codeScroll::-moz-selection,
+.codeScroll *::-moz-selection,
+.codeLineContent::-moz-selection,
+.codeLineContent *::-moz-selection {
+    background: rgba(59, 130, 246, 0.45);
+    color: #f8fafc;
 }
 
 
