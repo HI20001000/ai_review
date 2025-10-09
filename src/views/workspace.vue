@@ -93,6 +93,9 @@ const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const codeScrollRef = ref(null);
 const codeEditorRef = ref(null);
+const isCodeEditorSelecting = ref(false);
+let detachCodePointerListeners = null;
+let lastCodeScrollElement = null;
 let detachSelectionChangeListener = null;
 let clearNativeSelectionFrame = null;
 const isChatWindowOpen = ref(false);
@@ -494,6 +497,8 @@ function clearSnippetSelection() {
     snippetSelection.text = "";
     snippetSelection.path = "";
     clearNativeSelectionRange();
+    isCodeEditorSelecting.value = false;
+    applyCodeEditorSelectability();
 }
 
 function resetSnippetResult() {
@@ -691,11 +696,30 @@ function applyRangeSelection(range) {
     return true;
 }
 
+function applyCodeEditorSelectability() {
+    const current = codeScrollRef.value;
+    if (lastCodeScrollElement && lastCodeScrollElement !== current) {
+        lastCodeScrollElement.classList.remove("codeScroll--selecting");
+    }
+    if (!current) {
+        lastCodeScrollElement = null;
+        return;
+    }
+    lastCodeScrollElement = current;
+    const shouldAllowSelection = snippetTrackingEnabled.value && isCodeEditorSelecting.value;
+    current.classList.toggle("codeScroll--selecting", shouldAllowSelection);
+}
+
 function resetSnippetPointerState() {
     if (clearNativeSelectionFrame !== null && typeof window !== "undefined") {
         window.cancelAnimationFrame(clearNativeSelectionFrame);
         clearNativeSelectionFrame = null;
     }
+    if (typeof detachCodePointerListeners === "function") {
+        detachCodePointerListeners();
+    }
+    isCodeEditorSelecting.value = false;
+    applyCodeEditorSelectability();
 }
 
 function syncSnippetSelectionFromNativeRange() {
@@ -763,6 +787,32 @@ function detachSelectionChangeListenerIfNeeded() {
     }
 }
 
+function handleCodeEditorPointerdown(event) {
+    if (!snippetTrackingEnabled.value) return;
+    if (previewing.value.kind !== "text") return;
+    if (event && typeof event.button === "number" && event.button !== 0) {
+        return;
+    }
+    isCodeEditorSelecting.value = true;
+    applyCodeEditorSelectability();
+    if (typeof window === "undefined") {
+        return;
+    }
+    if (typeof detachCodePointerListeners === "function") {
+        detachCodePointerListeners();
+    }
+    const stop = () => {
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+        detachCodePointerListeners = null;
+        isCodeEditorSelecting.value = false;
+        applyCodeEditorSelectability();
+    };
+    detachCodePointerListeners = stop;
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+}
+
 function handleCodeEditorBeforeInput(event) {
     if (!event) return;
     event.preventDefault();
@@ -799,6 +849,12 @@ function handleCodeEditorKeyup() {
 function handleCodeEditorMouseup() {
     syncSnippetSelectionFromNativeRange();
     queueNativeSelectionClear();
+    if (typeof detachCodePointerListeners === "function") {
+        detachCodePointerListeners();
+    } else {
+        isCodeEditorSelecting.value = false;
+        applyCodeEditorSelectability();
+    }
 }
 
 function handleCodeEditorPaste(event) {
@@ -867,6 +923,18 @@ watch(
         } else {
             detachSelectionChangeListenerIfNeeded();
         }
+    },
+    { immediate: true }
+);
+
+watch(
+    [
+        () => codeScrollRef.value,
+        () => snippetTrackingEnabled.value,
+        () => isCodeEditorSelecting.value
+    ],
+    () => {
+        applyCodeEditorSelectability();
     },
     { immediate: true }
 );
@@ -1809,9 +1877,16 @@ onBeforeUnmount(() => {
     stopChatDrag();
     stopChatResize();
     detachSelectionChangeListenerIfNeeded();
+    if (typeof detachCodePointerListeners === "function") {
+        detachCodePointerListeners();
+    }
     if (clearNativeSelectionFrame !== null && typeof window !== "undefined") {
         window.cancelAnimationFrame(clearNativeSelectionFrame);
         clearNativeSelectionFrame = null;
+    }
+    if (lastCodeScrollElement) {
+        lastCodeScrollElement.classList.remove("codeScroll--selecting");
+        lastCodeScrollElement = null;
     }
 });
 </script>
@@ -2039,6 +2114,7 @@ onBeforeUnmount(() => {
                                     spellcheck="false"
                                     autocorrect="off"
                                     autocapitalize="off"
+                                    @pointerdown="handleCodeEditorPointerdown"
                                     @beforeinput="handleCodeEditorBeforeInput"
                                     @keydown="handleCodeEditorKeydown"
                                     @keyup="handleCodeEditorKeyup"
@@ -2747,14 +2823,16 @@ body,
     color: #d1d5db;
     background: #1b1b1b;
     cursor: text;
-    user-select: text;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
 }
 
 .codeEditor {
     min-width: max-content;
     display: inline-block;
     outline: none;
-    user-select: text;
     caret-color: transparent;
 }
 
@@ -2762,26 +2840,9 @@ body,
     outline: none;
 }
 
-.codeEditor::selection,
-.codeEditor *::selection,
-.codeEditor::-moz-selection,
-.codeEditor *::-moz-selection {
-    background: transparent;
-    color: inherit;
-}
-
-.codeLine::selection,
-.codeLine *::selection,
-.codeLine::-moz-selection,
-.codeLine *::-moz-selection {
-    background: transparent;
-    color: inherit;
-}
-
 .codeLine {
     display: flex;
     min-width: max-content;
-    user-select: text;
 }
 
 .codeLineNo {
@@ -2804,6 +2865,15 @@ body,
     padding: 0 12px;
     white-space: pre;
     min-width: max-content;
+}
+
+.codeScroll.codeScroll--selecting,
+.codeScroll.codeScroll--selecting .codeEditor,
+.codeScroll.codeScroll--selecting .codeLine,
+.codeScroll.codeScroll--selecting .codeLineContent {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
     user-select: text;
 }
 
