@@ -2513,6 +2513,7 @@ body,
     border-radius: 3px;
     padding: 0 1px;
     color: inherit;
+    user-select: none;
 }
 
 .codeLineHighlight--full {
@@ -2725,6 +2726,7 @@ body,
 .codeLine {
     display: flex;
     min-width: max-content;
+    user-select: none;
 }
 
 .codeLineNo {
@@ -2744,6 +2746,13 @@ body,
     padding: 0 12px;
     white-space: pre;
     min-width: max-content;
+    user-select: none;
+}
+
+.codeScroll--selectable .codeLine,
+.codeScroll--selectable .codeLineContent,
+.codeScroll--selectable .codeLineHighlight {
+    user-select: text;
 }
 
 .modalBackdrop {
