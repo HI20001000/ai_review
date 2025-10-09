@@ -1673,24 +1673,10 @@ body,
 .reportBody.codeScroll,
 .reportChunkBody.codeScroll,
 .codeLineContent {
-    -webkit-user-select: text;
-    -moz-user-select: text;
-    -ms-user-select: text;
-    user-select: text;
-}
-
-.reportBody::selection,
-.reportChunkBody::selection,
-.codeLineContent::selection {
-    background: rgba(59, 130, 246, 0.35);
-    color: #f8fafc;
-}
-
-.reportBody::-moz-selection,
-.reportChunkBody::-moz-selection,
-.codeLineContent::-moz-selection {
-    background: rgba(59, 130, 246, 0.35);
-    color: #f8fafc;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
 }
 
 .codeEditor {
