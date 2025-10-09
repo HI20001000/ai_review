@@ -277,6 +277,15 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         contextItems.value = [];
     }
 
+    function addSnippetContext() {
+        pushMessage(
+            "assistant",
+            "目前未提供程式碼片段加入上下文的功能。",
+            { synthetic: true, status: "info" }
+        );
+        return false;
+    }
+
     async function sendUserMessage(raw) {
         const text = (raw || "").trim();
         if (!text || isProcessing.value) return;
@@ -363,7 +372,8 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         removeContext,
         clearContext,
         sendUserMessage,
-        retryHandshake
+        retryHandshake,
+        addSnippetContext
     };
 }
 
