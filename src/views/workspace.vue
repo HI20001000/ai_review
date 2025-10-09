@@ -629,9 +629,6 @@ function updateSnippetSelectionFromDom() {
     }
     const selection = document.getSelection();
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        if (snippetSelection.text) {
-            clearSnippetSelection();
-        }
         return;
     }
     const range = selection.getRangeAt(0);
@@ -640,9 +637,6 @@ function updateSnippetSelectionFromDom() {
         !containerContainsNode(container, startContainer) ||
         !containerContainsNode(container, endContainer)
     ) {
-        if (snippetSelection.text) {
-            clearSnippetSelection();
-        }
         return;
     }
     const selectedText = selection.toString();
