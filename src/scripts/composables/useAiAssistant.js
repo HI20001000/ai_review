@@ -35,10 +35,20 @@ function formatContextSummary(items) {
     if (!Array.isArray(items) || !items.length) return "";
     const lines = items.map((item, index) => {
         const label = item.label || item.path || `Item ${index + 1}`;
-        const segments = [
-            `${index + 1}. \u6a94\u6848: ${label}`
-        ];
-        if (item.path) segments.push(`\u8def\u5f91: ${item.path}`);
+        const isSnippet = item.type === "snippet";
+        const header = isSnippet ? `\u7a0b\u5f0f\u78bc\u7247\u6bb5: ${label}` : `\u6a94\u6848: ${label}`;
+        const segments = [`${index + 1}. ${header}`];
+        if (isSnippet) {
+            if (item.snippet?.path) {
+                segments.push(`\u4f86\u6e90\u6a94\u6848: ${item.snippet.path}`);
+            }
+            const rangeParts = buildSnippetRangeParts(item.snippet || {});
+            if (rangeParts.length) {
+                segments.push(`\u7bc4\u570d: ${rangeParts.join("\uff0c")}`);
+            }
+        } else if (item.path) {
+            segments.push(`\u8def\u5f91: ${item.path}`);
+        }
         if (item.content) segments.push(item.content);
         return segments.join("\n");
     });
@@ -195,6 +205,111 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         }
     }
 
+    function normaliseLine(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function normaliseColumn(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number > 0 ? Math.floor(number) : null;
+    }
+
+    function normalisePositiveInteger(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number > 0 ? Math.floor(number) : null;
+    }
+
+    function buildSnippetRangeParts(meta = {}) {
+        const startLine = normaliseLine(meta.startLine);
+        const endLine = normaliseLine(meta.endLine ?? startLine);
+        const startColumn = normaliseColumn(meta.startColumn);
+        const endColumn = normaliseColumn(meta.endColumn);
+        const lineCount = normalisePositiveInteger(meta.lineCount);
+        const parts = [];
+        if (startLine !== null && endLine !== null) {
+            parts.push(startLine === endLine ? `行 ${startLine}` : `行 ${startLine}-${endLine}`);
+        } else if (startLine !== null) {
+            parts.push(`行 ${startLine}`);
+        } else if (endLine !== null) {
+            parts.push(`行 ${endLine}`);
+        }
+        const isSingleLine = startLine !== null && endLine !== null && startLine === endLine;
+        if (isSingleLine) {
+            if (startColumn !== null && endColumn !== null) {
+                parts.push(startColumn === endColumn ? `字元 ${startColumn}` : `字元 ${startColumn}-${endColumn}`);
+            } else if (startColumn !== null) {
+                parts.push(`字元 ${startColumn} 起`);
+            } else if (endColumn !== null) {
+                parts.push(`字元 ${endColumn} 止`);
+            }
+        } else {
+            if (startColumn !== null) parts.push(`起始字元 ${startColumn}`);
+            if (endColumn !== null) parts.push(`結束字元 ${endColumn}`);
+        }
+        if (lineCount !== null) {
+            parts.push(`共 ${lineCount} 行`);
+        }
+        return parts;
+    }
+
+    async function addSnippetContext(snippet) {
+        const text = (snippet?.content || "").trim();
+        if (!text) {
+            pushMessage("assistant", "請先選取有效的程式碼片段。", { synthetic: true, status: "error" });
+            return false;
+        }
+
+        const path = snippet?.path || "";
+        const startLine = normaliseLine(snippet?.startLine);
+        const endLine = normaliseLine(snippet?.endLine ?? startLine);
+        const startColumn = normaliseColumn(snippet?.startColumn);
+        const endColumn = normaliseColumn(snippet?.endColumn);
+        const rawLineCount = Number.isFinite(snippet?.lineCount)
+            ? Number(snippet.lineCount)
+            : startLine !== null && endLine !== null
+                ? Math.abs(endLine - startLine) + 1
+                : null;
+        const lineCount = normalisePositiveInteger(rawLineCount);
+
+        const duplicate = contextItems.value.find(
+            (item) =>
+                item.type === "snippet" &&
+                item.snippet?.path === path &&
+                item.snippet?.startLine === startLine &&
+                item.snippet?.endLine === endLine &&
+                item.snippet?.startColumn === startColumn &&
+                item.snippet?.endColumn === endColumn &&
+                item.content === text
+        );
+        if (duplicate) {
+            return true;
+        }
+
+        const id = snippet?.id || `snippet-${++ctxId}`;
+        const rangeParts = buildSnippetRangeParts({ startLine, endLine, startColumn, endColumn, lineCount });
+        const rangeLabel = rangeParts.length ? ` (${rangeParts.join(", ")})` : "";
+        const label = snippet?.label || (path ? `${path}${rangeLabel}` : `Snippet ${ctxId}`);
+
+        contextItems.value.push({
+            id,
+            type: "snippet",
+            label,
+            path,
+            content: text,
+            snippet: {
+                path,
+                startLine,
+                endLine,
+                startColumn,
+                endColumn,
+                lineCount
+            }
+        });
+
+        return true;
+    }
+
     async function addActiveNode() {
         if (isInteractionLocked.value) return false;
         const activePath = treeStore?.activeTreePath?.value;
@@ -301,6 +416,7 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         contextItems,
         messages,
         addActiveNode,
+        addSnippetContext,
         removeContext,
         clearContext,
         sendUserMessage,
