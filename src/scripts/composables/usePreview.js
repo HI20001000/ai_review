@@ -7,7 +7,8 @@ const previewing = ref({
     text: "",
     url: "",
     kind: "",
-    error: ""
+    error: "",
+    path: ""
 });
 
 const MAX_TEXT_BYTES = 1 * 1024 * 1024;
@@ -16,7 +17,16 @@ function resetPreview() {
     if (previewing.value.url) {
         URL.revokeObjectURL(previewing.value.url);
     }
-    previewing.value = { name: "", mime: "", size: 0, text: "", url: "", kind: "", error: "" };
+    previewing.value = {
+        name: "",
+        mime: "",
+        size: 0,
+        text: "",
+        url: "",
+        kind: "",
+        error: "",
+        path: ""
+    };
 }
 
 function extOf(name = "") {
