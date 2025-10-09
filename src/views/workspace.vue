@@ -253,6 +253,27 @@ function renderLineContent(line) {
     return combined.length ? combined : "&nbsp;";
 }
 
+function clearCodeSelection() {
+    if (codeSelection.value) {
+        codeSelection.value = null;
+    }
+}
+
+function isWithinCodeLine(target) {
+    const root = codeScrollRef.value;
+    if (!root || !target) return false;
+
+    let current = target;
+    while (current && current !== root) {
+        if (current.classList && (current.classList.contains("codeLine") || current.classList.contains("codeLineContent") || current.classList.contains("codeLineNo"))) {
+            return true;
+        }
+        current = current.parentNode;
+    }
+
+    return false;
+}
+
 function resolveLineInfo(node) {
     if (!node) return null;
     let current = node.nodeType === 3 ? node.parentElement : node;
@@ -355,13 +376,31 @@ function handleDocumentSelectionChange() {
     if (!selection || selection.rangeCount === 0) return;
     const range = selection.getRangeAt(0);
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
-    buildSelectedSnippet();
+
+    if (selection.isCollapsed) {
+        clearCodeSelection();
+        return;
+    }
+
+    const snippet = buildSelectedSnippet();
+    if (!snippet) {
+        clearCodeSelection();
+    }
 }
 
 function handleDocumentPointerUp(event) {
     if (!codeScrollRef.value) return;
     if (!codeScrollRef.value.contains(event?.target)) return;
     handleDocumentSelectionChange();
+}
+
+function handleCodeScrollPointerDown(event) {
+    if (event.button !== 0) return;
+    if (previewing.value.kind !== "text") return;
+    if (!codeSelection.value) return;
+    const target = event?.target || null;
+    if (!isWithinCodeLine(target)) return;
+    clearCodeSelection();
 }
 
 watch(isChatWindowOpen, (visible) => {
@@ -390,7 +429,7 @@ watch(
     () => previewing.value.kind,
     (kind) => {
         if (kind !== "text") {
-            codeSelection.value = null;
+            clearCodeSelection();
         }
     }
 );
@@ -398,7 +437,7 @@ watch(
 watch(
     () => previewing.value.path,
     () => {
-        codeSelection.value = null;
+        clearCodeSelection();
     }
 );
 
@@ -406,7 +445,7 @@ watch(
     () => previewing.value.text,
     () => {
         if (previewing.value.kind === "text") {
-            codeSelection.value = null;
+            clearCodeSelection();
         }
     }
 );
@@ -1351,7 +1390,7 @@ onBeforeUnmount(() => {
 
                     <template v-if="previewing.kind === 'text'">
                         <div class="pvBox codeBox">
-                            <div class="codeScroll" ref="codeScrollRef">
+                            <div class="codeScroll" ref="codeScrollRef" @pointerdown="handleCodeScrollPointerDown">
                                 <div class="codeEditor">
                                     <div
                                         v-for="line in previewLineItems"
@@ -1911,7 +1950,7 @@ body,
 }
 
 .pvBox.codeBox {
-    padding: 0;
+    padding: 12px;
     overflow: hidden;
 }
 
@@ -1936,8 +1975,9 @@ body,
 }
 
 .codeEditor {
-    min-width: max-content;
-    display: inline-block;
+    display: block;
+    width: 100%;
+    min-width: 0;
     outline: none;
     caret-color: transparent;
 }
@@ -1948,29 +1988,23 @@ body,
 
 .codeLine {
     display: flex;
-    min-width: max-content;
+    align-items: flex-start;
+    width: 100%;
 }
 
 .codeLineNo {
-    flex: 0 0 auto;
-    width: 48px;
-    padding: 0 12px;
-    text-align: right;
-    color: #6b7280;
-    background: #141414;
-    border-right: 1px solid #2f2f2f;
-    user-select: none;
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    pointer-events: none;
-    font-variant-numeric: tabular-nums;
+    display: none;
 }
 
 .codeLineContent {
     flex: 1 1 auto;
+    display: block;
+    width: 100%;
     padding: 0 12px;
-    white-space: pre;
-    min-width: max-content;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    min-width: 0;
     -webkit-user-select: text;
     -moz-user-select: text;
     -ms-user-select: text;
