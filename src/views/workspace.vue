@@ -94,6 +94,7 @@ const mainContentRef = ref(null);
 const codeScrollRef = ref(null);
 const codeEditorRef = ref(null);
 let detachSelectionChangeListener = null;
+let clearNativeSelectionFrame = null;
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
@@ -492,6 +493,7 @@ function clearSnippetSelection() {
     snippetSelection.lineCount = 0;
     snippetSelection.text = "";
     snippetSelection.path = "";
+    clearNativeSelectionRange();
 }
 
 function resetSnippetResult() {
@@ -510,12 +512,6 @@ function clearSnippetSelectionAndResult() {
     clearSnippetSelection();
     resetSnippetResult();
     snippetState.lastSelectionKey = "";
-}
-
-function isLineInSnippetSelection(lineNumber) {
-    if (typeof lineNumber !== "number" || Number.isNaN(lineNumber)) return false;
-    const entry = snippetHighlightMap.value.get(lineNumber);
-    return Boolean(entry && entry.coversFullLine);
 }
 
 function containerContainsNode(container, node) {
@@ -696,6 +692,10 @@ function applyRangeSelection(range) {
 }
 
 function resetSnippetPointerState() {
+    if (clearNativeSelectionFrame !== null && typeof window !== "undefined") {
+        window.cancelAnimationFrame(clearNativeSelectionFrame);
+        clearNativeSelectionFrame = null;
+    }
 }
 
 function syncSnippetSelectionFromNativeRange() {
@@ -716,6 +716,30 @@ function syncSnippetSelectionFromNativeRange() {
         return;
     }
     applyRangeSelection(range);
+}
+
+function queueNativeSelectionClear() {
+    if (typeof window === "undefined") return;
+    if (!snippetSelection.text || !snippetSelection.text.trim()) return;
+    if (clearNativeSelectionFrame !== null) {
+        window.cancelAnimationFrame(clearNativeSelectionFrame);
+    }
+    clearNativeSelectionFrame = window.requestAnimationFrame(() => {
+        clearNativeSelectionFrame = null;
+        clearNativeSelectionRange();
+    });
+}
+
+function clearNativeSelectionRange() {
+    if (typeof document === "undefined") return;
+    const selection = document.getSelection?.();
+    if (!selection || selection.rangeCount === 0) return;
+    if (selection.isCollapsed) return;
+    try {
+        selection.removeAllRanges();
+    } catch (_error) {
+        /* noop */
+    }
 }
 
 function attachSelectionChangeListener() {
@@ -769,10 +793,12 @@ function handleCodeEditorKeydown(event) {
 
 function handleCodeEditorKeyup() {
     syncSnippetSelectionFromNativeRange();
+    queueNativeSelectionClear();
 }
 
 function handleCodeEditorMouseup() {
     syncSnippetSelectionFromNativeRange();
+    queueNativeSelectionClear();
 }
 
 function handleCodeEditorPaste(event) {
@@ -1783,6 +1809,10 @@ onBeforeUnmount(() => {
     stopChatDrag();
     stopChatResize();
     detachSelectionChangeListenerIfNeeded();
+    if (clearNativeSelectionFrame !== null && typeof window !== "undefined") {
+        window.cancelAnimationFrame(clearNativeSelectionFrame);
+        clearNativeSelectionFrame = null;
+    }
 });
 </script>
 
@@ -2021,7 +2051,6 @@ onBeforeUnmount(() => {
                                         :key="line.number"
                                         class="codeLine"
                                         :data-line="line.number"
-                                        :class="{ 'codeLine--selected': isLineInSnippetSelection(line.number) }"
                                     >
                                         <span class="codeLineNo">{{ line.number }}</span>
                                         <span class="codeLineContent" v-html="renderLineContent(line)"></span>
@@ -2510,15 +2539,6 @@ body,
     min-height: 160px;
 }
 
-.codeLine--selected .codeLineContent {
-    background: rgba(59, 130, 246, 0.22);
-}
-
-.codeLine--selected .codeLineNo {
-    background: #1f2937;
-    color: #bfdbfe;
-}
-
 .codeLineHighlight {
     background: rgba(59, 130, 246, 0.32);
     border-radius: 3px;
@@ -2528,8 +2548,8 @@ body,
 }
 
 .codeLineHighlight--full {
-    display: inline-block;
-    min-width: 100%;
+    display: block;
+    width: 100%;
 }
 
 .panelHeader {
