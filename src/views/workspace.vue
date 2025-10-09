@@ -92,9 +92,13 @@ const previewLineItems = computed(() => {
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const codeScrollRef = ref(null);
-const isCodeScrollSelectable = ref(false);
-let removePointerFinishHandlers = null;
-let clearDomSelectionTimer = null;
+const snippetPointerState = reactive({
+    activePointerId: null,
+    anchor: null,
+    focus: null,
+    isSelecting: false
+});
+let detachSnippetPointerListeners = null;
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
@@ -481,7 +485,8 @@ const snippetTrackingEnabled = computed(
     () => supportsSelectionTracking && previewing.value.kind === "text"
 );
 
-const supportsSelectionTracking = typeof document !== "undefined";
+const supportsSelectionTracking =
+    typeof document !== "undefined" && typeof window !== "undefined";
 const TEXT_NODE = typeof Node !== "undefined" ? Node.TEXT_NODE : 3;
 
 function clearSnippetSelection() {
@@ -506,6 +511,7 @@ function resetSnippetResult() {
 }
 
 function clearSnippetSelectionAndResult() {
+    resetSnippetPointerState();
     clearSnippetSelection();
     resetSnippetResult();
     snippetState.lastSelectionKey = "";
@@ -613,39 +619,64 @@ function measureColumnOffset(lineElement, container, offset, inclusiveStart) {
     }
 }
 
-function updateSnippetSelectionFromDom() {
-    if (!snippetTrackingEnabled.value) {
-        return;
+function resolveCaretFromEvent(event) {
+    if (!supportsSelectionTracking) return null;
+    if (!event || typeof event.clientX !== "number" || typeof event.clientY !== "number") {
+        return null;
     }
-    if (previewing.value.kind !== "text") {
-        if (snippetSelection.text) {
-            clearSnippetSelection();
+    const doc = event.view?.document || document;
+    if (!doc) return null;
+    if (typeof doc.caretRangeFromPoint === "function") {
+        const range = doc.caretRangeFromPoint(event.clientX, event.clientY);
+        if (range) {
+            return { container: range.startContainer, offset: range.startOffset };
         }
-        return;
     }
-    if (!supportsSelectionTracking) {
-        return;
+    if (typeof doc.caretPositionFromPoint === "function") {
+        const position = doc.caretPositionFromPoint(event.clientX, event.clientY);
+        if (position) {
+            return { container: position.offsetNode, offset: position.offset };
+        }
     }
+    return null;
+}
+
+function buildRangeFromCarets(anchor, focus) {
+    if (!supportsSelectionTracking) return null;
+    if (!anchor || !focus) return null;
+    if (!anchor.container || !focus.container) return null;
+    const range = document.createRange();
+    try {
+        range.setStart(anchor.container, anchor.offset ?? 0);
+        range.setEnd(focus.container, focus.offset ?? 0);
+        return range;
+    } catch (_error) {
+        try {
+            range.setStart(focus.container, focus.offset ?? 0);
+            range.setEnd(anchor.container, anchor.offset ?? 0);
+            return range;
+        } catch (__error) {
+            return null;
+        }
+    }
+}
+
+function applyRangeSelection(range) {
+    if (!supportsSelectionTracking) return false;
+    if (!range) return false;
     const container = codeScrollRef.value;
-    if (!container) {
-        return;
-    }
-    const selection = document.getSelection();
-    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        return;
-    }
-    const range = selection.getRangeAt(0);
+    if (!container) return false;
     const { startContainer, endContainer } = range;
     if (
         !containerContainsNode(container, startContainer) ||
         !containerContainsNode(container, endContainer)
     ) {
-        return;
+        return false;
     }
-    const selectedText = selection.toString();
-    if (!selectedText.trim()) {
+    const selectedText = range.toString();
+    if (!selectedText || !selectedText.trim()) {
         clearSnippetSelection();
-        return;
+        return false;
     }
     let startLine = getLineNumberFromNode(startContainer);
     let endLine = getLineNumberFromNode(endContainer);
@@ -694,6 +725,7 @@ function updateSnippetSelectionFromDom() {
             endColumn = temp;
         }
     }
+
     snippetSelection.startLine = startLine;
     snippetSelection.endLine = endLine;
     snippetSelection.startColumn = startColumn;
@@ -707,80 +739,119 @@ function updateSnippetSelectionFromDom() {
     snippetSelection.lineCount = selectionDisplay.lineCount;
     snippetSelection.text = selectedText;
     snippetSelection.path = activeSnippetPath.value || "";
+    return true;
 }
 
-const handleSelectionChange = () => {
-    updateSnippetSelectionFromDom();
-};
-
-function scheduleClearDomSelection() {
-    if (!supportsSelectionTracking) return;
-    if (clearDomSelectionTimer) {
-        clearTimeout(clearDomSelectionTimer);
-        clearDomSelectionTimer = null;
+function updateSnippetSelectionFromCarets(anchor, focus) {
+    if (!supportsSelectionTracking) return false;
+    if (!anchor || !focus) return false;
+    const range = buildRangeFromCarets(anchor, focus);
+    if (!range) {
+        return false;
     }
-    clearDomSelectionTimer = setTimeout(() => {
-        clearDomSelectionTimer = null;
-        const selection = window.getSelection?.();
-        if (selection && typeof selection.removeAllRanges === "function") {
-            selection.removeAllRanges();
+    return applyRangeSelection(range);
+}
+
+function detachSnippetPointerTracking() {
+    if (typeof detachSnippetPointerListeners === "function") {
+        detachSnippetPointerListeners();
+        detachSnippetPointerListeners = null;
+    }
+}
+
+function resetSnippetPointerState() {
+    if (!supportsSelectionTracking) return;
+    const container = codeScrollRef.value;
+    if (
+        container &&
+        typeof snippetPointerState.activePointerId === "number" &&
+        typeof container.releasePointerCapture === "function"
+    ) {
+        try {
+            container.releasePointerCapture(snippetPointerState.activePointerId);
+        } catch (_error) {
+            // ignore
         }
-    }, 0);
-}
-
-function clearDomSelectionImmediately() {
-    if (!supportsSelectionTracking) return;
-    if (clearDomSelectionTimer) {
-        clearTimeout(clearDomSelectionTimer);
-        clearDomSelectionTimer = null;
     }
-    const selection = window.getSelection?.();
-    if (selection && typeof selection.removeAllRanges === "function") {
-        selection.removeAllRanges();
-    }
+    snippetPointerState.activePointerId = null;
+    snippetPointerState.anchor = null;
+    snippetPointerState.focus = null;
+    snippetPointerState.isSelecting = false;
+    detachSnippetPointerTracking();
 }
 
-function teardownPointerFinishHandlers() {
-    if (typeof removePointerFinishHandlers === "function") {
-        removePointerFinishHandlers();
-        removePointerFinishHandlers = null;
-    }
-}
-
-function registerPointerFinishHandlers() {
-    if (removePointerFinishHandlers || !supportsSelectionTracking) return;
-    const handlePointerFinish = () => {
-        finalizeCodeScrollSelection();
-    };
-    window.addEventListener("pointerup", handlePointerFinish);
-    window.addEventListener("pointercancel", handlePointerFinish);
-    removePointerFinishHandlers = () => {
-        window.removeEventListener("pointerup", handlePointerFinish);
-        window.removeEventListener("pointercancel", handlePointerFinish);
-        removePointerFinishHandlers = null;
-    };
-}
-
-const beginCodeScrollSelection = (event) => {
-    if (!snippetTrackingEnabled.value) return;
+function beginCodeScrollSelection(event) {
+    if (!snippetTrackingEnabled.value || !supportsSelectionTracking) return;
     if (event?.button !== undefined && event.button !== 0) {
         return;
     }
-    isCodeScrollSelectable.value = true;
-    registerPointerFinishHandlers();
-};
-
-function finalizeCodeScrollSelection() {
-    teardownPointerFinishHandlers();
-    if (!snippetTrackingEnabled.value) {
-        isCodeScrollSelectable.value = false;
-        clearDomSelectionImmediately();
+    const caret = resolveCaretFromEvent(event);
+    if (!caret) {
         return;
     }
-    if (isCodeScrollSelectable.value) {
-        isCodeScrollSelectable.value = false;
+    snippetPointerState.isSelecting = true;
+    snippetPointerState.anchor = caret;
+    snippetPointerState.focus = caret;
+    snippetPointerState.activePointerId = typeof event.pointerId === "number" ? event.pointerId : null;
+    const target = event.currentTarget || codeScrollRef.value;
+    if (
+        target &&
+        typeof snippetPointerState.activePointerId === "number" &&
+        typeof target.setPointerCapture === "function"
+    ) {
+        try {
+            target.setPointerCapture(snippetPointerState.activePointerId);
+        } catch (_error) {
+            // ignore pointer capture failures
+        }
     }
-    scheduleClearDomSelection();
+    if (!detachSnippetPointerListeners) {
+        const handlePointerMove = (pointerEvent) => {
+            if (!snippetPointerState.isSelecting) return;
+            if (
+                typeof snippetPointerState.activePointerId === "number" &&
+                typeof pointerEvent.pointerId === "number" &&
+                pointerEvent.pointerId !== snippetPointerState.activePointerId
+            ) {
+                return;
+            }
+            const nextCaret = resolveCaretFromEvent(pointerEvent);
+            if (!nextCaret) return;
+            snippetPointerState.focus = nextCaret;
+            pointerEvent.preventDefault();
+            updateSnippetSelectionFromCarets(snippetPointerState.anchor, nextCaret);
+        };
+        const handlePointerFinish = (pointerEvent) => {
+            finalizeCodeScrollSelection(pointerEvent);
+        };
+        window.addEventListener("pointermove", handlePointerMove);
+        window.addEventListener("pointerup", handlePointerFinish);
+        window.addEventListener("pointercancel", handlePointerFinish);
+        detachSnippetPointerListeners = () => {
+            window.removeEventListener("pointermove", handlePointerMove);
+            window.removeEventListener("pointerup", handlePointerFinish);
+            window.removeEventListener("pointercancel", handlePointerFinish);
+            detachSnippetPointerListeners = null;
+        };
+    }
+    event.preventDefault();
+}
+
+function finalizeCodeScrollSelection(event) {
+    if (!snippetPointerState.isSelecting) {
+        return;
+    }
+    if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+    }
+    if (event) {
+        const caret = resolveCaretFromEvent(event);
+        if (caret) {
+            snippetPointerState.focus = caret;
+            updateSnippetSelectionFromCarets(snippetPointerState.anchor, caret);
+        }
+    }
+    resetSnippetPointerState();
 }
 
 watch(snippetCurrentKey, (key) => {
@@ -821,18 +892,10 @@ watch(
     snippetTrackingEnabled,
     (enabled) => {
         if (!supportsSelectionTracking) return;
-        if (enabled) {
-            document.addEventListener("selectionchange", handleSelectionChange);
-            nextTick(() => {
-                updateSnippetSelectionFromDom();
-            });
-        } else {
-            document.removeEventListener("selectionchange", handleSelectionChange);
+        if (!enabled) {
+            resetSnippetPointerState();
             clearSnippetSelection();
             resetSnippetResult();
-            isCodeScrollSelectable.value = false;
-            teardownPointerFinishHandlers();
-            clearDomSelectionImmediately();
         }
     },
     { immediate: true }
@@ -1775,11 +1838,7 @@ onBeforeUnmount(() => {
     window.removeEventListener("resize", clampReportSidebarWidth);
     stopChatDrag();
     stopChatResize();
-    teardownPointerFinishHandlers();
-    clearDomSelectionImmediately();
-    if (supportsSelectionTracking) {
-        document.removeEventListener("selectionchange", handleSelectionChange);
-    }
+    resetSnippetPointerState();
 });
 </script>
 
@@ -2000,7 +2059,6 @@ onBeforeUnmount(() => {
                         <div class="pvBox codeBox">
                             <div
                                 class="codeScroll"
-                                :class="{ 'codeScroll--selectable': isCodeScrollSelectable }"
                                 ref="codeScrollRef"
                                 @pointerdown="beginCodeScrollSelection"
                                 @pointerup="finalizeCodeScrollSelection"
@@ -2719,10 +2777,6 @@ body,
     user-select: none;
 }
 
-.codeScroll--selectable {
-    user-select: text;
-}
-
 .codeLine {
     display: flex;
     min-width: max-content;
@@ -2749,11 +2803,6 @@ body,
     user-select: none;
 }
 
-.codeScroll--selectable .codeLine,
-.codeScroll--selectable .codeLineContent,
-.codeScroll--selectable .codeLineHighlight {
-    user-select: text;
-}
 
 .modalBackdrop {
     position: fixed;
