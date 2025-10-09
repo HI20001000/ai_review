@@ -92,6 +92,9 @@ const previewLineItems = computed(() => {
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const codeScrollRef = ref(null);
+const isCodeScrollSelectable = ref(false);
+let removePointerFinishHandlers = null;
+let clearDomSelectionTimer = null;
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
@@ -710,6 +713,76 @@ const handleSelectionChange = () => {
     updateSnippetSelectionFromDom();
 };
 
+function scheduleClearDomSelection() {
+    if (!supportsSelectionTracking) return;
+    if (clearDomSelectionTimer) {
+        clearTimeout(clearDomSelectionTimer);
+        clearDomSelectionTimer = null;
+    }
+    clearDomSelectionTimer = setTimeout(() => {
+        clearDomSelectionTimer = null;
+        const selection = window.getSelection?.();
+        if (selection && typeof selection.removeAllRanges === "function") {
+            selection.removeAllRanges();
+        }
+    }, 0);
+}
+
+function clearDomSelectionImmediately() {
+    if (!supportsSelectionTracking) return;
+    if (clearDomSelectionTimer) {
+        clearTimeout(clearDomSelectionTimer);
+        clearDomSelectionTimer = null;
+    }
+    const selection = window.getSelection?.();
+    if (selection && typeof selection.removeAllRanges === "function") {
+        selection.removeAllRanges();
+    }
+}
+
+function teardownPointerFinishHandlers() {
+    if (typeof removePointerFinishHandlers === "function") {
+        removePointerFinishHandlers();
+        removePointerFinishHandlers = null;
+    }
+}
+
+function registerPointerFinishHandlers() {
+    if (removePointerFinishHandlers || !supportsSelectionTracking) return;
+    const handlePointerFinish = () => {
+        finalizeCodeScrollSelection();
+    };
+    window.addEventListener("pointerup", handlePointerFinish);
+    window.addEventListener("pointercancel", handlePointerFinish);
+    removePointerFinishHandlers = () => {
+        window.removeEventListener("pointerup", handlePointerFinish);
+        window.removeEventListener("pointercancel", handlePointerFinish);
+        removePointerFinishHandlers = null;
+    };
+}
+
+const beginCodeScrollSelection = (event) => {
+    if (!snippetTrackingEnabled.value) return;
+    if (event?.button !== undefined && event.button !== 0) {
+        return;
+    }
+    isCodeScrollSelectable.value = true;
+    registerPointerFinishHandlers();
+};
+
+function finalizeCodeScrollSelection() {
+    teardownPointerFinishHandlers();
+    if (!snippetTrackingEnabled.value) {
+        isCodeScrollSelectable.value = false;
+        clearDomSelectionImmediately();
+        return;
+    }
+    if (isCodeScrollSelectable.value) {
+        isCodeScrollSelectable.value = false;
+    }
+    scheduleClearDomSelection();
+}
+
 watch(snippetCurrentKey, (key) => {
     if (!key) {
         if (snippetSelection.text) {
@@ -757,6 +830,9 @@ watch(
             document.removeEventListener("selectionchange", handleSelectionChange);
             clearSnippetSelection();
             resetSnippetResult();
+            isCodeScrollSelectable.value = false;
+            teardownPointerFinishHandlers();
+            clearDomSelectionImmediately();
         }
     },
     { immediate: true }
@@ -1699,6 +1775,8 @@ onBeforeUnmount(() => {
     window.removeEventListener("resize", clampReportSidebarWidth);
     stopChatDrag();
     stopChatResize();
+    teardownPointerFinishHandlers();
+    clearDomSelectionImmediately();
     if (supportsSelectionTracking) {
         document.removeEventListener("selectionchange", handleSelectionChange);
     }
@@ -1920,7 +1998,14 @@ onBeforeUnmount(() => {
                         </div>
 
                         <div class="pvBox codeBox">
-                            <div class="codeScroll" ref="codeScrollRef">
+                            <div
+                                class="codeScroll"
+                                :class="{ 'codeScroll--selectable': isCodeScrollSelectable }"
+                                ref="codeScrollRef"
+                                @pointerdown="beginCodeScrollSelection"
+                                @pointerup="finalizeCodeScrollSelection"
+                                @pointercancel="finalizeCodeScrollSelection"
+                            >
                                 <div
                                     v-for="line in previewLineItems"
                                     :key="line.number"
@@ -2629,6 +2714,12 @@ body,
     line-height: 1.45;
     color: #d1d5db;
     background: #1b1b1b;
+    cursor: text;
+    user-select: none;
+}
+
+.codeScroll--selectable {
+    user-select: text;
 }
 
 .codeLine {
