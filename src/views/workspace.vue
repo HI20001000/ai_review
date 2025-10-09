@@ -84,7 +84,8 @@ const previewLineItems = computed(() => {
     }
     return lines.map((line, index) => ({
         number: index + 1,
-        content: line === "" ? "\u00A0" : line
+        content: line === "" ? "\u00A0" : line,
+        raw: line
     }));
 });
 
@@ -213,6 +214,8 @@ const isChatToggleDisabled = computed(() => isChatLocked.value && !isChatWindowO
 const snippetSelection = reactive({
     startLine: null,
     endLine: null,
+    startColumn: null,
+    endColumn: null,
     lineCount: 0,
     text: "",
     path: ""
@@ -228,6 +231,99 @@ const snippetState = reactive({
     lastSelectionKey: "",
     selection: null
 });
+function toFiniteNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function buildSelectionDisplay(meta = {}) {
+    let startLine = toFiniteNumber(meta.startLine);
+    let endLine = toFiniteNumber(meta.endLine ?? startLine);
+    if (startLine === null && endLine !== null) {
+        startLine = endLine;
+    }
+    if (endLine === null && startLine !== null) {
+        endLine = startLine;
+    }
+    let startColumn = toFiniteNumber(meta.startColumn);
+    let endColumn = toFiniteNumber(meta.endColumn);
+    if (startLine !== null && endLine !== null && endLine < startLine) {
+        const tempLine = startLine;
+        startLine = endLine;
+        endLine = tempLine;
+        const tempColumn = startColumn;
+        startColumn = endColumn;
+        endColumn = tempColumn;
+    }
+    const metaLineCount = toFiniteNumber(meta.lineCount);
+    const hasStartLine = startLine !== null;
+    const hasEndLine = endLine !== null;
+    const isSingleLine = hasStartLine && hasEndLine && startLine === endLine;
+    const computedLineCount = hasStartLine && hasEndLine ? Math.abs(endLine - startLine) + 1 : hasStartLine || hasEndLine ? 1 : 0;
+    const lineCount = Number.isFinite(metaLineCount) && metaLineCount > 0 ? Math.max(1, Math.floor(metaLineCount)) : computedLineCount;
+
+    const lineText = (() => {
+        if (hasStartLine && hasEndLine) {
+            return startLine === endLine ? `第 ${startLine} 行` : `第 ${startLine}-${endLine} 行`;
+        }
+        if (hasStartLine) return `第 ${startLine} 行`;
+        if (hasEndLine) return `第 ${endLine} 行`;
+        return "";
+    })();
+
+    const columnText = (() => {
+        if (isSingleLine) {
+            if (startColumn !== null && endColumn !== null) {
+                if (endColumn < startColumn) {
+                    return `字元 ${endColumn}-${startColumn}`;
+                }
+                return startColumn === endColumn ? `字元 ${startColumn}` : `字元 ${startColumn}-${endColumn}`;
+            }
+            if (startColumn !== null) {
+                return `字元 ${startColumn} 起`;
+            }
+            if (endColumn !== null) {
+                return `字元 ${endColumn} 止`;
+            }
+            return "";
+        }
+        const parts = [];
+        if (startColumn !== null) parts.push(`起始字元 ${startColumn}`);
+        if (endColumn !== null) parts.push(`結束字元 ${endColumn}`);
+        return parts.join("，");
+    })();
+
+    let summary = "已選取文字";
+    if (lineText && columnText) {
+        summary = `已選取 ${lineText}（${columnText}）`;
+    } else if (lineText) {
+        summary = `已選取 ${lineText}`;
+    } else if (columnText) {
+        summary = `已選取 ${columnText}`;
+    }
+
+    return {
+        summary,
+        lineText,
+        columnText,
+        lineCount,
+        startLine,
+        endLine,
+        startColumn,
+        endColumn,
+        isSingleLine
+    };
+}
+
+function formatSelectionRangeDetails(display) {
+    if (!display) return "";
+    const parts = [];
+    if (display.lineText) parts.push(display.lineText);
+    if (display.columnText) parts.push(display.columnText);
+    if (display.lineCount > 0) parts.push(`共 ${display.lineCount} 行`);
+    return parts.join("，");
+}
+
 const hasSnippetSelection = computed(() => {
     if (!snippetSelection.text) return false;
     return snippetSelection.text.trim().length > 0;
@@ -236,33 +332,132 @@ const snippetSelectionDisplay = computed(() => {
     if (!hasSnippetSelection.value) {
         return {
             summary: "尚未選取任何內容",
-            rangeText: "",
-            lineCount: 0
+            lineText: "",
+            columnText: "",
+            lineCount: 0,
+            lineCountText: "",
+            startLine: null,
+            endLine: null,
+            startColumn: null,
+            endColumn: null
         };
     }
-    const start = typeof snippetSelection.startLine === "number" ? snippetSelection.startLine : null;
-    const end = typeof snippetSelection.endLine === "number" ? snippetSelection.endLine : start;
-    let rangeText = "";
-    if (start !== null && end !== null) {
-        rangeText = start === end ? `第 ${start} 行` : `第 ${start}-${end} 行`;
-    }
-    const lineCount = snippetSelection.lineCount || (start !== null && end !== null ? Math.abs(end - start) + 1 : 0);
+    const display = buildSelectionDisplay(snippetSelection);
+    const lineCountText = display.lineCount > 0 ? `共 ${display.lineCount} 行` : "";
     return {
-        summary: rangeText ? `已選取 ${rangeText}` : "已選取文字",
-        rangeText,
-        lineCount
+        ...display,
+        lineCountText
     };
 });
+const snippetResultDisplay = computed(() => {
+    if (!snippetState.selection) return null;
+    return buildSelectionDisplay(snippetState.selection);
+});
+const snippetResultDetailsText = computed(() => formatSelectionRangeDetails(snippetResultDisplay.value));
+const snippetHighlightMap = computed(() => {
+    if (!hasSnippetSelection.value) return new Map();
+    const display = buildSelectionDisplay(snippetSelection);
+    const startLine = toFiniteNumber(display.startLine);
+    const endLine = toFiniteNumber(display.endLine);
+    if (startLine === null || endLine === null) {
+        return new Map();
+    }
+    const fromLine = Math.min(startLine, endLine);
+    const toLine = Math.max(startLine, endLine);
+    const startColumn = toFiniteNumber(display.startColumn) ?? 1;
+    const endColumn = toFiniteNumber(display.endColumn);
+    const lineLookup = new Map();
+    for (const line of previewLineItems.value) {
+        lineLookup.set(line.number, line);
+    }
+    const map = new Map();
+    for (let lineNumber = fromLine; lineNumber <= toLine; lineNumber += 1) {
+        const item = lineLookup.get(lineNumber);
+        const rawText = typeof item?.raw === "string" ? item.raw : (item?.content || "").replace(/\u00A0/g, " ");
+        const lineLength = rawText.length;
+        const maxColumn = Math.max(1, lineLength);
+        let highlightStart = 1;
+        let highlightEnd = maxColumn;
+        if (lineNumber === startLine) {
+            const baseStart = Number.isFinite(startColumn) ? startColumn : 1;
+            highlightStart = Math.min(Math.max(baseStart, 1), maxColumn);
+        }
+        if (lineNumber === endLine) {
+            const baseEnd = Number.isFinite(endColumn) ? endColumn : maxColumn;
+            highlightEnd = Math.min(Math.max(baseEnd, 1), maxColumn);
+        }
+        if (lineNumber !== startLine && lineNumber !== endLine) {
+            highlightStart = 1;
+            highlightEnd = maxColumn;
+        }
+        if (lineNumber === startLine && lineNumber === endLine) {
+            const baseStart = Number.isFinite(startColumn) ? startColumn : 1;
+            const baseEnd = Number.isFinite(endColumn) ? endColumn : maxColumn;
+            highlightStart = Math.min(Math.max(baseStart, 1), maxColumn);
+            highlightEnd = Math.min(Math.max(baseEnd, highlightStart), maxColumn);
+        } else {
+            highlightEnd = Math.max(highlightEnd, highlightStart);
+        }
+        if (lineLength === 0) {
+            highlightStart = 1;
+            highlightEnd = 1;
+        }
+        const coversFullLine = highlightStart <= 1 && (highlightEnd >= maxColumn || lineLength === 0);
+        map.set(lineNumber, {
+            startColumn: highlightStart,
+            endColumn: highlightEnd,
+            coversFullLine,
+            lineLength
+        });
+    }
+    return map;
+});
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function renderLineContent(line) {
+    const entry = snippetHighlightMap.value.get(line.number);
+    const rawText = typeof line?.raw === "string" ? line.raw : (line?.content || "").replace(/\u00A0/g, " ");
+    if (!entry) {
+        const safe = escapeHtml(rawText);
+        return safe.length ? safe : "&nbsp;";
+    }
+    const text = rawText;
+    const length = text.length;
+    const startColumn = Number.isFinite(entry.startColumn) ? entry.startColumn : 1;
+    const endColumn = Number.isFinite(entry.endColumn) ? entry.endColumn : length;
+    const startIndex = Math.max(0, Math.min(length, startColumn - 1));
+    const endExclusive = Math.max(startIndex, Math.min(length, endColumn));
+    const before = escapeHtml(text.slice(0, startIndex));
+    const highlightText = escapeHtml(text.slice(startIndex, endExclusive));
+    const after = escapeHtml(text.slice(endExclusive));
+    const highlightInner = highlightText.length ? highlightText : "&nbsp;";
+    const highlightClass = entry.coversFullLine ? "codeLineHighlight codeLineHighlight--full" : "codeLineHighlight";
+    const highlighted = `<span class="${highlightClass}">${highlightInner}</span>`;
+    const combined = `${before}${highlighted}${after}`;
+    if (!combined.trim()) {
+        return `<span class="${highlightClass}">&nbsp;</span>`;
+    }
+    return combined || "&nbsp;";
+}
 const activeSnippetPath = computed(() => previewing.value.path || activeTreePath.value || "");
 const snippetCurrentKey = computed(() => {
     if (!hasSnippetSelection.value) return "";
     const start = typeof snippetSelection.startLine === "number" ? snippetSelection.startLine : "";
     const end = typeof snippetSelection.endLine === "number" ? snippetSelection.endLine : start;
+    const startColumn = typeof snippetSelection.startColumn === "number" ? snippetSelection.startColumn : "";
+    const endColumn = typeof snippetSelection.endColumn === "number" ? snippetSelection.endColumn : startColumn;
     const text = snippetSelection.text || "";
     const hashPreview = text.slice(0, 64);
     const length = text.length;
     const path = activeSnippetPath.value || "";
-    return `${path}::${start}-${end}::${length}::${hashPreview}`;
+    return `${path}::${start}-${end}::${startColumn}-${endColumn}::${length}::${hashPreview}`;
 });
 const snippetIsProcessing = computed(() => snippetState.status === "processing");
 const snippetReportReady = computed(() => snippetState.status === "ready");
@@ -289,6 +484,8 @@ const TEXT_NODE = typeof Node !== "undefined" ? Node.TEXT_NODE : 3;
 function clearSnippetSelection() {
     snippetSelection.startLine = null;
     snippetSelection.endLine = null;
+    snippetSelection.startColumn = null;
+    snippetSelection.endColumn = null;
     snippetSelection.lineCount = 0;
     snippetSelection.text = "";
     snippetSelection.path = "";
@@ -312,14 +509,9 @@ function clearSnippetSelectionAndResult() {
 }
 
 function isLineInSnippetSelection(lineNumber) {
-    if (!hasSnippetSelection.value) return false;
     if (typeof lineNumber !== "number" || Number.isNaN(lineNumber)) return false;
-    const start = typeof snippetSelection.startLine === "number" ? snippetSelection.startLine : null;
-    const end = typeof snippetSelection.endLine === "number" ? snippetSelection.endLine : start;
-    if (start === null || end === null) return false;
-    const min = Math.min(start, end);
-    const max = Math.max(start, end);
-    return lineNumber >= min && lineNumber <= max;
+    const entry = snippetHighlightMap.value.get(lineNumber);
+    return Boolean(entry && entry.coversFullLine);
 }
 
 function containerContainsNode(container, node) {
@@ -332,18 +524,46 @@ function containerContainsNode(container, node) {
 }
 
 function getLineNumberFromNode(node) {
+    const lineElement = getLineElementFromNode(node);
+    if (!lineElement) return null;
+    const value = Number(lineElement.getAttribute("data-line"));
+    return Number.isFinite(value) ? value : null;
+}
+
+function getLineElementFromNode(node) {
     if (!node) return null;
     let current = node;
     if (current.nodeType === TEXT_NODE) {
-        current = current.parentElement;
+        current = current.parentElement || current.parentNode;
     }
     if (!(current instanceof HTMLElement)) {
         return null;
     }
     const lineElement = current.closest("[data-line]");
+    return lineElement instanceof HTMLElement ? lineElement : null;
+}
+
+function getLineContentElement(lineElement) {
     if (!lineElement) return null;
-    const value = Number(lineElement.getAttribute("data-line"));
-    return Number.isFinite(value) ? value : null;
+    const content = lineElement.querySelector(".codeLineContent");
+    return content instanceof HTMLElement ? content : null;
+}
+
+function measureColumnOffset(lineElement, container, offset, inclusiveStart) {
+    const content = getLineContentElement(lineElement);
+    if (!content) return null;
+    try {
+        const range = document.createRange();
+        range.selectNodeContents(content);
+        range.setEnd(container, offset);
+        const text = range.toString();
+        if (inclusiveStart) {
+            return text.length + 1;
+        }
+        return text.length;
+    } catch (_error) {
+        return null;
+    }
 }
 
 function updateSnippetSelectionFromDom() {
@@ -386,22 +606,64 @@ function updateSnippetSelectionFromDom() {
         clearSnippetSelection();
         return;
     }
-    const startLine = getLineNumberFromNode(startContainer);
-    const endLine = getLineNumberFromNode(endContainer);
-    let normalisedStart = startLine;
-    let normalisedEnd = endLine;
-    if (normalisedStart === null && normalisedEnd !== null) {
-        normalisedStart = normalisedEnd;
+    let startLine = getLineNumberFromNode(startContainer);
+    let endLine = getLineNumberFromNode(endContainer);
+    if (startLine === null && endLine !== null) {
+        startLine = endLine;
     }
-    if (normalisedEnd === null && normalisedStart !== null) {
-        normalisedEnd = normalisedStart;
+    if (endLine === null && startLine !== null) {
+        endLine = startLine;
     }
-    snippetSelection.startLine = normalisedStart;
-    snippetSelection.endLine = normalisedEnd;
-    snippetSelection.lineCount =
-        typeof normalisedStart === "number" && typeof normalisedEnd === "number"
-            ? Math.abs(normalisedEnd - normalisedStart) + 1
-            : 0;
+    const startLineElement = getLineElementFromNode(startContainer);
+    const endLineElement = getLineElementFromNode(endContainer);
+    let startColumnRaw = startLineElement
+        ? measureColumnOffset(startLineElement, range.startContainer, range.startOffset, true)
+        : null;
+    let endColumnRaw = endLineElement
+        ? measureColumnOffset(endLineElement, range.endContainer, range.endOffset, false)
+        : null;
+    if (startLine !== null && endLine !== null && endLine < startLine) {
+        const tempLine = startLine;
+        startLine = endLine;
+        endLine = tempLine;
+        const tempColumn = startColumnRaw;
+        startColumnRaw = endColumnRaw;
+        endColumnRaw = tempColumn;
+    }
+    let startColumn = Number.isFinite(startColumnRaw) ? Math.max(1, Math.floor(startColumnRaw)) : null;
+    let endColumn = Number.isFinite(endColumnRaw) ? Math.max(0, Math.floor(endColumnRaw)) : null;
+    if (
+        endColumn === 0 &&
+        endLine !== null &&
+        startLine !== null &&
+        endLine > startLine
+    ) {
+        const previousLineNumber = endLine - 1;
+        const previousLine = previewLineItems.value.find((line) => line.number === previousLineNumber);
+        if (previousLine) {
+            const prevRaw = typeof previousLine.raw === "string" ? previousLine.raw : "";
+            endLine = previousLineNumber;
+            endColumn = prevRaw.length > 0 ? prevRaw.length : null;
+        }
+    }
+    if (startLine !== null && endLine !== null && startLine === endLine) {
+        if (startColumn !== null && endColumn !== null && endColumn < startColumn) {
+            const temp = startColumn;
+            startColumn = endColumn;
+            endColumn = temp;
+        }
+    }
+    snippetSelection.startLine = startLine;
+    snippetSelection.endLine = endLine;
+    snippetSelection.startColumn = startColumn;
+    snippetSelection.endColumn = endColumn;
+    const selectionDisplay = buildSelectionDisplay({
+        startLine,
+        endLine,
+        startColumn,
+        endColumn
+    });
+    snippetSelection.lineCount = selectionDisplay.lineCount;
     snippetSelection.text = selectedText;
     snippetSelection.path = activeSnippetPath.value || "";
 }
@@ -975,6 +1237,9 @@ async function generateSnippetAnalysis() {
             selection: {
                 startLine: snippetSelection.startLine,
                 endLine: snippetSelection.endLine,
+                startColumn: snippetSelection.startColumn,
+                endColumn: snippetSelection.endColumn,
+                lineCount: snippetSelection.lineCount,
                 content: snippetSelection.text
             }
         });
@@ -995,6 +1260,14 @@ async function generateSnippetAnalysis() {
                 typeof responseSelection.endLine === "number"
                     ? responseSelection.endLine
                     : snippetSelection.endLine,
+            startColumn:
+                typeof responseSelection.startColumn === "number"
+                    ? responseSelection.startColumn
+                    : snippetSelection.startColumn,
+            endColumn:
+                typeof responseSelection.endColumn === "number"
+                    ? responseSelection.endColumn
+                    : snippetSelection.endColumn,
             lineCount:
                 typeof responseSelection.lineCount === "number"
                     ? responseSelection.lineCount
@@ -1046,7 +1319,16 @@ async function sendSnippetToChat() {
 
     const startLine = typeof snippetSelection.startLine === "number" ? snippetSelection.startLine : null;
     const endLine = typeof snippetSelection.endLine === "number" ? snippetSelection.endLine : startLine;
-    const lineCount = snippetSelection.lineCount || (startLine !== null && endLine !== null ? Math.abs(endLine - startLine) + 1 : 0);
+    const startColumn = typeof snippetSelection.startColumn === "number" ? snippetSelection.startColumn : null;
+    const endColumn = typeof snippetSelection.endColumn === "number" ? snippetSelection.endColumn : null;
+    const selectionDisplay = buildSelectionDisplay({
+        startLine,
+        endLine,
+        startColumn,
+        endColumn,
+        lineCount: snippetSelection.lineCount
+    });
+    const lineCount = selectionDisplay.lineCount || 0;
     const snippetText = snippetSelection.text || "";
     if (!snippetText.trim()) {
         alert("目前沒有可用的程式碼選取。");
@@ -1061,9 +1343,11 @@ async function sendSnippetToChat() {
         labelSegments.push(project.name);
     }
     labelSegments.push(path);
-    if (startLine !== null) {
-        const rangeText = endLine !== null && endLine !== startLine ? `${startLine}-${endLine}` : `${startLine}`;
-        labelSegments.push(`行 ${rangeText}`);
+    if (selectionDisplay.lineText) {
+        labelSegments.push(selectionDisplay.lineText);
+    }
+    if (selectionDisplay.columnText) {
+        labelSegments.push(selectionDisplay.columnText);
     }
     const label = labelSegments.join(" / ");
 
@@ -1074,6 +1358,8 @@ async function sendSnippetToChat() {
         startLine,
         endLine,
         lineCount,
+        startColumn,
+        endColumn,
         content: snippetText
     });
 
@@ -1558,15 +1844,13 @@ onBeforeUnmount(() => {
                                     class="snippetInlinePanel__status"
                                     :class="{ 'snippetInlinePanel__status--empty': !hasSnippetSelection }"
                                 >
-                                    <template v-if="hasSnippetSelection">
-                                        {{ snippetSelectionDisplay.summary }}
-                                        <span v-if="snippetSelectionDisplay.lineCount > 0">
-                                            （{{ snippetSelectionDisplay.lineCount }} 行）
-                                        </span>
-                                    </template>
-                                    <template v-else>
-                                        尚未選取任何內容
-                                    </template>
+                                    {{ snippetSelectionDisplay.summary }}
+                                </p>
+                                <p
+                                    v-if="hasSnippetSelection && snippetSelectionDisplay.lineCountText"
+                                    class="snippetInlinePanel__meta"
+                                >
+                                    {{ snippetSelectionDisplay.lineCountText }}
                                 </p>
                             </div>
                             <div class="snippetInlinePanel__actions">
@@ -1607,7 +1891,7 @@ onBeforeUnmount(() => {
                                     :class="{ 'codeLine--selected': isLineInSnippetSelection(line.number) }"
                                 >
                                     <span class="codeLineNo">{{ line.number }}</span>
-                                    <span class="codeLineContent" v-text="line.content"></span>
+                                    <span class="codeLineContent" v-html="renderLineContent(line)"></span>
                                 </div>
                             </div>
                         </div>
@@ -1630,16 +1914,8 @@ onBeforeUnmount(() => {
                                 <p v-if="snippetState.selection" class="snippetResultSelection">
                                     來源：
                                     <span class="snippetResultPath">{{ snippetState.selection.path || '-' }}</span>
-                                    <span v-if="snippetState.selection.startLine !== null && snippetState.selection.startLine !== undefined">
-                                        （第 {{ snippetState.selection.startLine }}
-                                        <template v-if="snippetState.selection.endLine !== undefined && snippetState.selection.endLine !== snippetState.selection.startLine">
-                                            -{{ snippetState.selection.endLine }}
-                                        </template>
-                                        行
-                                        <template v-if="snippetState.selection.lineCount">
-                                            ，共 {{ snippetState.selection.lineCount }} 行
-                                        </template>
-                                        ）
+                                    <span v-if="snippetResultDetailsText" class="snippetResultRange">
+                                        （{{ snippetResultDetailsText }}）
                                     </span>
                                 </p>
                                 <pre class="reportBody codeScroll snippetReportBody">{{ snippetState.report }}</pre>
@@ -2021,6 +2297,12 @@ body,
     color: #94a3b8;
 }
 
+.snippetInlinePanel__meta {
+    margin: 0;
+    font-size: 12px;
+    color: #9ca3af;
+}
+
 .snippetInlinePanel__status {
     margin: 0;
     font-size: 13px;
@@ -2085,6 +2367,11 @@ body,
     font-weight: 600;
 }
 
+.snippetResultRange {
+    margin-left: 6px;
+    color: #9ca3af;
+}
+
 .snippetReportBody {
     min-height: 160px;
 }
@@ -2096,6 +2383,18 @@ body,
 .codeLine--selected .codeLineNo {
     background: #1f2937;
     color: #bfdbfe;
+}
+
+.codeLineHighlight {
+    background: rgba(59, 130, 246, 0.32);
+    border-radius: 3px;
+    padding: 0 1px;
+    color: inherit;
+}
+
+.codeLineHighlight--full {
+    display: inline-block;
+    min-width: 100%;
 }
 
 .panelHeader {

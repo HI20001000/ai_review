@@ -186,7 +186,7 @@ function formatChipType(type) {
 function chipTitle(item) {
     if (!item) return "";
     if (item.type === "snippet" && item.snippet) {
-        const { path, startLine, endLine } = item.snippet;
+        const { path, startLine, endLine, startColumn, endColumn, lineCount } = item.snippet;
         const parts = [];
         if (item.label) parts.push(item.label);
         if (path && (!item.label || !item.label.includes(path))) {
@@ -195,6 +195,24 @@ function chipTitle(item) {
         if (Number.isFinite(startLine)) {
             const range = Number.isFinite(endLine) && endLine !== startLine ? `${startLine}-${endLine}` : `${startLine}`;
             parts.push(`行 ${range}`);
+        }
+        const hasStartColumn = Number.isFinite(startColumn);
+        const hasEndColumn = Number.isFinite(endColumn);
+        const isSingleLine = Number.isFinite(startLine) && Number.isFinite(endLine) && startLine === endLine;
+        if (isSingleLine) {
+            if (hasStartColumn && hasEndColumn) {
+                parts.push(`字元 ${startColumn === endColumn ? startColumn : `${startColumn}-${endColumn}`}`);
+            } else if (hasStartColumn) {
+                parts.push(`字元 ${startColumn} 起`);
+            } else if (hasEndColumn) {
+                parts.push(`字元 ${endColumn} 止`);
+            }
+        } else {
+            if (hasStartColumn) parts.push(`起始字元 ${startColumn}`);
+            if (hasEndColumn) parts.push(`結束字元 ${endColumn}`);
+        }
+        if (Number.isFinite(lineCount) && lineCount > 0) {
+            parts.push(`共 ${lineCount} 行`);
         }
         return parts.join(" | ") || item.label || "Snippet";
     }

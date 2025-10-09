@@ -105,11 +105,20 @@ function normaliseSelectionMeta(selection) {
     const normalised = {};
     const start = Number(selection.startLine);
     const end = Number(selection.endLine);
+    const startColumnRaw = Number(selection.startColumn);
+    const endColumnRaw = Number(selection.endColumn);
+    const providedLineCount = Number(selection.lineCount);
     if (Number.isFinite(start)) {
         normalised.startLine = Math.max(1, Math.floor(start));
     }
     if (Number.isFinite(end)) {
         normalised.endLine = Math.max(1, Math.floor(end));
+    }
+    if (Number.isFinite(startColumnRaw) && startColumnRaw > 0) {
+        normalised.startColumn = Math.max(1, Math.floor(startColumnRaw));
+    }
+    if (Number.isFinite(endColumnRaw) && endColumnRaw > 0) {
+        normalised.endColumn = Math.max(1, Math.floor(endColumnRaw));
     }
     if (
         normalised.startLine !== undefined &&
@@ -119,6 +128,11 @@ function normaliseSelectionMeta(selection) {
         const temp = normalised.startLine;
         normalised.startLine = normalised.endLine;
         normalised.endLine = temp;
+        if (normalised.startColumn !== undefined || normalised.endColumn !== undefined) {
+            const columnTemp = normalised.startColumn;
+            normalised.startColumn = normalised.endColumn;
+            normalised.endColumn = columnTemp;
+        }
     }
     if (normalised.startLine !== undefined && normalised.endLine === undefined) {
         normalised.endLine = normalised.startLine;
@@ -126,10 +140,24 @@ function normaliseSelectionMeta(selection) {
     if (normalised.endLine !== undefined && normalised.startLine === undefined) {
         normalised.startLine = normalised.endLine;
     }
+    if (
+        normalised.startLine !== undefined &&
+        normalised.endLine !== undefined &&
+        normalised.startLine === normalised.endLine &&
+        normalised.startColumn !== undefined &&
+        normalised.endColumn !== undefined &&
+        normalised.endColumn < normalised.startColumn
+    ) {
+        const columnTemp = normalised.startColumn;
+        normalised.startColumn = normalised.endColumn;
+        normalised.endColumn = columnTemp;
+    }
     if (typeof selection.label === "string" && selection.label.trim()) {
         normalised.label = selection.label.trim();
     }
-    if (normalised.startLine !== undefined && normalised.endLine !== undefined) {
+    if (Number.isFinite(providedLineCount) && providedLineCount > 0) {
+        normalised.lineCount = Math.max(1, Math.floor(providedLineCount));
+    } else if (normalised.startLine !== undefined && normalised.endLine !== undefined) {
         normalised.lineCount = normalised.endLine - normalised.startLine + 1;
     }
     return Object.keys(normalised).length ? normalised : null;
@@ -139,6 +167,9 @@ function describeSelection(selection) {
     if (!selection) return "";
     const hasStart = typeof selection.startLine === "number" && Number.isFinite(selection.startLine);
     const hasEnd = typeof selection.endLine === "number" && Number.isFinite(selection.endLine);
+    const hasStartColumn = typeof selection.startColumn === "number" && Number.isFinite(selection.startColumn);
+    const hasEndColumn = typeof selection.endColumn === "number" && Number.isFinite(selection.endColumn);
+    const isSingleLine = hasStart && hasEnd && selection.startLine === selection.endLine;
     let rangeText = "";
     if (hasStart && hasEnd) {
         rangeText = selection.startLine === selection.endLine
@@ -149,12 +180,35 @@ function describeSelection(selection) {
     } else if (hasEnd) {
         rangeText = `第 ${selection.endLine} 行`;
     }
-    const label = typeof selection.label === "string" && selection.label.trim() ? selection.label.trim() : "";
-    if (label && rangeText) {
-        return `選取範圍：${rangeText}（${label}）`;
+    let columnText = "";
+    if (isSingleLine) {
+        if (hasStartColumn && hasEndColumn) {
+            columnText = selection.startColumn === selection.endColumn
+                ? `字元 ${selection.startColumn}`
+                : `字元 ${selection.startColumn}-${selection.endColumn}`;
+        } else if (hasStartColumn) {
+            columnText = `字元 ${selection.startColumn} 起`;
+        } else if (hasEndColumn) {
+            columnText = `字元 ${selection.endColumn} 止`;
+        }
+    } else {
+        if (hasStartColumn) {
+            columnText = `起始字元 ${selection.startColumn}`;
+        }
+        if (hasEndColumn) {
+            columnText = columnText ? `${columnText}，結束字元 ${selection.endColumn}` : `結束字元 ${selection.endColumn}`;
+        }
     }
-    if (rangeText) {
-        return `選取範圍：${rangeText}`;
+    const segments = [];
+    if (rangeText) segments.push(rangeText);
+    if (columnText) segments.push(columnText);
+    const descriptor = segments.join("，");
+    const label = typeof selection.label === "string" && selection.label.trim() ? selection.label.trim() : "";
+    if (label && descriptor) {
+        return `選取範圍：${descriptor}（${label}）`;
+    }
+    if (descriptor) {
+        return `選取範圍：${descriptor}`;
     }
     if (label) {
         return `選取標籤：${label}`;
@@ -241,6 +295,12 @@ export async function requestDifyReport({
             }
             if (typeof selectionMeta.endLine === "number") {
                 body.inputs.selection_end_line = selectionMeta.endLine;
+            }
+            if (typeof selectionMeta.startColumn === "number") {
+                body.inputs.selection_start_column = selectionMeta.startColumn;
+            }
+            if (typeof selectionMeta.endColumn === "number") {
+                body.inputs.selection_end_column = selectionMeta.endColumn;
             }
             if (typeof selectionMeta.lineCount === "number") {
                 body.inputs.selection_line_count = selectionMeta.lineCount;

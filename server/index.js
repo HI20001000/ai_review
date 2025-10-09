@@ -125,6 +125,9 @@ function normaliseSnippetSelection(selection) {
     const content = selection.content;
     const start = Number(selection.startLine);
     const end = Number(selection.endLine);
+    const startColumnRaw = Number(selection.startColumn);
+    const endColumnRaw = Number(selection.endColumn);
+    const providedLineCount = Number(selection.lineCount);
     const label = typeof selection.label === "string" ? selection.label.trim() : "";
     const meta = {};
     if (Number.isFinite(start)) {
@@ -133,10 +136,21 @@ function normaliseSnippetSelection(selection) {
     if (Number.isFinite(end)) {
         meta.endLine = Math.max(1, Math.floor(end));
     }
+    if (Number.isFinite(startColumnRaw) && startColumnRaw > 0) {
+        meta.startColumn = Math.max(1, Math.floor(startColumnRaw));
+    }
+    if (Number.isFinite(endColumnRaw) && endColumnRaw > 0) {
+        meta.endColumn = Math.max(1, Math.floor(endColumnRaw));
+    }
     if (meta.startLine !== undefined && meta.endLine !== undefined && meta.endLine < meta.startLine) {
         const temp = meta.startLine;
         meta.startLine = meta.endLine;
         meta.endLine = temp;
+        if (meta.startColumn !== undefined || meta.endColumn !== undefined) {
+            const columnTemp = meta.startColumn;
+            meta.startColumn = meta.endColumn;
+            meta.endColumn = columnTemp;
+        }
     }
     if (meta.startLine !== undefined && meta.endLine === undefined) {
         meta.endLine = meta.startLine;
@@ -144,7 +158,21 @@ function normaliseSnippetSelection(selection) {
     if (meta.endLine !== undefined && meta.startLine === undefined) {
         meta.startLine = meta.endLine;
     }
-    if (meta.startLine !== undefined && meta.endLine !== undefined) {
+    if (
+        meta.startLine !== undefined &&
+        meta.endLine !== undefined &&
+        meta.startLine === meta.endLine &&
+        meta.startColumn !== undefined &&
+        meta.endColumn !== undefined &&
+        meta.endColumn < meta.startColumn
+    ) {
+        const columnTemp = meta.startColumn;
+        meta.startColumn = meta.endColumn;
+        meta.endColumn = columnTemp;
+    }
+    if (Number.isFinite(providedLineCount) && providedLineCount > 0) {
+        meta.lineCount = Math.max(1, Math.floor(providedLineCount));
+    } else if (meta.startLine !== undefined && meta.endLine !== undefined) {
         meta.lineCount = meta.endLine - meta.startLine + 1;
     }
     if (label) {

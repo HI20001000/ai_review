@@ -42,11 +42,9 @@ function formatContextSummary(items) {
             if (item.snippet?.path) {
                 segments.push(`\u4f86\u6e90\u6a94\u6848: ${item.snippet.path}`);
             }
-            const startLine = item.snippet?.startLine;
-            const endLine = item.snippet?.endLine;
-            if (Number.isFinite(startLine)) {
-                const range = Number.isFinite(endLine) && endLine !== startLine ? `${startLine}-${endLine}` : `${startLine}`;
-                segments.push(`\u884c\u6578: ${range}`);
+            const rangeParts = buildSnippetRangeParts(item.snippet || {});
+            if (rangeParts.length) {
+                segments.push(`\u7bc4\u570d: ${rangeParts.join("\uff0c")}`);
             }
         } else if (item.path) {
             segments.push(`\u8def\u5f91: ${item.path}`);
@@ -212,6 +210,49 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         return Number.isFinite(number) ? number : null;
     }
 
+    function normaliseColumn(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number > 0 ? Math.floor(number) : null;
+    }
+
+    function normalisePositiveInteger(value) {
+        const number = Number(value);
+        return Number.isFinite(number) && number > 0 ? Math.floor(number) : null;
+    }
+
+    function buildSnippetRangeParts(meta = {}) {
+        const startLine = normaliseLine(meta.startLine);
+        const endLine = normaliseLine(meta.endLine ?? startLine);
+        const startColumn = normaliseColumn(meta.startColumn);
+        const endColumn = normaliseColumn(meta.endColumn);
+        const lineCount = normalisePositiveInteger(meta.lineCount);
+        const parts = [];
+        if (startLine !== null && endLine !== null) {
+            parts.push(startLine === endLine ? `行 ${startLine}` : `行 ${startLine}-${endLine}`);
+        } else if (startLine !== null) {
+            parts.push(`行 ${startLine}`);
+        } else if (endLine !== null) {
+            parts.push(`行 ${endLine}`);
+        }
+        const isSingleLine = startLine !== null && endLine !== null && startLine === endLine;
+        if (isSingleLine) {
+            if (startColumn !== null && endColumn !== null) {
+                parts.push(startColumn === endColumn ? `字元 ${startColumn}` : `字元 ${startColumn}-${endColumn}`);
+            } else if (startColumn !== null) {
+                parts.push(`字元 ${startColumn} 起`);
+            } else if (endColumn !== null) {
+                parts.push(`字元 ${endColumn} 止`);
+            }
+        } else {
+            if (startColumn !== null) parts.push(`起始字元 ${startColumn}`);
+            if (endColumn !== null) parts.push(`結束字元 ${endColumn}`);
+        }
+        if (lineCount !== null) {
+            parts.push(`共 ${lineCount} 行`);
+        }
+        return parts;
+    }
+
     async function addSnippetContext(snippet) {
         const text = (snippet?.content || "").trim();
         if (!text) {
@@ -222,11 +263,14 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         const path = snippet?.path || "";
         const startLine = normaliseLine(snippet?.startLine);
         const endLine = normaliseLine(snippet?.endLine ?? startLine);
-        const lineCount = Number.isFinite(snippet?.lineCount)
+        const startColumn = normaliseColumn(snippet?.startColumn);
+        const endColumn = normaliseColumn(snippet?.endColumn);
+        const rawLineCount = Number.isFinite(snippet?.lineCount)
             ? Number(snippet.lineCount)
             : startLine !== null && endLine !== null
                 ? Math.abs(endLine - startLine) + 1
                 : null;
+        const lineCount = normalisePositiveInteger(rawLineCount);
 
         const duplicate = contextItems.value.find(
             (item) =>
@@ -234,6 +278,8 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
                 item.snippet?.path === path &&
                 item.snippet?.startLine === startLine &&
                 item.snippet?.endLine === endLine &&
+                item.snippet?.startColumn === startColumn &&
+                item.snippet?.endColumn === endColumn &&
                 item.content === text
         );
         if (duplicate) {
@@ -241,11 +287,9 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         }
 
         const id = snippet?.id || `snippet-${++ctxId}`;
-        const label =
-            snippet?.label ||
-            (path
-                ? `${path}${startLine !== null ? ` (行 ${startLine}${endLine !== null && endLine !== startLine ? `-${endLine}` : ""})` : ""}`
-                : `Snippet ${ctxId}`);
+        const rangeParts = buildSnippetRangeParts({ startLine, endLine, startColumn, endColumn, lineCount });
+        const rangeLabel = rangeParts.length ? ` (${rangeParts.join(", ")})` : "";
+        const label = snippet?.label || (path ? `${path}${rangeLabel}` : `Snippet ${ctxId}`);
 
         contextItems.value.push({
             id,
@@ -257,6 +301,8 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
                 path,
                 startLine,
                 endLine,
+                startColumn,
+                endColumn,
                 lineCount
             }
         });
