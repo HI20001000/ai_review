@@ -368,6 +368,7 @@ export function useAiAssistant({ treeStore, projectsStore, fileSystem, preview }
         contextItems,
         messages,
         addActiveNode,
+        addSnippetContext,
         removeContext,
         clearContext,
         sendUserMessage,
