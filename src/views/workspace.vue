@@ -475,39 +475,8 @@ let wrapMeasureFrame = null;
 let codeScrollResizeObserver = null;
 
 function runLineWrapMeasurement() {
-    if (typeof window === "undefined") return;
-    const root = codeScrollRef.value;
-
-    if (!root || previewing.value.kind !== "text") {
-        if (!showCodeLineNumbers.value) {
-            showCodeLineNumbers.value = true;
-        }
-        return;
-    }
-
-    const lineNodes = root.querySelectorAll?.(".codeLineContent") || [];
-    let hasWrappedLine = false;
-
-    for (const node of lineNodes) {
-        if (!node) continue;
-        const range = document.createRange();
-        range.selectNodeContents(node);
-        const rects = range.getClientRects();
-        if (rects.length > 1) {
-            hasWrappedLine = true;
-            break;
-        }
-        const scrollWidth = node.scrollWidth || 0;
-        const clientWidth = node.clientWidth || 0;
-        if (scrollWidth - clientWidth > 1) {
-            hasWrappedLine = true;
-            break;
-        }
-    }
-
-    const shouldShow = !hasWrappedLine;
-    if (showCodeLineNumbers.value !== shouldShow) {
-        showCodeLineNumbers.value = shouldShow;
+    if (!showCodeLineNumbers.value) {
+        showCodeLineNumbers.value = true;
     }
 }
 
@@ -630,6 +599,14 @@ watch(
         if (previewing.value.kind === "text") {
             clearCodeSelection();
         }
+    }
+);
+
+watch(
+    () => activeTreePath.value,
+    (next, prev) => {
+        if (next === prev) return;
+        clearCodeSelection();
     }
 );
 
@@ -2212,14 +2189,6 @@ body,
     -moz-user-select: text;
     -ms-user-select: text;
     user-select: text;
-}
-
-.codeScroll--wrapped .codeLineNo {
-    display: none;
-}
-
-.codeScroll--wrapped .codeLineContent {
-    padding-left: 0;
 }
 
 .codeSelectionHighlight {
