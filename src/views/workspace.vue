@@ -415,6 +415,14 @@ function handleDocumentPointerUp(event) {
     const hasActiveSelection = !!selectionInCode && selection && !selection.isCollapsed;
 
     if (hasActiveSelection) {
+        // Ensure the most recent drag selection is captured even if the
+        // browser collapses the native selection highlight after mouseup.
+        const snippet = buildSelectedSnippet();
+        if (!snippet && codeSelection.value) {
+            // Re-emit the existing selection so the custom highlight remains
+            // visible when the document selection collapses immediately.
+            codeSelection.value = { ...codeSelection.value };
+        }
         shouldClearAfterPointerClick = false;
         lastPointerDownWasOutsideCode = false;
     } else if (pointerDownInCode && pointerUpInside && shouldClearAfterPointerClick) {
