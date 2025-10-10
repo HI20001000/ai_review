@@ -1197,7 +1197,7 @@ function startPreviewResize(event) {
     window.addEventListener("pointercancel", stop);
 }
 
-const clampReportSidebarWidth = () => {
+function clampReportSidebarWidth() {
     const containerEl = mainContentRef.value;
     if (!containerEl) return;
 
@@ -1216,7 +1216,7 @@ const clampReportSidebarWidth = () => {
 
     const minRailWidth = Math.min(minRailWidthDefault, maxRailWidth);
     middlePaneWidth.value = clamp(middlePaneWidth.value, minRailWidth, maxRailWidth);
-};
+}
 
 async function handleAddActiveContext() {
     const added = await addActiveNode();
@@ -2244,7 +2244,7 @@ body,
 .codeScroll *::selection,
 .codeLineContent::selection,
 .codeLineContent *::selection {
-    background: none;
+    background: rgba(59, 130, 246, 0.45);
     color: #f8fafc;
 }
 
