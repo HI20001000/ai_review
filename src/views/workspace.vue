@@ -93,6 +93,7 @@ const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const codeScrollRef = ref(null);
 const codeSelection = ref(null);
+const showCodeLineNumbers = ref(true);
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
@@ -403,6 +404,58 @@ function handleCodeScrollPointerDown(event) {
     clearCodeSelection();
 }
 
+let wrapMeasureFrame = null;
+let codeScrollResizeObserver = null;
+
+function runLineWrapMeasurement() {
+    if (typeof window === "undefined") return;
+    const root = codeScrollRef.value;
+
+    if (!root || previewing.value.kind !== "text") {
+        if (!showCodeLineNumbers.value) {
+            showCodeLineNumbers.value = true;
+        }
+        return;
+    }
+
+    const lineNodes = root.querySelectorAll?.(".codeLineContent") || [];
+    let hasWrappedLine = false;
+
+    for (const node of lineNodes) {
+        if (!node) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const rects = range.getClientRects();
+        if (rects.length > 1) {
+            hasWrappedLine = true;
+            break;
+        }
+        const scrollWidth = node.scrollWidth || 0;
+        const clientWidth = node.clientWidth || 0;
+        if (scrollWidth - clientWidth > 1) {
+            hasWrappedLine = true;
+            break;
+        }
+    }
+
+    const shouldShow = !hasWrappedLine;
+    if (showCodeLineNumbers.value !== shouldShow) {
+        showCodeLineNumbers.value = shouldShow;
+    }
+}
+
+function scheduleLineWrapMeasurement() {
+    if (typeof window === "undefined") return;
+    if (wrapMeasureFrame !== null) {
+        window.cancelAnimationFrame(wrapMeasureFrame);
+        wrapMeasureFrame = null;
+    }
+    wrapMeasureFrame = window.requestAnimationFrame(() => {
+        wrapMeasureFrame = null;
+        runLineWrapMeasurement();
+    });
+}
+
 watch(isChatWindowOpen, (visible) => {
     if (visible) {
         openAssistantSession();
@@ -422,6 +475,69 @@ watch(isChatWindowOpen, (visible) => {
         });
     } else {
         closeAssistantSession();
+    }
+});
+
+watch(
+    () => previewing.value.kind,
+    () => {
+        scheduleLineWrapMeasurement();
+    }
+);
+
+watch(
+    () => previewing.value.text,
+    () => {
+        scheduleLineWrapMeasurement();
+    },
+    { flush: "post" }
+);
+
+watch(
+    () => previewLineItems.value.length,
+    () => {
+        scheduleLineWrapMeasurement();
+    }
+);
+
+watch(
+    () => codeScrollRef.value,
+    (next, prev) => {
+        if (codeScrollResizeObserver && prev) {
+            codeScrollResizeObserver.unobserve(prev);
+        }
+        if (codeScrollResizeObserver && next) {
+            codeScrollResizeObserver.observe(next);
+        }
+        scheduleLineWrapMeasurement();
+    }
+);
+
+onMounted(() => {
+    if (typeof window !== "undefined" && "ResizeObserver" in window) {
+        codeScrollResizeObserver = new window.ResizeObserver(() => {
+            scheduleLineWrapMeasurement();
+        });
+        if (codeScrollRef.value) {
+            codeScrollResizeObserver.observe(codeScrollRef.value);
+        }
+    }
+    scheduleLineWrapMeasurement();
+});
+
+onBeforeUnmount(() => {
+    if (wrapMeasureFrame !== null && typeof window !== "undefined") {
+        window.cancelAnimationFrame(wrapMeasureFrame);
+        wrapMeasureFrame = null;
+    }
+    if (codeScrollResizeObserver) {
+        if (codeScrollRef.value) {
+            codeScrollResizeObserver.unobserve(codeScrollRef.value);
+        }
+        if (typeof codeScrollResizeObserver.disconnect === "function") {
+            codeScrollResizeObserver.disconnect();
+        }
+        codeScrollResizeObserver = null;
     }
 });
 
@@ -1390,7 +1506,12 @@ onBeforeUnmount(() => {
 
                     <template v-if="previewing.kind === 'text'">
                         <div class="pvBox codeBox">
-                            <div class="codeScroll" ref="codeScrollRef" @pointerdown="handleCodeScrollPointerDown">
+                            <div
+                                class="codeScroll"
+                                :class="{ 'codeScroll--wrapped': !showCodeLineNumbers }"
+                                ref="codeScrollRef"
+                                @pointerdown="handleCodeScrollPointerDown"
+                            >
                                 <div class="codeEditor">
                                     <div
                                         v-for="line in previewLineItems"
@@ -1993,7 +2114,13 @@ body,
 }
 
 .codeLineNo {
-    display: none;
+    flex: 0 0 auto;
+    width: 3.5ch;
+    padding: 0 12px 0 0;
+    text-align: right;
+    color: #6b7280;
+    font-variant-numeric: tabular-nums;
+    user-select: none;
 }
 
 .codeLineContent {
@@ -2009,6 +2136,14 @@ body,
     -moz-user-select: text;
     -ms-user-select: text;
     user-select: text;
+}
+
+.codeScroll--wrapped .codeLineNo {
+    display: none;
+}
+
+.codeScroll--wrapped .codeLineContent {
+    padding-left: 0;
 }
 
 .codeSelectionHighlight {
