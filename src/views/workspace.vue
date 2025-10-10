@@ -93,6 +93,9 @@ const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
 const codeScrollRef = ref(null);
 const codeSelection = ref(null);
+let pointerDownInCode = false;
+let shouldClearAfterPointerClick = false;
+let lastPointerDownWasOutsideCode = false;
 const showCodeLineNumbers = ref(true);
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
@@ -258,6 +261,8 @@ function clearCodeSelection() {
     if (codeSelection.value) {
         codeSelection.value = null;
     }
+    shouldClearAfterPointerClick = false;
+    lastPointerDownWasOutsideCode = false;
 }
 
 function isWithinCodeLine(target) {
@@ -365,6 +370,7 @@ function buildSelectedSnippet() {
     };
 
     codeSelection.value = snippet;
+    shouldClearAfterPointerClick = false;
     return snippet;
 }
 
@@ -379,7 +385,6 @@ function handleDocumentSelectionChange() {
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
 
     if (selection.isCollapsed) {
-        clearCodeSelection();
         return;
     }
 
@@ -390,18 +395,72 @@ function handleDocumentSelectionChange() {
 }
 
 function handleDocumentPointerUp(event) {
-    if (!codeScrollRef.value) return;
-    if (!codeScrollRef.value.contains(event?.target)) return;
-    handleDocumentSelectionChange();
+    const root = codeScrollRef.value;
+    if (!root) {
+        pointerDownInCode = false;
+        shouldClearAfterPointerClick = false;
+        lastPointerDownWasOutsideCode = false;
+        return;
+    }
+
+    const target = event?.target || null;
+    const pointerUpInside = target ? root.contains(target) : false;
+
+    const selection = typeof window !== "undefined" ? window.getSelection?.() : null;
+    const selectionInCode =
+        !!selection &&
+        selection.rangeCount > 0 &&
+        root.contains(selection.anchorNode) &&
+        root.contains(selection.focusNode);
+    const hasActiveSelection = !!selectionInCode && selection && !selection.isCollapsed;
+
+    if (hasActiveSelection) {
+        shouldClearAfterPointerClick = false;
+        lastPointerDownWasOutsideCode = false;
+    } else if (pointerDownInCode && pointerUpInside && shouldClearAfterPointerClick) {
+        clearCodeSelection();
+    } else if (lastPointerDownWasOutsideCode && !pointerUpInside) {
+        // Preserve the current highlight when the interaction happens completely outside the editor
+        // by re-emitting the stored selection so Vue keeps the custom highlight rendered.
+        if (codeSelection.value) {
+            codeSelection.value = { ...codeSelection.value };
+        }
+    }
+
+    pointerDownInCode = false;
+    shouldClearAfterPointerClick = false;
+    lastPointerDownWasOutsideCode = false;
 }
 
 function handleCodeScrollPointerDown(event) {
     if (event.button !== 0) return;
     if (previewing.value.kind !== "text") return;
-    if (!codeSelection.value) return;
     const target = event?.target || null;
-    if (!isWithinCodeLine(target)) return;
-    clearCodeSelection();
+    const withinLine = isWithinCodeLine(target);
+    pointerDownInCode = withinLine;
+    shouldClearAfterPointerClick = withinLine && !!codeSelection.value;
+    lastPointerDownWasOutsideCode = !withinLine;
+}
+
+function handleDocumentPointerDown(event) {
+    const root = codeScrollRef.value;
+    if (!root) return;
+    const target = event?.target || null;
+    const pointerDownInside = target ? root.contains(target) : false;
+    if (pointerDownInside) {
+        lastPointerDownWasOutsideCode = false;
+        return;
+    }
+
+    lastPointerDownWasOutsideCode = true;
+    pointerDownInCode = false;
+    shouldClearAfterPointerClick = false;
+
+    if (codeSelection.value) {
+        // Touching other panes should not discard the stored snippet, so keep the
+        // highlight alive by nudging Vue's reactivity system.
+        codeSelection.value = { ...codeSelection.value };
+    }
 }
 
 let wrapMeasureFrame = null;
@@ -1319,6 +1378,7 @@ onMounted(async () => {
     window.addEventListener("resize", ensureChatWindowInView);
     window.addEventListener("resize", clampReportSidebarWidth);
     if (typeof document !== "undefined") {
+        document.addEventListener("pointerdown", handleDocumentPointerDown, true);
         document.addEventListener("selectionchange", handleDocumentSelectionChange);
         document.addEventListener("mouseup", handleDocumentPointerUp);
     }
@@ -1330,6 +1390,7 @@ onBeforeUnmount(() => {
     stopChatDrag();
     stopChatResize();
     if (typeof document !== "undefined") {
+        document.removeEventListener("pointerdown", handleDocumentPointerDown, true);
         document.removeEventListener("selectionchange", handleDocumentSelectionChange);
         document.removeEventListener("mouseup", handleDocumentPointerUp);
     }
