@@ -1197,6 +1197,27 @@ function startPreviewResize(event) {
     window.addEventListener("pointercancel", stop);
 }
 
+const clampReportSidebarWidth = () => {
+    const containerEl = mainContentRef.value;
+    if (!containerEl) return;
+
+    const navEl = containerEl.querySelector(".toolColumn");
+    const availableWidth = containerEl.clientWidth - (navEl?.clientWidth ?? 0);
+    if (availableWidth <= 0) return;
+
+    const workspaceMinWidth = 320;
+    const minRailWidthDefault = 260;
+    const maxRailWidth = Math.max(0, availableWidth - workspaceMinWidth);
+
+    if (maxRailWidth === 0) {
+        middlePaneWidth.value = 0;
+        return;
+    }
+
+    const minRailWidth = Math.min(minRailWidthDefault, maxRailWidth);
+    middlePaneWidth.value = clamp(middlePaneWidth.value, minRailWidth, maxRailWidth);
+};
+
 async function handleAddActiveContext() {
     const added = await addActiveNode();
     if (added) {
@@ -1374,6 +1395,7 @@ onMounted(async () => {
     await cleanupLegacyHandles();
     updateCapabilityFlags();
     await loadProjectsFromDB();
+    clampReportSidebarWidth();
     window.addEventListener("resize", ensureChatWindowInView);
     window.addEventListener("resize", clampReportSidebarWidth);
     if (typeof document !== "undefined") {
