@@ -5,6 +5,7 @@ import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
 import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
+import { generateReportViaDify, fetchProjectReports } from "../scripts/services/reportService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
 import ReportPanel from "../components/reports/ReportPanel.vue";
@@ -43,7 +44,9 @@ const {
     handleDragOver,
     handleFolderInput,
     pickFolderAndImport,
-    updateCapabilityFlags
+    updateCapabilityFlags,
+    getProjectRootHandleById,
+    safeAlertFail
 } = projectsStore;
 
 const {
@@ -60,6 +63,7 @@ const {
     contextItems,
     messages,
     addActiveNode,
+    addSnippetContext,
     removeContext,
     clearContext,
     sendUserMessage,
@@ -71,13 +75,30 @@ const {
 
 const { previewing } = preview;
 
+const previewLineItems = computed(() => {
+    if (previewing.value.kind !== "text") return [];
+    const text = previewing.value.text ?? "";
+    const lines = text.split(/\r\n|\r|\n/);
+    if (lines.length === 0) {
+        return [{ number: 1, content: "\u00A0" }];
+    }
+    return lines.map((line, index) => ({
+        number: index + 1,
+        content: line === "" ? "\u00A0" : line,
+        raw: line
+    }));
+});
+
 const middlePaneWidth = ref(360);
 const mainContentRef = ref(null);
+const codeScrollRef = ref(null);
+const codeSelection = ref(null);
+let pointerDownInCode = false;
+let shouldClearAfterPointerClick = false;
+let lastPointerDownWasOutsideCode = false;
+const showCodeLineNumbers = ref(true);
 const isChatWindowOpen = ref(false);
 const activeRailTool = ref("projects");
-const reportReviewRef = ref(null);
-const reportSidebarWidth = ref(320);
-const isReportSidebarResizing = ref(false);
 const chatWindowState = reactive({ x: 0, y: 80, width: 420, height: 520 });
 const chatDragState = reactive({ active: false, offsetX: 0, offsetY: 0 });
 const chatResizeState = reactive({
@@ -99,9 +120,11 @@ const hasInitializedChatWindow = ref(false);
 const isTreeCollapsed = ref(false);
 const reportStates = reactive({});
 const reportTreeCache = reactive({});
+const reportBatchStates = reactive({});
 const activeReportTarget = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
+const panelMode = computed(() => (isReportToolActive.value ? "reports" : "projects"));
 const reportProjectEntries = computed(() => {
     const list = Array.isArray(projects.value) ? projects.value : [];
     return list.map((project) => {
@@ -112,7 +135,10 @@ const reportProjectEntries = computed(() => {
                 nodes: [],
                 loading: false,
                 error: "",
-                expandedPaths: []
+                expandedPaths: [],
+                hydratedReports: false,
+                hydratingReports: false,
+                reportHydrationError: ""
             }
         };
     });
@@ -149,7 +175,7 @@ const activeReport = computed(() => {
     const key = toReportKey(target.projectId, target.path);
     if (!key) return null;
     const state = reportStates[key];
-    if (!state || state.status !== "ready") return null;
+    if (!state || (state.status !== "ready" && state.status !== "error")) return null;
     const projectList = Array.isArray(projects.value) ? projects.value : [];
     const project = projectList.find((item) => String(item.id) === target.projectId);
     if (!project) return null;
@@ -159,18 +185,27 @@ const activeReport = computed(() => {
         path: target.path
     };
 });
+
+const viewerHasContent = computed(() => {
+    const report = activeReport.value;
+    if (!report) return false;
+    return report.state.status === "ready" || report.state.status === "error";
+});
+
+const hasChunkDetails = computed(() => {
+    const report = activeReport.value;
+    if (!report) return false;
+    const chunks = report.state.chunks;
+    return Array.isArray(chunks) && chunks.length > 1;
+});
 const middlePaneStyle = computed(() => {
-    const width = isProjectToolActive.value ? middlePaneWidth.value : 0;
+    const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
+    const width = hasActiveTool ? middlePaneWidth.value : 0;
     return {
         flex: `0 0 ${width}px`,
         width: `${width}px`
     };
 });
-
-const reportSidebarStyle = computed(() => ({
-    flex: `0 0 ${reportSidebarWidth.value}px`,
-    width: `${reportSidebarWidth.value}px`
-}));
 
 const chatWindowStyle = computed(() => ({
     width: `${chatWindowState.width}px`,
@@ -180,6 +215,305 @@ const chatWindowStyle = computed(() => ({
 }));
 
 const isChatToggleDisabled = computed(() => isChatLocked.value && !isChatWindowOpen.value);
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function renderLineContent(line) {
+    const rawText = typeof line?.raw === "string" ? line.raw : (line?.content || "").replace(/ /g, " ");
+    const selection = codeSelection.value;
+    const safe = escapeHtml(rawText);
+
+    if (!selection || !selection.startLine || !selection.endLine || !Number.isFinite(line?.number)) {
+        return safe.length ? safe : "&nbsp;";
+    }
+
+    const lineNumber = line.number;
+    if (lineNumber < selection.startLine || lineNumber > selection.endLine) {
+        return safe.length ? safe : "&nbsp;";
+    }
+
+    const plain = rawText;
+    const lineLength = plain.length;
+    const startIndex = lineNumber === selection.startLine ? Math.max(0, (selection.startColumn ?? 1) - 1) : 0;
+    const endIndex = lineNumber === selection.endLine
+        ? Math.min(lineLength, selection.endColumn ?? lineLength)
+        : lineLength;
+
+    const safeBefore = escapeHtml(plain.slice(0, startIndex));
+    const highlightEnd = Math.max(startIndex, endIndex);
+    const middleRaw = plain.slice(startIndex, highlightEnd);
+    const safeMiddle = escapeHtml(middleRaw);
+    const safeAfter = escapeHtml(plain.slice(highlightEnd));
+
+    const highlighted = `<span class="codeSelectionHighlight">${safeMiddle.length ? safeMiddle : "&nbsp;"}</span>`;
+    const combined = `${safeBefore}${highlighted}${safeAfter}`;
+    return combined.length ? combined : "&nbsp;";
+}
+
+function clearCodeSelection() {
+    if (codeSelection.value) {
+        codeSelection.value = null;
+    }
+    shouldClearAfterPointerClick = false;
+    lastPointerDownWasOutsideCode = false;
+}
+
+function isWithinCodeLine(target) {
+    const root = codeScrollRef.value;
+    if (!root || !target) return false;
+
+    let current = target;
+    while (current && current !== root) {
+        if (current.classList && (current.classList.contains("codeLine") || current.classList.contains("codeLineContent") || current.classList.contains("codeLineNo"))) {
+            return true;
+        }
+        current = current.parentNode;
+    }
+
+    return false;
+}
+
+function resolveLineInfo(node) {
+    if (!node) return null;
+    let current = node.nodeType === 3 ? node.parentElement : node;
+    while (current && current !== codeScrollRef.value) {
+        if (current.classList && current.classList.contains("codeLine")) {
+            const lineNumber = Number.parseInt(current.dataset?.line || "", 10);
+            const contentEl = current.querySelector(".codeLineContent");
+            return {
+                lineEl: current,
+                contentEl,
+                lineNumber: Number.isFinite(lineNumber) ? lineNumber : null
+            };
+        }
+        current = current.parentElement;
+    }
+    return null;
+}
+
+function normaliseSelectionRangeText(range) {
+    return range
+        .toString()
+        .replace(/\u00A0/g, " ")
+        .replace(/\r\n|\r/g, "\n");
+}
+
+function measureColumn(lineInfo, container, offset, mode) {
+    if (!lineInfo?.contentEl || typeof document === "undefined") return null;
+    const targetContainer = container?.nodeType === 3 ? container : container;
+    if (!lineInfo.contentEl.contains(targetContainer)) {
+        if (mode === "end") {
+            const fullRange = document.createRange();
+            fullRange.selectNodeContents(lineInfo.contentEl);
+            return normaliseSelectionRangeText(fullRange).length || null;
+        }
+        return 1;
+    }
+    const range = document.createRange();
+    range.selectNodeContents(lineInfo.contentEl);
+    try {
+        range.setEnd(container, offset);
+    } catch (error) {
+        return null;
+    }
+    const length = normaliseSelectionRangeText(range).length;
+    if (mode === "start") {
+        return Math.max(1, length + 1);
+    }
+    return Math.max(1, length);
+}
+
+function buildSelectedSnippet() {
+    if (typeof window === "undefined") return null;
+    const root = codeScrollRef.value;
+    if (!root) return null;
+    const selection = window.getSelection?.();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
+        return null;
+    }
+
+    const rawText = normaliseSelectionRangeText(range);
+    if (!rawText.trim()) return null;
+
+    const startInfo = resolveLineInfo(range.startContainer);
+    const endInfo = resolveLineInfo(range.endContainer);
+    if (!startInfo || !endInfo) return null;
+
+    const startLine = startInfo.lineNumber;
+    const endLine = endInfo.lineNumber;
+    const startColumn = measureColumn(startInfo, range.startContainer, range.startOffset, "start");
+    const endColumn = measureColumn(endInfo, range.endContainer, range.endOffset, "end");
+    const lineCount = startLine !== null && endLine !== null ? endLine - startLine + 1 : null;
+
+    const path = previewing.value.path || treeStore.activeTreePath.value || "";
+    const name = previewing.value.name || path || "選取片段";
+
+    const snippet = {
+        path,
+        name,
+        label: name,
+        startLine,
+        endLine,
+        startColumn,
+        endColumn,
+        lineCount,
+        text: rawText
+    };
+
+    codeSelection.value = snippet;
+    shouldClearAfterPointerClick = false;
+    return snippet;
+}
+
+function handleDocumentSelectionChange() {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+    if (previewing.value.kind !== "text") return;
+    const root = codeScrollRef.value;
+    if (!root) return;
+    const selection = window.getSelection?.();
+    if (!selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
+
+    if (selection.isCollapsed) {
+        return;
+    }
+
+    const snippet = buildSelectedSnippet();
+    if (!snippet) {
+        clearCodeSelection();
+    }
+}
+
+function handleDocumentPointerUp(event) {
+    const root = codeScrollRef.value;
+    if (!root) {
+        pointerDownInCode = false;
+        shouldClearAfterPointerClick = false;
+        lastPointerDownWasOutsideCode = false;
+        return;
+    }
+
+    const target = event?.target || null;
+    const pointerUpInside = target ? root.contains(target) : false;
+
+    const selection = typeof window !== "undefined" ? window.getSelection?.() : null;
+    const selectionInCode =
+        !!selection &&
+        selection.rangeCount > 0 &&
+        root.contains(selection.anchorNode) &&
+        root.contains(selection.focusNode);
+    const hasActiveSelection = !!selectionInCode && selection && !selection.isCollapsed;
+
+    if (hasActiveSelection) {
+        shouldClearAfterPointerClick = false;
+        lastPointerDownWasOutsideCode = false;
+    } else if (pointerDownInCode && pointerUpInside && shouldClearAfterPointerClick) {
+        clearCodeSelection();
+    } else if (lastPointerDownWasOutsideCode && !pointerUpInside) {
+        // Preserve the current highlight when the interaction happens completely outside the editor
+        // by re-emitting the stored selection so Vue keeps the custom highlight rendered.
+        if (codeSelection.value) {
+            codeSelection.value = { ...codeSelection.value };
+        }
+    }
+
+    pointerDownInCode = false;
+    shouldClearAfterPointerClick = false;
+    lastPointerDownWasOutsideCode = false;
+}
+
+function handleCodeScrollPointerDown(event) {
+    if (event.button !== 0) return;
+    if (previewing.value.kind !== "text") return;
+    const target = event?.target || null;
+    const withinLine = isWithinCodeLine(target);
+    pointerDownInCode = withinLine;
+    shouldClearAfterPointerClick = withinLine && !!codeSelection.value;
+    lastPointerDownWasOutsideCode = !withinLine;
+}
+
+function handleDocumentPointerDown(event) {
+    const root = codeScrollRef.value;
+    if (!root) return;
+    const target = event?.target || null;
+    const pointerDownInside = target ? root.contains(target) : false;
+    if (pointerDownInside) {
+        lastPointerDownWasOutsideCode = false;
+        return;
+    }
+
+    lastPointerDownWasOutsideCode = true;
+    pointerDownInCode = false;
+    shouldClearAfterPointerClick = false;
+
+    if (codeSelection.value) {
+        // Touching other panes should not discard the stored snippet, so keep the
+        // highlight alive by nudging Vue's reactivity system.
+        codeSelection.value = { ...codeSelection.value };
+    }
+}
+
+let wrapMeasureFrame = null;
+let codeScrollResizeObserver = null;
+
+function runLineWrapMeasurement() {
+    if (typeof window === "undefined") return;
+    const root = codeScrollRef.value;
+
+    if (!root || previewing.value.kind !== "text") {
+        if (!showCodeLineNumbers.value) {
+            showCodeLineNumbers.value = true;
+        }
+        return;
+    }
+
+    const lineNodes = root.querySelectorAll?.(".codeLineContent") || [];
+    let hasWrappedLine = false;
+
+    for (const node of lineNodes) {
+        if (!node) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const rects = range.getClientRects();
+        if (rects.length > 1) {
+            hasWrappedLine = true;
+            break;
+        }
+        const scrollWidth = node.scrollWidth || 0;
+        const clientWidth = node.clientWidth || 0;
+        if (scrollWidth - clientWidth > 1) {
+            hasWrappedLine = true;
+            break;
+        }
+    }
+
+    const shouldShow = !hasWrappedLine;
+    if (showCodeLineNumbers.value !== shouldShow) {
+        showCodeLineNumbers.value = shouldShow;
+    }
+}
+
+function scheduleLineWrapMeasurement() {
+    if (typeof window === "undefined") return;
+    if (wrapMeasureFrame !== null) {
+        window.cancelAnimationFrame(wrapMeasureFrame);
+        wrapMeasureFrame = null;
+    }
+    wrapMeasureFrame = window.requestAnimationFrame(() => {
+        wrapMeasureFrame = null;
+        runLineWrapMeasurement();
+    });
+}
 
 watch(isChatWindowOpen, (visible) => {
     if (visible) {
@@ -203,13 +537,93 @@ watch(isChatWindowOpen, (visible) => {
     }
 });
 
-watch(isReportToolActive, (active) => {
-    if (active) {
-        nextTick(() => {
-            clampReportSidebarWidth();
+watch(
+    () => previewing.value.kind,
+    () => {
+        scheduleLineWrapMeasurement();
+    }
+);
+
+watch(
+    () => previewing.value.text,
+    () => {
+        scheduleLineWrapMeasurement();
+    },
+    { flush: "post" }
+);
+
+watch(
+    () => previewLineItems.value.length,
+    () => {
+        scheduleLineWrapMeasurement();
+    }
+);
+
+watch(
+    () => codeScrollRef.value,
+    (next, prev) => {
+        if (codeScrollResizeObserver && prev) {
+            codeScrollResizeObserver.unobserve(prev);
+        }
+        if (codeScrollResizeObserver && next) {
+            codeScrollResizeObserver.observe(next);
+        }
+        scheduleLineWrapMeasurement();
+    }
+);
+
+onMounted(() => {
+    if (typeof window !== "undefined" && "ResizeObserver" in window) {
+        codeScrollResizeObserver = new window.ResizeObserver(() => {
+            scheduleLineWrapMeasurement();
         });
+        if (codeScrollRef.value) {
+            codeScrollResizeObserver.observe(codeScrollRef.value);
+        }
+    }
+    scheduleLineWrapMeasurement();
+});
+
+onBeforeUnmount(() => {
+    if (wrapMeasureFrame !== null && typeof window !== "undefined") {
+        window.cancelAnimationFrame(wrapMeasureFrame);
+        wrapMeasureFrame = null;
+    }
+    if (codeScrollResizeObserver) {
+        if (codeScrollRef.value) {
+            codeScrollResizeObserver.unobserve(codeScrollRef.value);
+        }
+        if (typeof codeScrollResizeObserver.disconnect === "function") {
+            codeScrollResizeObserver.disconnect();
+        }
+        codeScrollResizeObserver = null;
     }
 });
+
+watch(
+    () => previewing.value.kind,
+    (kind) => {
+        if (kind !== "text") {
+            clearCodeSelection();
+        }
+    }
+);
+
+watch(
+    () => previewing.value.path,
+    () => {
+        clearCodeSelection();
+    }
+);
+
+watch(
+    () => previewing.value.text,
+    () => {
+        if (previewing.value.kind === "text") {
+            clearCodeSelection();
+        }
+    }
+);
 
 async function ensureActiveProject() {
     const list = Array.isArray(projects.value) ? projects.value : [];
@@ -305,7 +719,11 @@ function createDefaultReportState() {
         status: "idle",
         report: "",
         updatedAt: null,
-        updatedAtDisplay: null
+        updatedAtDisplay: null,
+        error: "",
+        chunks: [],
+        segments: [],
+        conversationId: ""
     };
 }
 
@@ -317,10 +735,32 @@ function ensureReportTreeEntry(projectId) {
             nodes: [],
             loading: false,
             error: "",
-            expandedPaths: []
+            expandedPaths: [],
+            hydratedReports: false,
+            hydratingReports: false,
+            reportHydrationError: ""
         };
     }
     return reportTreeCache[key];
+}
+
+function ensureProjectBatchState(projectId) {
+    const key = normaliseProjectId(projectId);
+    if (!key) return null;
+    if (!Object.prototype.hasOwnProperty.call(reportBatchStates, key)) {
+        reportBatchStates[key] = {
+            running: false,
+            processed: 0,
+            total: 0
+        };
+    }
+    return reportBatchStates[key];
+}
+
+function getProjectBatchState(projectId) {
+    const key = normaliseProjectId(projectId);
+    if (!key) return null;
+    return reportBatchStates[key] || null;
 }
 
 function ensureFileReportState(projectId, path) {
@@ -342,6 +782,8 @@ function getStatusLabel(status) {
             return "處理中";
         case "ready":
             return "已完成";
+        case "error":
+            return "失敗";
         default:
             return "待生成";
     }
@@ -400,6 +842,52 @@ function ensureStatesForProject(projectId, nodes) {
     });
 }
 
+function parseHydratedTimestamp(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return new Date(value);
+    }
+    if (typeof value === "string" && value.trim()) {
+        const parsed = Date.parse(value);
+        if (!Number.isNaN(parsed)) {
+            return new Date(parsed);
+        }
+    }
+    return null;
+}
+
+async function hydrateReportsForProject(projectId) {
+    const entry = ensureReportTreeEntry(projectId);
+    if (!entry) return;
+    if (entry.hydratedReports || entry.hydratingReports) return;
+    entry.hydratingReports = true;
+    entry.reportHydrationError = "";
+    try {
+        const records = await fetchProjectReports(projectId);
+        for (const record of records) {
+            if (!record || !record.path) continue;
+            const state = ensureFileReportState(projectId, record.path);
+            if (!state) continue;
+            state.status = record.report ? "ready" : "idle";
+            state.report = record.report || "";
+            state.error = "";
+            state.chunks = Array.isArray(record.chunks) ? record.chunks : [];
+            state.segments = Array.isArray(record.segments) ? record.segments : [];
+            state.conversationId = record.conversationId || "";
+            const timestamp = parseHydratedTimestamp(record.generatedAt || record.updatedAt || record.createdAt);
+            state.updatedAt = timestamp;
+            state.updatedAtDisplay = timestamp ? timestamp.toLocaleString() : null;
+        }
+        entry.hydratedReports = true;
+    } catch (error) {
+        console.error("[Report] Failed to hydrate saved reports", { projectId, error });
+        entry.reportHydrationError = error?.message ? String(error.message) : String(error);
+    } finally {
+        entry.hydratingReports = false;
+    }
+}
+
 async function loadReportTreeForProject(projectId) {
     const entry = ensureReportTreeEntry(projectId);
     if (!entry || entry.loading) return;
@@ -409,6 +897,7 @@ async function loadReportTreeForProject(projectId) {
         const nodes = await treeStore.loadTreeFromDB(projectId);
         entry.nodes = nodes;
         ensureStatesForProject(projectId, nodes);
+        await hydrateReportsForProject(projectId);
         const nextExpanded = new Set(entry.expandedPaths);
         for (const node of nodes) {
             if (node.type === "dir") {
@@ -435,50 +924,154 @@ function selectReport(projectId, path) {
     };
 }
 
-async function generateReportForFile(project, node) {
-    if (!project || !node || node.type !== "file") return;
+async function generateReportForFile(project, node, options = {}) {
+    const { autoSelect = true, silent = false } = options;
+    if (!project || !node || node.type !== "file") {
+        return { status: "skipped" };
+    }
     const projectId = normaliseProjectId(project.id);
     const state = ensureFileReportState(projectId, node.path);
-    if (!state || state.status === "processing") return;
+    if (!state || state.status === "processing") {
+        return { status: "processing" };
+    }
 
     state.status = "processing";
+    state.error = "";
+    state.report = "";
+    state.chunks = [];
+    state.segments = [];
+    state.conversationId = "";
 
-    await new Promise((resolve) => setTimeout(resolve, 1800));
+    try {
+        const root = await getProjectRootHandleById(project.id);
+        const fileHandle = await fileSystemService.getFileHandleByPath(root, node.path);
+        const file = await fileHandle.getFile();
+        const mime = node.mime || file.type || "";
+        if (!preview.isTextLike(node.name, mime)) {
+            throw new Error("目前僅支援純文字或程式碼檔案的審查");
+        }
+        const text = await file.text();
+        if (!text.trim()) {
+            throw new Error("檔案內容為空");
+        }
 
-    const completedAt = new Date();
-    state.status = "ready";
-    state.updatedAt = completedAt;
-    state.updatedAtDisplay = completedAt.toLocaleString();
-    state.report = buildReportContent(project, node, completedAt);
+        const payload = await generateReportViaDify({
+            projectId,
+            projectName: project.name,
+            path: node.path,
+            content: text
+        });
 
-    activeReportTarget.value = {
-        projectId,
-        path: node.path
-    };
+        const completedAt = payload?.generatedAt ? new Date(payload.generatedAt) : new Date();
+        state.status = "ready";
+        state.updatedAt = completedAt;
+        state.updatedAtDisplay = completedAt.toLocaleString();
+        state.report = payload?.report || "";
+        state.chunks = Array.isArray(payload?.chunks) ? payload.chunks : [];
+        state.segments = Array.isArray(payload?.segments) ? payload.segments : [];
+        state.conversationId = payload?.conversationId || "";
+        state.error = "";
+
+        if (autoSelect) {
+            activeReportTarget.value = {
+                projectId,
+                path: node.path
+            };
+        }
+
+        return { status: "ready" };
+    } catch (error) {
+        const message = error?.message ? String(error.message) : String(error);
+        state.status = "error";
+        state.error = message;
+        state.report = "";
+        state.chunks = [];
+        state.segments = [];
+        state.conversationId = "";
+        const now = new Date();
+        state.updatedAt = now;
+        state.updatedAtDisplay = now.toLocaleString();
+
+        console.error("[Report] Failed to generate report", {
+            projectId,
+            path: node?.path,
+            error
+        });
+
+        if (autoSelect) {
+            activeReportTarget.value = {
+                projectId,
+                path: node.path
+            };
+        }
+
+        if (!silent) {
+            if (error?.name === "SecurityError" || error?.name === "NotAllowedError" || error?.name === "TypeError") {
+                await safeAlertFail("生成報告失敗", error);
+            } else {
+                alert(`生成報告失敗：${message}`);
+            }
+        }
+
+        return { status: "error", error };
+    }
 }
 
-function buildReportContent(project, node, completedAt) {
-    const timestamp = completedAt?.toLocaleString() ?? new Date().toLocaleString();
-    const infoLines = [
-        `# ${node?.name ?? "文件"} 審查報告`,
-        "",
-        `- 所屬專案：${project?.name ?? "專案"}`,
-        `- 文件路徑：${node?.path ?? ""}`,
-        `- 生成時間：${timestamp}`
-    ];
-    infoLines.push(
-        "",
-        "## 審查摘要",
-        "1. 整合 Dify 單文件輸出，摘錄主要風險與異常。",
-        "2. 評估程式碼風格、可維護性與測試覆蓋情況。",
-        "3. 標記需要人工複核的段落或外部依賴。",
-        "",
-        "## 後續建議",
-        "- 若檔案相依其他模組，建議同步追加審查。",
-        "- 重新生成報告時保留本次輸出以利差異比對。",
-        "- 若需更進階分析，可於 Dify 任務中追加上下文。"
-    );
-    return infoLines.join("\n");
+async function generateProjectReports(project) {
+    if (!project) return;
+    const projectId = normaliseProjectId(project.id);
+    const batchState = ensureProjectBatchState(projectId);
+    if (!batchState || batchState.running) return;
+
+    const entry = ensureReportTreeEntry(project.id);
+    if (!entry.nodes.length) {
+        await loadReportTreeForProject(project.id);
+    }
+
+    if (entry.loading) {
+        await new Promise((resolve) => {
+            const stop = watch(
+                () => entry.loading,
+                (loading) => {
+                    if (!loading) {
+                        stop();
+                        resolve();
+                    }
+                }
+            );
+        });
+    }
+
+    if (entry.error) {
+        console.warn("[Report] Cannot start batch generation due to tree error", entry.error);
+        alert(`無法生成報告：${entry.error}`);
+        return;
+    }
+
+    const nodes = collectFileNodes(entry.nodes);
+    if (!nodes.length) {
+        alert("此專案尚未索引可供審查的檔案");
+        return;
+    }
+
+    batchState.running = true;
+    batchState.processed = 0;
+    batchState.total = nodes.length;
+
+    try {
+        for (const node of nodes) {
+            await generateReportForFile(project, node, { autoSelect: false, silent: true });
+            batchState.processed += 1;
+        }
+    } finally {
+        batchState.running = false;
+        if (nodes.length) {
+            activeReportTarget.value = {
+                projectId,
+                path: nodes[nodes.length - 1].path
+            };
+        }
+    }
 }
 
 watch(
@@ -492,11 +1085,25 @@ watch(
             if (isReportToolActive.value && entry && !entry.nodes.length && !entry.loading) {
                 loadReportTreeForProject(project.id);
             }
+            if (
+                isReportToolActive.value &&
+                entry &&
+                !entry.hydratedReports &&
+                !entry.hydratingReports
+            ) {
+                hydrateReportsForProject(project.id);
+            }
         });
 
         Object.keys(reportTreeCache).forEach((projectId) => {
             if (!currentIds.has(projectId)) {
                 delete reportTreeCache[projectId];
+            }
+        });
+
+        Object.keys(reportBatchStates).forEach((projectId) => {
+            if (!currentIds.has(projectId)) {
+                delete reportBatchStates[projectId];
             }
         });
 
@@ -524,6 +1131,9 @@ watch(
             const entry = ensureReportTreeEntry(project.id);
             if (entry && !entry.nodes.length && !entry.loading) {
                 loadReportTreeForProject(project.id);
+            }
+            if (entry && !entry.hydratedReports && !entry.hydratingReports) {
+                hydrateReportsForProject(project.id);
             }
         });
     }
@@ -595,57 +1205,25 @@ function startPreviewResize(event) {
     window.addEventListener("pointercancel", stop);
 }
 
-const REPORT_SIDEBAR_MIN_WIDTH = 260;
-const REPORT_VIEWER_MIN_WIDTH = 360;
-
-function getReportSidebarBounds() {
-    const reviewEl = reportReviewRef.value;
-    if (!reviewEl) return null;
-    const rect = reviewEl.getBoundingClientRect();
-    if (!rect?.width) return null;
-    const min = REPORT_SIDEBAR_MIN_WIDTH;
-    const max = Math.max(min, rect.width - REPORT_VIEWER_MIN_WIDTH);
-    return { min, max };
-}
-
-function clampReportSidebarWidth() {
-    const bounds = getReportSidebarBounds();
-    if (!bounds) return;
-    reportSidebarWidth.value = clamp(reportSidebarWidth.value, bounds.min, bounds.max);
-}
-
-function startReportSidebarResize(event) {
-    if (event.button !== 0 && event.pointerType !== "touch") return;
-    event.preventDefault();
-
-    const bounds = getReportSidebarBounds();
-    if (!bounds) return;
-
-    const startX = event.clientX;
-    const startWidth = reportSidebarWidth.value;
-    isReportSidebarResizing.value = true;
-
-    const handleMove = (pointerEvent) => {
-        const delta = pointerEvent.clientX - startX;
-        const currentBounds = getReportSidebarBounds() || bounds;
-        const nextWidth = clamp(startWidth + delta, currentBounds.min, currentBounds.max);
-        reportSidebarWidth.value = nextWidth;
-    };
-
-    const stop = () => {
-        isReportSidebarResizing.value = false;
-        window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", stop);
-        window.removeEventListener("pointercancel", stop);
-    };
-
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-}
-
 async function handleAddActiveContext() {
     const added = await addActiveNode();
+    if (added) {
+        openChatWindow();
+    }
+}
+
+function handleAddSelectionContext() {
+    let snippet = buildSelectedSnippet();
+    if (!snippet) {
+        snippet = codeSelection.value ? { ...codeSelection.value } : null;
+    }
+    if (!snippet) {
+        if (typeof safeAlertFail === "function") {
+            safeAlertFail("請先在程式碼預覽中選取想加入的內容。");
+        }
+        return;
+    }
+    const added = addSnippetContext({ ...snippet });
     if (added) {
         openChatWindow();
     }
@@ -799,6 +1377,11 @@ onMounted(async () => {
     await loadProjectsFromDB();
     window.addEventListener("resize", ensureChatWindowInView);
     window.addEventListener("resize", clampReportSidebarWidth);
+    if (typeof document !== "undefined") {
+        document.addEventListener("pointerdown", handleDocumentPointerDown, true);
+        document.addEventListener("selectionchange", handleDocumentSelectionChange);
+        document.addEventListener("mouseup", handleDocumentPointerUp);
+    }
 });
 
 onBeforeUnmount(() => {
@@ -806,6 +1389,11 @@ onBeforeUnmount(() => {
     window.removeEventListener("resize", clampReportSidebarWidth);
     stopChatDrag();
     stopChatResize();
+    if (typeof document !== "undefined") {
+        document.removeEventListener("pointerdown", handleDocumentPointerDown, true);
+        document.removeEventListener("selectionchange", handleDocumentSelectionChange);
+        document.removeEventListener("mouseup", handleDocumentPointerUp);
+    }
 });
 </script>
 
@@ -882,73 +1470,94 @@ onBeforeUnmount(() => {
             </nav>
             <PanelRail
                 :style-width="middlePaneStyle"
+                :mode="panelMode"
                 :projects="projects"
                 :selected-project-id="selectedProjectId"
                 :on-select-project="handleSelectProject"
                 :on-delete-project="deleteProject"
                 :is-tree-collapsed="isTreeCollapsed"
-                :show-content="isProjectToolActive"
+                :show-content="isProjectToolActive || isReportToolActive"
                 :tree="tree"
                 :active-tree-path="activeTreePath"
                 :is-loading-tree="isLoadingTree"
                 :open-node="openNode"
                 :select-tree-node="selectTreeNode"
                 @resize-start="startPreviewResize"
-            />
+            >
+                <template v-if="isReportToolActive">
+                    <ReportPanel
+                        :style-width="{ flex: '1 1 auto', width: '100%' }"
+                        :entries="reportProjectEntries"
+                        :normalise-project-id="normaliseProjectId"
+                        :is-node-expanded="isReportNodeExpanded"
+                        :toggle-node="toggleReportNode"
+                        :get-report-state="getReportStateForFile"
+                        :on-generate="generateReportForFile"
+                        :on-select="selectReport"
+                        :get-status-label="getStatusLabel"
+                        :on-reload-project="loadReportTreeForProject"
+                        :on-generate-project="generateProjectReports"
+                        :get-project-batch-state="getProjectBatchState"
+                        :active-target="activeReportTarget"
+                        :is-resizing="false"
+                        :enable-resize-edge="false"
+                    />
+                </template>
+            </PanelRail>
 
             <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive }">
                 <template v-if="isReportToolActive">
-                    <div class="reportReview" ref="reportReviewRef">
-                        <ReportPanel
-                            :style-width="reportSidebarStyle"
-                            :entries="reportProjectEntries"
-                            :normalise-project-id="normaliseProjectId"
-                            :is-node-expanded="isReportNodeExpanded"
-                            :toggle-node="toggleReportNode"
-                            :get-report-state="getReportStateForFile"
-                            :on-generate="generateReportForFile"
-                            :on-select="selectReport"
-                            :get-status-label="getStatusLabel"
-                            :on-reload-project="loadReportTreeForProject"
-                            :active-target="activeReportTarget"
-                            :is-resizing="isReportSidebarResizing"
-                            @resize-start="startReportSidebarResize"
-                        />
-                        <section class="reportViewer">
-                            <div class="panelHeader">報告檢視</div>
-                            <template v-if="hasReadyReports">
-                                <div class="reportTabs">
-                                    <button
-                                        v-for="entry in readyReports"
-                                        :key="entry.key"
-                                        type="button"
-                                        class="reportTab"
-                                        :class="{
-                                            active:
-                                                activeReport &&
-                                                normaliseProjectId(entry.project.id) === normaliseProjectId(activeReport.project.id) &&
-                                                entry.path === activeReport.path
-                                        }"
-                                        @click="selectReport(entry.project.id, entry.path)"
-                                    >
-                                        {{ entry.project.name }} / {{ entry.path }}
-                                    </button>
+                    <div class="panelHeader">報告檢視</div>
+                    <template v-if="hasReadyReports || viewerHasContent">
+                        <div v-if="readyReports.length" class="reportTabs">
+                            <button
+                                v-for="entry in readyReports"
+                                :key="entry.key"
+                                type="button"
+                                class="reportTab"
+                                :class="{
+                                    active:
+                                        activeReport &&
+                                        normaliseProjectId(entry.project.id) === normaliseProjectId(activeReport.project.id) &&
+                                        entry.path === activeReport.path
+                                }"
+                                @click="selectReport(entry.project.id, entry.path)"
+                            >
+                                {{ entry.project.name }} / {{ entry.path }}
+                            </button>
+                        </div>
+                        <div class="reportViewerContent">
+                            <template v-if="activeReport">
+                                <div class="reportViewerHeader">
+                                    <h3 class="reportTitle">{{ activeReport.project.name }} / {{ activeReport.path }}</h3>
+                                    <p class="reportViewerTimestamp">更新於 {{ activeReport.state.updatedAtDisplay || '-' }}</p>
                                 </div>
-                                <div v-if="activeReport" class="reportViewerContent">
-                                    <h2 class="reportTitle">{{ activeReport.project.name }} / {{ activeReport.path }}</h2>
-                                    <p
-                                        v-if="activeReport.state.updatedAtDisplay"
-                                        class="reportViewerTimestamp"
-                                    >
-                                        生成時間：{{ activeReport.state.updatedAtDisplay }}
-                                    </p>
-                                    <pre class="reportBody">{{ activeReport.state.report }}</pre>
+                                <div v-if="activeReport.state.status === 'error'" class="reportErrorPanel">
+                                    <p class="reportErrorText">生成失敗：{{ activeReport.state.error || '未知原因' }}</p>
+                                    <p class="reportErrorHint">請檢查檔案權限、Dify 設定或稍後再試。</p>
                                 </div>
-                                <div v-else class="reportViewerPlaceholder">請從左側選擇檔案報告。</div>
+                                <template v-else>
+                                    <pre class="reportBody codeScroll">{{ activeReport.state.report }}</pre>
+                                    <details v-if="hasChunkDetails" class="reportChunks">
+                                        <summary>分段輸出（{{ activeReport.state.chunks.length }}）</summary>
+                                        <ol class="reportChunkList">
+                                            <li
+                                                v-for="chunk in activeReport.state.chunks"
+                                                :key="`${chunk.index}-${chunk.total}`"
+                                            >
+                                                <h4 class="reportChunkTitle">第 {{ chunk.index }} 段</h4>
+                                                <pre class="reportChunkBody codeScroll">{{ chunk.answer }}</pre>
+                                            </li>
+                                        </ol>
+                                    </details>
+                                </template>
                             </template>
-                            <p v-else class="reportViewerPlaceholder">尚未生成任何報告，請先於左側檔案中啟動生成。</p>
-                        </section>
-                    </div>
+                            <template v-else>
+                                <div class="reportViewerPlaceholder">請從左側選擇檔案報告。</div>
+                            </template>
+                        </div>
+                    </template>
+                    <p v-else class="reportViewerPlaceholder">尚未生成任何報告，請先於左側檔案中啟動生成。</p>
                 </template>
                 <template v-else-if="previewing.kind && previewing.kind !== 'error'">
                     <div class="pvHeader">
@@ -956,9 +1565,29 @@ onBeforeUnmount(() => {
                         <div class="pvMeta">{{ previewing.mime || '-' }} | {{ (previewing.size / 1024).toFixed(1) }} KB</div>
                     </div>
 
-                    <div v-if="previewing.kind === 'text'" class="pvBox">
-                        <pre class="pvPre">{{ previewing.text }}</pre>
-                    </div>
+                    <template v-if="previewing.kind === 'text'">
+                        <div class="pvBox codeBox">
+                            <div
+                                class="codeScroll"
+                                :class="{ 'codeScroll--wrapped': !showCodeLineNumbers }"
+                                ref="codeScrollRef"
+                                @pointerdown="handleCodeScrollPointerDown"
+                            >
+                                <div class="codeEditor">
+                                    <div
+                                        v-for="line in previewLineItems"
+                                        :key="line.number"
+                                        class="codeLine"
+                                        :data-line="line.number"
+                                    >
+                                        <span class="codeLineNo">{{ line.number }}</span>
+                                        <span class="codeLineContent" v-html="renderLineContent(line)"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </template>
 
                     <div v-else-if="previewing.kind === 'image'" class="pvBox imgBox">
                         <img :src="previewing.url" :alt="previewing.name" />
@@ -996,6 +1625,7 @@ onBeforeUnmount(() => {
                 :disabled="isChatLocked"
                 :connection="connection"
                 @add-active="handleAddActiveContext"
+                @add-selection="handleAddSelectionContext"
                 @clear-context="clearContext"
                 @remove-context="removeContext"
                 @send-message="handleSendMessage"
@@ -1035,6 +1665,7 @@ body,
 
 .page {
     min-height: 100vh;
+    height: 100vh;
     display: flex;
     flex-direction: column;
     background-color: #1e1e1e;
@@ -1144,28 +1775,50 @@ body,
     padding: 0;
     height: calc(100vh - 60px);
     max-height: calc(100vh - 60px);
-    overflow-x: hidden;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: #3d3d3d #1b1b1b;
+    overflow: hidden;
+    scrollbar-width: auto;
+    scrollbar-color: #4b4b4b #141414;
 }
 
 .mainContent::-webkit-scrollbar {
-    width: 10px;
+    width: 15px;
 }
 
 .mainContent::-webkit-scrollbar-track {
-    background: #1b1b1b;
+    background: #141414;
 }
 
 .mainContent::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, #3b82f6, #0ea5e9);
+    background: #4b4b4b;
     border-radius: 999px;
-    border: 2px solid #1b1b1b;
+    border: 3px solid #141414;
 }
 
 .mainContent::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, #60a5fa, #22d3ee);
+    background: #646464;
+}
+
+.workSpace {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    min-width: 0;
+    overflow: hidden;
+    background: #191919;
+    border: 1px solid #323232;
+    border-radius: 0;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+.workSpace--reports {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
 }
 
 .toolColumn {
@@ -1250,47 +1903,6 @@ body,
         flex: 1 1 auto;
     }
 }
-.loading {
-    padding: 10px;
-    opacity: .8;
-}
-
-.treeRoot {
-    list-style: none;
-    margin: 0;
-    padding: 0 8px 8px 0;
-}
-
-.workSpace {
-    flex: 1 1 320px;
-    min-width: 0;
-    min-height: 0;
-    background: #252526;
-    border-radius: 0;
-    border: 1px solid #323232;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    overflow: auto;
-}
-
-.workSpace--reports {
-    padding: 0;
-    gap: 0;
-    background: #202020;
-    border-color: #323232;
-    overflow: hidden;
-}
-
-.reportReview {
-    flex: 1 1 auto;
-    display: flex;
-    gap: 0;
-    min-height: 0;
-    min-width: 0;
-    align-items: stretch;
-}
 
 .panelHeader {
     font-weight: 700;
@@ -1298,18 +1910,25 @@ body,
     font-size: 14px;
 }
 
-.reportViewer {
+.reportViewerContent {
     flex: 1 1 auto;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
     background: #191919;
     border: 1px solid #323232;
     border-radius: 0;
     padding: 16px;
-    min-width: 0;
     box-sizing: border-box;
-    min-width: 360px;
+    min-width: 0;
+}
+
+.reportViewerHeader {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
 .reportTabs {
@@ -1334,14 +1953,6 @@ body,
     border-color: rgba(59, 130, 246, 0.5);
 }
 
-.reportViewerContent {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-height: 0;
-    overflow: hidden;
-}
 
 .reportTitle {
     margin: 0;
@@ -1359,12 +1970,122 @@ body,
     flex: 1 1 auto;
     margin: 0;
     padding: 16px;
-    border-radius: 0;
-    background: #111827;
-    border: 1px solid #1f2937;
-    color: #e5e7eb;
+    border-radius: 6px;
+    background: #1b1b1b;
+    border: 1px solid #2f2f2f;
+    color: #d1d5db;
     font-family: Consolas, "Courier New", monospace;
     font-size: 13px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow: auto;
+    max-height: 100%;
+}
+
+.reportBody,
+.reportChunkBody,
+.codeScroll {
+    scrollbar-width: auto;
+    scrollbar-color: #4b4b4b #111111;
+}
+
+.reportBody::-webkit-scrollbar,
+.reportChunkBody::-webkit-scrollbar,
+.codeScroll::-webkit-scrollbar {
+    width: 15px;
+    height: 15px;
+}
+
+.reportBody::-webkit-scrollbar-track,
+.reportChunkBody::-webkit-scrollbar-track,
+.codeScroll::-webkit-scrollbar-track {
+    background: #111111;
+    border-radius: 999px;
+}
+
+.reportBody::-webkit-scrollbar-thumb,
+.reportChunkBody::-webkit-scrollbar-thumb,
+.codeScroll::-webkit-scrollbar-thumb {
+    background: #4b4b4b;
+    border-radius: 999px;
+    border: 3px solid #111111;
+}
+
+.reportBody::-webkit-scrollbar-thumb:hover,
+.reportChunkBody::-webkit-scrollbar-thumb:hover,
+.codeScroll::-webkit-scrollbar-thumb:hover {
+    background: #636363;
+}
+
+.reportBody::-webkit-scrollbar-corner,
+.reportChunkBody::-webkit-scrollbar-corner,
+.codeScroll::-webkit-scrollbar-corner {
+    background: #111111;
+}
+
+.reportErrorPanel {
+    margin: 0;
+    padding: 16px;
+    border-radius: 6px;
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    background: rgba(248, 113, 113, 0.08);
+    color: #fda4af;
+}
+
+.reportErrorText {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.reportErrorHint {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: #fecaca;
+}
+
+.reportChunks {
+    margin-top: 16px;
+    border-radius: 6px;
+    border: 1px solid #2f2f2f;
+    background: #111827;
+    padding: 12px 16px;
+    color: #e2e8f0;
+}
+
+.reportChunks > summary {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.reportChunkList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportChunkTitle {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportChunkBody {
+    margin: 0;
+    padding: 12px;
+    border-radius: 4px;
+    border: 1px solid #2f2f2f;
+    background: #1b1b1b;
+    color: #d1d5db;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.45;
     white-space: pre-wrap;
     word-break: break-word;
     overflow: auto;
@@ -1402,22 +2123,120 @@ body,
     border-radius: 6px;
     border: 1px solid #2f2f2f;
     padding: 12px;
-    overflow: auto;
+    overflow: hidden;
     display: flex;
 }
 
-.pvPre {
-    margin: 0;
+.pvBox:not(.codeBox) {
+    overflow: auto;
+}
+
+.pvBox.codeBox {
+    padding: 12px;
+    overflow: hidden;
+}
+
+.codeScroll {
     flex: 1 1 auto;
-    min-width: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
+    overflow: auto;
+    max-height: 100%;
     font-family: Consolas, "Courier New", monospace;
     font-size: 13px;
     line-height: 1.45;
     color: #d1d5db;
-    overflow: auto;
+    background: #1b1b1b;
+    cursor: text;
 }
+
+.reportBody.codeScroll,
+.reportChunkBody.codeScroll {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+}
+
+.codeEditor {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    outline: none;
+    caret-color: transparent;
+}
+
+.codeEditor:focus {
+    outline: none;
+}
+
+.codeLine {
+    display: flex;
+    align-items: flex-start;
+    width: 100%;
+}
+
+.codeLineNo {
+    flex: 0 0 auto;
+    width: 3.5ch;
+    padding: 0 12px 0 0;
+    text-align: right;
+    color: #6b7280;
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+}
+
+.codeLineContent {
+    flex: 1 1 auto;
+    display: block;
+    width: 100%;
+    padding: 0 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    min-width: 0;
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+}
+
+.codeScroll--wrapped .codeLineNo {
+    display: none;
+}
+
+.codeScroll--wrapped .codeLineContent {
+    padding-left: 0;
+}
+
+.codeSelectionHighlight {
+    background: rgba(59, 130, 246, 0.35);
+    color: #f8fafc;
+    border-radius: 2px;
+}
+
+.reportBody::selection,
+.reportBody *::selection,
+.reportChunkBody::selection,
+.reportChunkBody *::selection,
+.codeScroll::selection,
+.codeScroll *::selection,
+.codeLineContent::selection,
+.codeLineContent *::selection {
+    background: rgba(59, 130, 246, 0.45);
+    color: #f8fafc;
+}
+
+.reportBody::-moz-selection,
+.reportBody *::-moz-selection,
+.reportChunkBody::-moz-selection,
+.reportChunkBody *::-moz-selection,
+.codeScroll::-moz-selection,
+.codeScroll *::-moz-selection,
+.codeLineContent::-moz-selection,
+.codeLineContent *::-moz-selection {
+    background: rgba(59, 130, 246, 0.45);
+    color: #f8fafc;
+}
+
 
 .modalBackdrop {
     position: fixed;
