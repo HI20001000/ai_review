@@ -1234,6 +1234,13 @@ function handleAddSelectionContext() {
     const added = addSnippetContext({ ...snippet });
     if (added) {
         openChatWindow();
+        clearCodeSelection();
+        if (typeof window !== "undefined") {
+            const selection = window.getSelection?.();
+            if (selection?.removeAllRanges) {
+                selection.removeAllRanges();
+            }
+        }
     }
 }
 
