@@ -1197,7 +1197,7 @@ function startPreviewResize(event) {
     window.addEventListener("pointercancel", stop);
 }
 
-function clampReportSidebarWidth() {
+const clampReportSidebarWidth = () => {
     const containerEl = mainContentRef.value;
     if (!containerEl) return;
 
@@ -1216,7 +1216,7 @@ function clampReportSidebarWidth() {
 
     const minRailWidth = Math.min(minRailWidthDefault, maxRailWidth);
     middlePaneWidth.value = clamp(middlePaneWidth.value, minRailWidth, maxRailWidth);
-}
+};
 
 async function handleAddActiveContext() {
     const added = await addActiveNode();
