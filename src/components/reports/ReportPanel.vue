@@ -1,11 +1,15 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import ReportTreeNode from "./ReportTreeNode.vue";
 
 const props = defineProps({
     styleWidth: {
         type: Object,
         required: true
+    },
+    enableResizeEdge: {
+        type: Boolean,
+        default: true
     },
     entries: {
         type: Array,
@@ -43,6 +47,14 @@ const props = defineProps({
         type: Function,
         required: true
     },
+    onGenerateProject: {
+        type: Function,
+        required: true
+    },
+    getProjectBatchState: {
+        type: Function,
+        required: true
+    },
     activeTarget: {
         type: Object,
         default: null
@@ -58,6 +70,7 @@ const emit = defineEmits(["resizeStart"]);
 const hasEntries = computed(() => (props.entries || []).length > 0);
 
 const isHoveringResizeEdge = ref(false);
+const showHoverEdge = computed(() => props.enableResizeEdge && isHoveringResizeEdge.value);
 
 const EDGE_THRESHOLD = 8;
 
@@ -74,6 +87,7 @@ function updateResizeHoverState(event) {
 }
 
 function handlePointerMove(event) {
+    if (!props.enableResizeEdge) return;
     updateResizeHoverState(event);
 }
 
@@ -82,17 +96,43 @@ function handlePointerLeave() {
 }
 
 function handlePointerDown(event) {
+    if (!props.enableResizeEdge) return;
     const hovering = updateResizeHoverState(event);
     if (!hovering) return;
     emit("resizeStart", event);
 }
+
+function handleGenerateProject(event, project) {
+    event?.stopPropagation?.();
+    props.onGenerateProject(project);
+}
+
+function isBatchRunning(projectId) {
+    const state = props.getProjectBatchState(projectId);
+    return Boolean(state?.running);
+}
+
+function batchProgress(projectId) {
+    const state = props.getProjectBatchState(projectId);
+    if (!state?.running) return "";
+    return `${state.processed}/${state.total}`;
+}
+
+watch(
+    () => props.enableResizeEdge,
+    (enabled) => {
+        if (!enabled) {
+            isHoveringResizeEdge.value = false;
+        }
+    }
+);
 </script>
 
 <template>
     <aside
         class="reportProjects"
         :class="{
-            'reportProjects--hoverEdge': isHoveringResizeEdge,
+            'reportProjects--hoverEdge': showHoverEdge,
             'reportProjects--resizing': isResizing
         }"
         :style="styleWidth"
@@ -110,6 +150,17 @@ function handlePointerDown(event) {
                 >
                     <div class="projectHeader">
                         <span class="projName" :title="entry.project.name">{{ entry.project.name }}</span>
+                        <button
+                            type="button"
+                            class="reportBatchBtn"
+                            :disabled="entry.cache.loading || isBatchRunning(entry.project.id)"
+                            @click="handleGenerateProject($event, entry.project)"
+                        >
+                            <span v-if="isBatchRunning(entry.project.id)">
+                                批次生成中 {{ batchProgress(entry.project.id) }}
+                            </span>
+                            <span v-else>一鍵生成</span>
+                        </button>
                         <button
                             v-if="entry.cache.error"
                             type="button"
@@ -207,6 +258,32 @@ function handlePointerDown(event) {
     white-space: nowrap;
     text-overflow: ellipsis;
     overflow: hidden;
+}
+
+.reportBatchBtn {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    background: #1f2937;
+    color: #cbd5f5;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.reportBatchBtn:hover {
+    background: #2563eb;
+    border-color: #1d4ed8;
+    color: #fff;
+}
+
+.reportBatchBtn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    background: #1e293b;
+    color: #94a3b8;
+    border-color: #1e293b;
 }
 
 .reportMeta {
