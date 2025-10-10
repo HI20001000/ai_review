@@ -2,6 +2,7 @@ import express from "express";
 import pool from "./lib/db.js";
 import { ensureSchema } from "./lib/ensureSchema.js";
 import { getDifyConfigSummary, partitionContent, requestDifyReport } from "./lib/difyClient.js";
+import { analyseSqlToReport, buildSqlReportPayload, isSqlPath } from "./lib/sqlAnalyzer.js";
 
 const app = express();
 
@@ -403,6 +404,38 @@ app.post("/api/reports/dify", async (req, res, next) => {
             return;
         }
 
+        const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+        if (isSqlPath(path)) {
+            console.log(`[sql] Running static SQL analysis project=${projectId} path=${path}`);
+            let analysis;
+            try {
+                analysis = await analyseSqlToReport(content);
+            } catch (error) {
+                console.error("[sql] Failed to analyse SQL", error);
+                res.status(502).json({ message: error?.message || "SQL 靜態分析失敗" });
+                return;
+            }
+            const reportPayload = buildSqlReportPayload({ analysis, content });
+            await upsertReport({
+                projectId,
+                path,
+                report: reportPayload.report,
+                chunks: reportPayload.chunks,
+                segments: reportPayload.segments,
+                conversationId: reportPayload.conversationId,
+                userId: resolvedUserId,
+                generatedAt: reportPayload.generatedAt
+            });
+            const savedAtIso = new Date().toISOString();
+            res.json({
+                projectId,
+                path,
+                ...reportPayload,
+                savedAt: savedAtIso
+            });
+            return;
+        }
+
         const segments = partitionContent(content);
         const summary = getDifyConfigSummary();
         console.log(
@@ -418,7 +451,6 @@ app.post("/api/reports/dify", async (req, res, next) => {
             files
         });
         const resolvedGeneratedAt = result?.generatedAt || new Date().toISOString();
-        const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
         await upsertReport({
             projectId,
             path,
@@ -457,6 +489,26 @@ app.post("/api/reports/dify/snippet", async (req, res, next) => {
         }
         if (!normalised.content.trim()) {
             res.status(400).json({ message: "選取內容為空，無法生成報告" });
+            return;
+        }
+
+        if (isSqlPath(path)) {
+            console.log(`[sql] Running static SQL analysis for snippet project=${projectId} path=${path}`);
+            let analysis;
+            try {
+                analysis = await analyseSqlToReport(normalised.content);
+            } catch (error) {
+                console.error("[sql] Failed to analyse SQL snippet", error);
+                res.status(502).json({ message: error?.message || "SQL 靜態分析失敗" });
+                return;
+            }
+            const reportPayload = buildSqlReportPayload({ analysis, content: normalised.content });
+            res.json({
+                projectId,
+                path,
+                selection: normalised.meta || undefined,
+                ...reportPayload
+            });
             return;
         }
 
