@@ -52,6 +52,7 @@ const {
 const {
     tree,
     activeTreePath,
+    activeTreeRevision,
     isLoadingTree,
     openNode,
     selectTreeNode
@@ -594,19 +595,25 @@ watch(
 );
 
 watch(
+    () => activeTreePath.value,
+    () => {
+        clearCodeSelection();
+    }
+);
+
+watch(
+    () => activeTreeRevision.value,
+    () => {
+        clearCodeSelection();
+    }
+);
+
+watch(
     () => previewing.value.text,
     () => {
         if (previewing.value.kind === "text") {
             clearCodeSelection();
         }
-    }
-);
-
-watch(
-    () => activeTreePath.value,
-    (next, prev) => {
-        if (next === prev) return;
-        clearCodeSelection();
     }
 );
 
@@ -1572,7 +1579,11 @@ onBeforeUnmount(() => {
                                         class="codeLine"
                                         :data-line="line.number"
                                     >
-                                        <span class="codeLineNo">{{ line.number }}</span>
+                                        <span
+                                            class="codeLineNo"
+                                            :data-line="line.number"
+                                            aria-hidden="true"
+                                        ></span>
                                         <span class="codeLineContent" v-html="renderLineContent(line)"></span>
                                     </div>
                                 </div>
@@ -2167,13 +2178,19 @@ body,
 }
 
 .codeLineNo {
+    position: relative;
     flex: 0 0 auto;
     width: 3.5ch;
     padding: 0 12px 0 0;
     text-align: right;
-    color: #6b7280;
+    color: #9ca3af;
     font-variant-numeric: tabular-nums;
     user-select: none;
+}
+
+.codeLineNo::before {
+    content: attr(data-line);
+    display: block;
 }
 
 .codeLineContent {

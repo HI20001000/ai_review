@@ -12,6 +12,12 @@ export function useTreeStore({
 }) {
     const tree = ref([]);
     const activeTreePath = ref("");
+    const activeTreeRevision = ref(0);
+
+    function markActiveTreePath(path) {
+        activeTreePath.value = path || "";
+        activeTreeRevision.value = activeTreeRevision.value + 1;
+    }
     const isLoadingTree = ref(false);
 
     function buildTreeFromFlat(nodes) {
@@ -97,7 +103,7 @@ export function useTreeStore({
 
     async function openNode(node) {
         if (!node) return;
-        activeTreePath.value = node.path || "";
+        markActiveTreePath(node.path || "");
         if (node.type !== "file") return;
         try {
             if (previewing.value.url) {
@@ -177,12 +183,13 @@ export function useTreeStore({
     }
 
     function selectTreeNode(path) {
-        activeTreePath.value = path || "";
+        markActiveTreePath(path || "");
     }
 
     return {
         tree,
         activeTreePath,
+        activeTreeRevision,
         isLoadingTree,
         buildTreeFromFlat,
         loadTreeFromDB,
