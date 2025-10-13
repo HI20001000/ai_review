@@ -1,9 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import mainPage from '@/views/main.vue'
+import workspacePage from '@/views/workspace.vue'
 import testPage from '@/views/test.vue'
 
 const routes = [
-  { path: '/', name: 'mainPage', component: mainPage },
+  { path: '/', name: 'workspacePage', component: workspacePage },
   { path: '/abc', name: 'testPage', component: testPage }
 ]
 
