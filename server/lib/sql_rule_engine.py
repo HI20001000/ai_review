@@ -88,7 +88,8 @@ def _add_issue(
             "line": line,
             "column": col,
             "snippet": snippet,
-            "evidence": (evidence or snippet)[:300],
+            # 留空等待未來由 Dify 生成的修改建議填入
+            "evidence": "",
         }
     )
 
