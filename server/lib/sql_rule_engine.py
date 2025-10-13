@@ -111,7 +111,7 @@ def _check_cjk(sql: str, issues: List[Dict]) -> None:
 
 def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
     table_re = re.finditer(
-        r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w\.\$#@]+)",
+        r'\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w\.\$#@]+)',
         sql,
         flags=re.IGNORECASE,
     )
@@ -140,7 +140,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
             )
 
     view_re = re.finditer(
-        r"\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+([`"\[\]\w\.\$#@]+)",
+        r'\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+([`"\[\]\w\.\$#@]+)',
         sql,
         flags=re.IGNORECASE,
     )
@@ -158,7 +158,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
             )
 
     proc_re = re.finditer(
-        r"\bCREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+([`"\[\]\w\.\$#@]+)",
+        r'\bCREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+([`"\[\]\w\.\$#@]+)',
         sql,
         flags=re.IGNORECASE,
     )
@@ -176,7 +176,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
             )
 
     func_re = re.finditer(
-        r"\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([`"\[\]\w\.\$#@]+)",
+        r'\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([`"\[\]\w\.\$#@]+)',
         sql,
         flags=re.IGNORECASE,
     )
@@ -196,7 +196,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
 
 def _check_delete_full_table(sql: str, issues: List[Dict]) -> None:
     delete_re = re.finditer(
-        r"\bDELETE\s+FROM\s+([`"\[\]\w\.\$#@]+)([^;]*)",
+        r'\bDELETE\s+FROM\s+([`"\[\]\w\.\$#@]+)([^;]*)',
         sql,
         flags=re.IGNORECASE | re.DOTALL,
     )
