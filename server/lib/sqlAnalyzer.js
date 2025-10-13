@@ -1,147 +1,185 @@
 import { spawn } from "node:child_process";
-import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const SCRIPT_PATH = resolve(__dirname, "sqlStaticAnalyzer.py");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const SCRIPT_PATH = resolve(__dirname, "sql_rule_engine.py");
 
-function runPythonAnalysis(sqlText) {
-    const interpreters = ["python3", "python"];
-    return new Promise((resolvePromise, rejectPromise) => {
-        let attempt = 0;
-        let child = null;
-        const chunks = [];
-        const errors = [];
-        const stdinErrors = [];
-        let settled = false;
+function parseCommand(command) {
+    if (!command || typeof command !== "string") {
+        return null;
+    }
+    const parts = command.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) {
+        return null;
+    }
+    return { command: parts[0], args: parts.slice(1) };
+}
 
-        const resolveSafe = (value) => {
-            if (!settled) {
-                settled = true;
-                resolvePromise(value);
-            }
-        };
+function gatherPythonCandidates() {
+    const envCandidates = [
+        process.env.SQL_ANALYZER_PYTHON,
+        process.env.PYTHON,
+        process.env.PYTHON_PATH,
+        process.env.PYTHON3_PATH
+    ]
+        .map(parseCommand)
+        .filter(Boolean);
 
-        const rejectSafe = (error) => {
-            if (!settled) {
-                settled = true;
-                rejectPromise(error);
-            }
-        };
+    const defaultCandidates = ["python3", "python", "py -3", "py"]
+        .map(parseCommand)
+        .filter(Boolean);
 
-        const start = () => {
-            if (attempt >= interpreters.length) {
-                rejectSafe(new Error("No Python interpreter (python3/python) found for SQL analysis"));
+    const seen = new Set();
+    const deduped = [];
+    for (const candidate of [...envCandidates, ...defaultCandidates]) {
+        const key = `${candidate.command} ${candidate.args.join(" ")}`.trim();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(candidate);
+    }
+    return deduped;
+}
+
+function isMissingInterpreterError(error, stderr) {
+    if (!error) return false;
+    if (error.code === "ENOENT") {
+        return true;
+    }
+    const message = [error.message, stderr].filter(Boolean).join("\n");
+    return /python was not found/i.test(message);
+}
+
+function runPythonCandidate(candidate, sqlText) {
+    return new Promise((resolve, reject) => {
+        const args = [...candidate.args, "-u", SCRIPT_PATH];
+        const child = spawn(candidate.command, args, { stdio: ["pipe", "pipe", "pipe"] });
+
+        let stdout = "";
+        let stderr = "";
+        let stdinError = null;
+
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => {
+            stdout += chunk;
+        });
+
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk) => {
+            stderr += chunk;
+        });
+
+        child.stdin.on("error", (error) => {
+            stdinError = error;
+        });
+
+        child.on("error", (error) => {
+            const err = error;
+            err.stderr = stderr;
+            reject(err);
+        });
+
+        child.on("close", (code) => {
+            if (code !== 0) {
+                const error = new Error(`Python analyzer exited with code ${code}`);
+                error.stderr = stderr;
+                if (stdinError) {
+                    error.stdinError = stdinError;
+                }
+                reject(error);
                 return;
             }
-            const command = interpreters[attempt];
-            attempt += 1;
-            child = spawn(command, [SCRIPT_PATH], {
-                stdio: ["pipe", "pipe", "pipe"],
-            });
+            resolve({ stdout, stderr });
+        });
 
-            child.stdout.on("data", (chunk) => {
-                chunks.push(Buffer.from(chunk));
-            });
-
-            child.stderr.on("data", (chunk) => {
-                errors.push(Buffer.from(chunk));
-            });
-
-            child.stdin.on("error", (error) => {
-                if (!error) {
-                    return;
-                }
-                const code = error.code || "";
-                if (code === "EPIPE" || code === "EOF" || code === "ECONNRESET") {
-                    const message = `stdin error: ${error.message || code}`;
-                    errors.push(Buffer.from(`${message}\n`));
-                    stdinErrors.push(message);
-                    return;
-                }
-                rejectSafe(error);
-            });
-
-            child.on("error", (error) => {
-                if (error.code === "ENOENT") {
-                    start();
-                    return;
-                }
-                rejectSafe(error);
-            });
-
-            child.on("close", (code) => {
-                if (code !== 0 || stdinErrors.length > 0) {
-                    const stderr = Buffer.concat(errors).toString("utf8");
-                    const message = stderr.trim() || (stdinErrors.length > 0 ? stdinErrors.join("; ") : "");
-                    const error = new Error(message || `SQL analysis process exited with code ${code}`);
-                    error.code = code;
-                    rejectSafe(error);
-                    return;
-                }
-                const stdout = Buffer.concat(chunks).toString("utf8");
-                resolveSafe(stdout);
-            });
-
-            try {
-                if (sqlText && sqlText.length > 0) {
-                    child.stdin.write(sqlText, (error) => {
-                        if (error) {
-                            const code = error.code || "";
-                            if (code === "EPIPE" || code === "EOF" || code === "ECONNRESET") {
-                                const message = `stdin error: ${error.message || code}`;
-                                errors.push(Buffer.from(`${message}\n`));
-                                stdinErrors.push(message);
-                                return;
-                            }
-                            rejectSafe(error);
-                        }
-                    });
-                }
-                child.stdin.end();
-            } catch (error) {
-                rejectSafe(error);
-            }
-        };
-
-        start();
+        try {
+            child.stdin.end(sqlText ?? "");
+        } catch (error) {
+            reject(error);
+        }
     });
 }
 
+let cachedInterpreter = null;
+
+async function executeSqlAnalysis(sqlText) {
+    const candidates = cachedInterpreter ? [cachedInterpreter] : gatherPythonCandidates();
+    let lastError = null;
+
+    for (const candidate of candidates) {
+        try {
+            const { stdout } = await runPythonCandidate(candidate, sqlText);
+            const trimmed = stdout.trim();
+            if (!trimmed) {
+                const emptyError = new Error("SQL 分析器未返回任何輸出");
+                emptyError.stderr = stdout;
+                throw emptyError;
+            }
+            let parsed;
+            try {
+                parsed = JSON.parse(trimmed);
+            } catch (parseError) {
+                const errorMessage = `無法解析 SQL 分析器輸出：${trimmed}`;
+                const error = new Error(errorMessage);
+                error.stderr = trimmed;
+                if (/python was not found/i.test(trimmed)) {
+                    error.missingInterpreter = true;
+                }
+                throw error;
+            }
+            if (parsed.error) {
+                const engineError = new Error(parsed.error);
+                engineError.stderr = parsed.error;
+                throw engineError;
+            }
+            if (typeof parsed.result !== "string") {
+                const invalidError = new Error("SQL 分析器輸出缺少 result 欄位");
+                invalidError.stderr = JSON.stringify(parsed);
+                throw invalidError;
+            }
+            cachedInterpreter = candidate;
+            return parsed;
+        } catch (error) {
+            const stderr = error?.stderr || "";
+            if (error?.missingInterpreter || isMissingInterpreterError(error, stderr)) {
+                lastError = error;
+                cachedInterpreter = null;
+                continue;
+            }
+            throw error;
+        }
+    }
+
+    const hint =
+        "無法找到可用的 Python 執行檔。請在環境變數 SQL_ANALYZER_PYTHON 或 PYTHON_PATH 中指定完整的 python.exe 路徑，或確保 'python' 指令可用。";
+    const error = new Error(lastError?.message ? `${lastError.message}\n${hint}` : hint);
+    error.stderr = lastError?.stderr;
+    throw error;
+}
+
 export async function analyseSqlToReport(sqlText) {
-    const output = await runPythonAnalysis(sqlText || "");
-    let parsed;
-    try {
-        parsed = JSON.parse(output);
-    } catch (error) {
-        const reason = output && output.trim() ? ` (output: ${output.trim()})` : "";
-        throw new Error(`Failed to parse SQL analysis output${reason}`);
-    }
-    if (!parsed || typeof parsed.result !== "string") {
-        throw new Error("SQL analysis result is missing the expected result field");
-    }
-    return parsed;
+    return await executeSqlAnalysis(sqlText);
 }
 
 export function buildSqlReportPayload({ analysis, content }) {
     const resultText = typeof analysis?.result === "string" ? analysis.result : "";
-    const reportText = resultText || "";
     const generatedAt = new Date().toISOString();
     return {
-        report: reportText,
+        report: resultText,
         conversationId: "",
         chunks: [
             {
                 index: 1,
                 total: 1,
-                answer: reportText,
-                raw: analysis?.result ?? reportText,
-            },
+                answer: resultText,
+                raw: analysis?.result ?? resultText
+            }
         ],
         segments: [content ?? ""],
         generatedAt,
         analysis,
-        source: "sql-static-analyzer",
+        source: "sql-rule-engine"
     };
 }
 
