@@ -297,12 +297,19 @@ def _read_sql_from_stdin_or_file() -> str:
     return ""
 
 
+def _emit_json(payload: Dict) -> None:
+    data = json.dumps(payload, ensure_ascii=False)
+    sys.stdout.buffer.write(data.encode("utf-8"))
+    sys.stdout.buffer.write(b"\n")
+    sys.stdout.buffer.flush()
+
+
 if __name__ == "__main__":
     try:
         sql_content = _read_sql_from_stdin_or_file()
         report = main(sql_content)
     except Exception as exc:  # pragma: no cover
-        print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+        _emit_json({"error": str(exc)})
         sys.exit(1)
 
-    print(json.dumps(report, ensure_ascii=False))
+    _emit_json(report)
