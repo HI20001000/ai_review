@@ -234,6 +234,17 @@ watch(
                             <span v-else>一鍵生成</span>
                         </button>
                         <button
+                            type="button"
+                            class="reportBatchBtn"
+                            :disabled="entry.cache.loading || isBatchRunning(entry.project.id)"
+                            @click="handleGenerateProject($event, entry.project)"
+                        >
+                            <span v-if="isBatchRunning(entry.project.id)">
+                                批次生成中 {{ batchProgress(entry.project.id) }}
+                            </span>
+                            <span v-else>一鍵生成</span>
+                        </button>
+                        <button
                             v-if="entry.cache.error"
                             type="button"
                             class="reportRetryBtn"
