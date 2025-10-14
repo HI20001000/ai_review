@@ -169,6 +169,20 @@ const readyReports = computed(() => {
 
     return list;
 });
+
+const projectIssueTotals = computed(() => {
+    const totals = new Map();
+    Object.entries(reportStates).forEach(([key, state]) => {
+        const summary = state?.issueSummary;
+        if (!summary || !Number.isFinite(summary.totalIssues)) return;
+        const parsed = parseReportKey(key);
+        if (!parsed.projectId) return;
+        const previous = totals.get(parsed.projectId);
+        const base = typeof previous === "number" && Number.isFinite(previous) ? previous : 0;
+        totals.set(parsed.projectId, base + summary.totalIssues);
+    });
+    return totals;
+});
 const hasReadyReports = computed(() => readyReports.value.length > 0);
 const activeReport = computed(() => {
     const target = activeReportTarget.value;
@@ -715,8 +729,48 @@ function createDefaultReportState() {
         error: "",
         chunks: [],
         segments: [],
-        conversationId: ""
+        conversationId: "",
+        analysis: null,
+        issueSummary: null
     };
+}
+
+function computeIssueSummary(reportText) {
+    if (typeof reportText !== "string") {
+        return null;
+    }
+    const trimmed = reportText.trim();
+    if (!trimmed) {
+        return null;
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const summary = parsed?.summary;
+        let total = null;
+        if (summary && typeof summary === "object") {
+            const candidate = summary.total_issues ?? summary.totalIssues;
+            const numeric = Number(candidate);
+            if (Number.isFinite(numeric)) {
+                total = numeric;
+            }
+        }
+        if (total === null && Array.isArray(parsed?.issues)) {
+            total = parsed.issues.length;
+        }
+        if (total === null && typeof summary === "string") {
+            const normalised = summary.trim();
+            if (normalised === "代码正常" || normalised === "代碼正常" || normalised === "OK") {
+                total = 0;
+            }
+        }
+        return {
+            totalIssues: Number.isFinite(total) ? total : null,
+            summary,
+            raw: parsed
+        };
+    } catch (_error) {
+        return null;
+    }
 }
 
 function ensureReportTreeEntry(projectId) {
@@ -753,6 +807,14 @@ function getProjectBatchState(projectId) {
     const key = normaliseProjectId(projectId);
     if (!key) return null;
     return reportBatchStates[key] || null;
+}
+
+function getProjectIssueCount(projectId) {
+    const key = normaliseProjectId(projectId);
+    if (!key) return null;
+    const totals = projectIssueTotals.value;
+    if (!totals.has(key)) return null;
+    return totals.get(key);
 }
 
 function ensureFileReportState(projectId, path) {
@@ -867,6 +929,8 @@ async function hydrateReportsForProject(projectId) {
             state.chunks = Array.isArray(record.chunks) ? record.chunks : [];
             state.segments = Array.isArray(record.segments) ? record.segments : [];
             state.conversationId = record.conversationId || "";
+            state.analysis = record.analysis || null;
+            state.issueSummary = computeIssueSummary(state.report);
             const timestamp = parseHydratedTimestamp(record.generatedAt || record.updatedAt || record.createdAt);
             state.updatedAt = timestamp;
             state.updatedAtDisplay = timestamp ? timestamp.toLocaleString() : null;
@@ -933,6 +997,8 @@ async function generateReportForFile(project, node, options = {}) {
     state.chunks = [];
     state.segments = [];
     state.conversationId = "";
+    state.analysis = null;
+    state.issueSummary = null;
 
     try {
         const root = await getProjectRootHandleById(project.id);
@@ -962,6 +1028,8 @@ async function generateReportForFile(project, node, options = {}) {
         state.chunks = Array.isArray(payload?.chunks) ? payload.chunks : [];
         state.segments = Array.isArray(payload?.segments) ? payload.segments : [];
         state.conversationId = payload?.conversationId || "";
+        state.analysis = payload?.analysis || null;
+        state.issueSummary = computeIssueSummary(state.report);
         state.error = "";
 
         if (autoSelect) {
@@ -980,6 +1048,8 @@ async function generateReportForFile(project, node, options = {}) {
         state.chunks = [];
         state.segments = [];
         state.conversationId = "";
+        state.analysis = null;
+        state.issueSummary = null;
         const now = new Date();
         state.updatedAt = now;
         state.updatedAtDisplay = now.toLocaleString();
@@ -1519,6 +1589,7 @@ onBeforeUnmount(() => {
                         :on-reload-project="loadReportTreeForProject"
                         :on-generate-project="generateProjectReports"
                         :get-project-batch-state="getProjectBatchState"
+                        :get-project-issue-count="getProjectIssueCount"
                         :active-target="activeReportTarget"
                         :is-resizing="false"
                         :enable-resize-edge="false"
