@@ -29,6 +29,70 @@ const statusLabel = computed(() => {
     return props.getStatusLabel(fileState.value.status);
 });
 
+const issueTooltip = computed(() => {
+    if (!isFile.value) return "";
+    const summary = fileState.value?.issueSummary;
+    if (!summary || !summary.raw) return "";
+
+    const lines = [];
+    const total = summary.totalIssues;
+    if (Number.isFinite(total)) {
+        lines.push(`總問題：${total}`);
+    }
+
+    const raw = summary.raw || {};
+    const issues = Array.isArray(raw.issues) ? raw.issues : [];
+    const ruleCounts = new Map();
+    const severityCounts = new Map();
+
+    if (issues.length) {
+        for (const issue of issues) {
+            const severityKey = typeof issue?.severity === "string"
+                ? issue.severity.trim().toUpperCase()
+                : "未標示";
+            const severity = severityKey || "未標示";
+            severityCounts.set(severity, (severityCounts.get(severity) || 0) + 1);
+
+            const rule =
+                (typeof issue?.rule_id === "string" && issue.rule_id.trim()) ||
+                (typeof issue?.ruleId === "string" && issue.ruleId.trim()) ||
+                (typeof issue?.rule === "string" && issue.rule.trim()) ||
+                "未分類";
+            ruleCounts.set(rule, (ruleCounts.get(rule) || 0) + 1);
+        }
+    } else if (raw?.summary && typeof raw.summary === "object") {
+        const byRule = raw.summary.by_rule || raw.summary.byRule;
+        if (byRule && typeof byRule === "object") {
+            for (const [rule, value] of Object.entries(byRule)) {
+                const numeric = Number(value);
+                if (!Number.isFinite(numeric)) continue;
+                const ruleName = rule && typeof rule === "string" ? rule : "未分類";
+                ruleCounts.set(ruleName, numeric);
+            }
+        }
+    }
+
+    if (severityCounts.size) {
+        const severityParts = Array.from(severityCounts.entries()).map(
+            ([key, count]) => `${key} ${count}`
+        );
+        if (severityParts.length) {
+            lines.push(`嚴重度：${severityParts.join("，")}`);
+        }
+    }
+
+    if (ruleCounts.size) {
+        const ruleParts = Array.from(ruleCounts.entries()).map(
+            ([rule, count]) => `${rule} (${count})`
+        );
+        if (ruleParts.length) {
+            lines.push(`規則：${ruleParts.join("，")}`);
+        }
+    }
+
+    return lines.join("\n");
+});
+
 const hasChildren = computed(
     () => Array.isArray(props.node.children) && props.node.children.length > 0
 );
@@ -111,7 +175,13 @@ function handleSelect(event) {
             <span class="reportTreeIcon">{{ icon }}</span>
             <span class="reportTreeLabel" :title="node.path">{{ node.name }}</span>
             <template v-if="isFile && fileState">
-                <span class="statusBadge" :class="statusClass">{{ statusLabel }}</span>
+                <span
+                    class="statusBadge"
+                    :class="statusClass"
+                    :title="issueTooltip || null"
+                >
+                    {{ statusLabel }}
+                </span>
                 <button
                     type="button"
                     class="reportActionBtn"

@@ -222,37 +222,34 @@ watch(
                         >
                             問題 {{ projectIssueCount(entry.project.id) }}
                         </span>
-                        <button
-                            type="button"
-                            class="reportBatchBtn"
-                            :disabled="entry.cache.loading || isBatchRunning(entry.project.id)"
-                            @click="handleGenerateProject($event, entry.project)"
-                        >
-                            <span v-if="isBatchRunning(entry.project.id)">
-                                批次生成中 {{ batchProgress(entry.project.id) }}
+                        <div class="projectActions">
+                            <button
+                                v-if="!entry.cache.error"
+                                type="button"
+                                class="reportBatchBtn"
+                                :disabled="entry.cache.loading || isBatchRunning(entry.project.id)"
+                                @click="handleGenerateProject($event, entry.project)"
+                            >
+                                <span v-if="isBatchRunning(entry.project.id)">
+                                    批次生成中 {{ batchProgress(entry.project.id) }}
+                                </span>
+                                <span v-else>一鍵生成</span>
+                            </button>
+                            <button
+                                v-else
+                                type="button"
+                                class="reportRetryBtn"
+                                @click.stop="onReloadProject(entry.project.id)"
+                            >
+                                重新載入
+                            </button>
+                            <span
+                                v-if="!entry.cache.error && entry.cache.loading"
+                                class="reportMeta"
+                            >
+                                載入中…
                             </span>
-                            <span v-else>一鍵生成</span>
-                        </button>
-                        <button
-                            type="button"
-                            class="reportBatchBtn"
-                            :disabled="entry.cache.loading || isBatchRunning(entry.project.id)"
-                            @click="handleGenerateProject($event, entry.project)"
-                        >
-                            <span v-if="isBatchRunning(entry.project.id)">
-                                批次生成中 {{ batchProgress(entry.project.id) }}
-                            </span>
-                            <span v-else>一鍵生成</span>
-                        </button>
-                        <button
-                            v-if="entry.cache.error"
-                            type="button"
-                            class="reportRetryBtn"
-                            @click.stop="onReloadProject(entry.project.id)"
-                        >
-                            重新載入
-                        </button>
-                        <span v-else-if="entry.cache.loading" class="reportMeta">載入中…</span>
+                        </div>
                     </div>
                     <div v-if="!isProjectCollapsed(entry.project.id)" class="reportProjectBody">
                         <p v-if="entry.cache.error" class="reportError">無法載入：{{ entry.cache.error }}</p>
@@ -378,6 +375,13 @@ watch(
     overflow: hidden;
 }
 
+.projectActions {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .reportBatchBtn {
     flex: 0 0 auto;
     padding: 4px 10px;
@@ -427,7 +431,6 @@ watch(
 }
 
 .reportMeta {
-    margin-left: auto;
     font-size: 12px;
     color: #94a3b8;
 }
