@@ -1,11 +1,15 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import ReportTreeNode from "./ReportTreeNode.vue";
 
 const props = defineProps({
     styleWidth: {
         type: Object,
         required: true
+    },
+    enableResizeEdge: {
+        type: Boolean,
+        default: true
     },
     entries: {
         type: Array,
@@ -43,6 +47,18 @@ const props = defineProps({
         type: Function,
         required: true
     },
+    onGenerateProject: {
+        type: Function,
+        required: true
+    },
+    getProjectBatchState: {
+        type: Function,
+        required: true
+    },
+    getProjectIssueCount: {
+        type: Function,
+        default: null
+    },
     activeTarget: {
         type: Object,
         default: null
@@ -58,8 +74,59 @@ const emit = defineEmits(["resizeStart"]);
 const hasEntries = computed(() => (props.entries || []).length > 0);
 
 const isHoveringResizeEdge = ref(false);
+const showHoverEdge = computed(() => props.enableResizeEdge && isHoveringResizeEdge.value);
 
 const EDGE_THRESHOLD = 8;
+
+const collapsedProjects = ref({});
+
+watch(
+    () => (props.entries || []).map((entry) => props.normaliseProjectId(entry?.project?.id)).filter(Boolean),
+    (ids) => {
+        const next = {};
+        ids.forEach((id) => {
+            if (!id) return;
+            const current = collapsedProjects.value[id];
+            next[id] = typeof current === "boolean" ? current : true;
+        });
+        collapsedProjects.value = next;
+    },
+    { immediate: true }
+);
+
+function isProjectCollapsed(projectId) {
+    const key = props.normaliseProjectId(projectId);
+    if (!key) return false;
+    const map = collapsedProjects.value;
+    if (Object.prototype.hasOwnProperty.call(map, key)) {
+        return Boolean(map[key]);
+    }
+    return true;
+}
+
+function setProjectCollapsed(projectId, collapsed) {
+    const key = props.normaliseProjectId(projectId);
+    if (!key) return;
+    collapsedProjects.value = {
+        ...collapsedProjects.value,
+        [key]: Boolean(collapsed)
+    };
+}
+
+function toggleProjectCollapsed(projectId) {
+    setProjectCollapsed(projectId, !isProjectCollapsed(projectId));
+}
+
+function projectIssueCount(projectId) {
+    if (typeof props.getProjectIssueCount !== "function") {
+        return null;
+    }
+    const value = props.getProjectIssueCount(projectId);
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+    }
+    return null;
+}
 
 function updateResizeHoverState(event) {
     const panel = event.currentTarget;
@@ -74,6 +141,7 @@ function updateResizeHoverState(event) {
 }
 
 function handlePointerMove(event) {
+    if (!props.enableResizeEdge) return;
     updateResizeHoverState(event);
 }
 
@@ -82,17 +150,43 @@ function handlePointerLeave() {
 }
 
 function handlePointerDown(event) {
+    if (!props.enableResizeEdge) return;
     const hovering = updateResizeHoverState(event);
     if (!hovering) return;
     emit("resizeStart", event);
 }
+
+function handleGenerateProject(event, project) {
+    event?.stopPropagation?.();
+    props.onGenerateProject(project);
+}
+
+function isBatchRunning(projectId) {
+    const state = props.getProjectBatchState(projectId);
+    return Boolean(state?.running);
+}
+
+function batchProgress(projectId) {
+    const state = props.getProjectBatchState(projectId);
+    if (!state?.running) return "";
+    return `${state.processed}/${state.total}`;
+}
+
+watch(
+    () => props.enableResizeEdge,
+    (enabled) => {
+        if (!enabled) {
+            isHoveringResizeEdge.value = false;
+        }
+    }
+);
 </script>
 
 <template>
     <aside
         class="reportProjects"
         :class="{
-            'reportProjects--hoverEdge': isHoveringResizeEdge,
+            'reportProjects--hoverEdge': showHoverEdge,
             'reportProjects--resizing': isResizing
         }"
         :style="styleWidth"
@@ -106,10 +200,39 @@ function handlePointerDown(event) {
                 <li
                     v-for="entry in entries"
                     :key="entry.project.id"
-                    class="reportProjectItem"
+                    :class="[
+                        'reportProjectItem',
+                        { 'reportProjectItem--collapsed': isProjectCollapsed(entry.project.id) }
+                    ]"
                 >
                     <div class="projectHeader">
+                        <button
+                            type="button"
+                            class="projectToggle"
+                            :aria-expanded="!isProjectCollapsed(entry.project.id)"
+                            :title="isProjectCollapsed(entry.project.id) ? '展開專案' : '收合專案'"
+                            @click.stop="toggleProjectCollapsed(entry.project.id)"
+                        >
+                            <span class="projectToggleIcon" :class="{ 'projectToggleIcon--collapsed': isProjectCollapsed(entry.project.id) }"></span>
+                        </button>
                         <span class="projName" :title="entry.project.name">{{ entry.project.name }}</span>
+                        <span
+                            v-if="projectIssueCount(entry.project.id) !== null"
+                            class="projectIssueBadge"
+                        >
+                            問題 {{ projectIssueCount(entry.project.id) }}
+                        </span>
+                        <button
+                            type="button"
+                            class="reportBatchBtn"
+                            :disabled="entry.cache.loading || isBatchRunning(entry.project.id)"
+                            @click="handleGenerateProject($event, entry.project)"
+                        >
+                            <span v-if="isBatchRunning(entry.project.id)">
+                                批次生成中 {{ batchProgress(entry.project.id) }}
+                            </span>
+                            <span v-else>一鍵生成</span>
+                        </button>
                         <button
                             v-if="entry.cache.error"
                             type="button"
@@ -120,26 +243,28 @@ function handlePointerDown(event) {
                         </button>
                         <span v-else-if="entry.cache.loading" class="reportMeta">載入中…</span>
                     </div>
-                    <p v-if="entry.cache.error" class="reportError">無法載入：{{ entry.cache.error }}</p>
-                    <div v-else-if="entry.cache.loading" class="reportLoading">正在載入檔案清單…</div>
-                    <p v-else-if="!entry.cache.nodes.length" class="reportEmpty">此專案尚未索引任何檔案。</p>
-                    <div v-else class="reportTreeWrapper">
-                        <ul class="reportFileTree">
-                            <ReportTreeNode
-                                v-for="node in entry.cache.nodes"
-                                :key="node.path"
-                                :node="node"
-                                :project="entry.project"
-                                :project-id="normaliseProjectId(entry.project.id)"
-                                :is-expanded="isNodeExpanded"
-                                :toggle="toggleNode"
-                                :get-state="getReportState"
-                                :on-generate="onGenerate"
-                                :on-select="onSelect"
-                                :get-status-label="getStatusLabel"
-                                :active-target="activeTarget"
-                            />
-                        </ul>
+                    <div v-if="!isProjectCollapsed(entry.project.id)" class="reportProjectBody">
+                        <p v-if="entry.cache.error" class="reportError">無法載入：{{ entry.cache.error }}</p>
+                        <div v-else-if="entry.cache.loading" class="reportLoading">正在載入檔案清單…</div>
+                        <p v-else-if="!entry.cache.nodes.length" class="reportEmpty">此專案尚未索引任何檔案。</p>
+                        <div v-else class="reportTreeWrapper">
+                            <ul class="reportFileTree">
+                                <ReportTreeNode
+                                    v-for="node in entry.cache.nodes"
+                                    :key="node.path"
+                                    :node="node"
+                                    :project="entry.project"
+                                    :project-id="normaliseProjectId(entry.project.id)"
+                                    :is-expanded="isNodeExpanded"
+                                    :toggle="toggleNode"
+                                    :get-state="getReportState"
+                                    :on-generate="onGenerate"
+                                    :on-select="onSelect"
+                                    :get-status-label="getStatusLabel"
+                                    :active-target="activeTarget"
+                                />
+                            </ul>
+                        </div>
                     </div>
                 </li>
             </ul>
@@ -199,6 +324,39 @@ function handlePointerDown(event) {
     gap: 12px;
 }
 
+.projectToggle {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 0;
+    transition: color 0.2s ease;
+}
+
+.projectToggle:hover {
+    color: #cbd5f5;
+}
+
+.projectToggleIcon {
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid currentColor;
+    transition: transform 0.2s ease;
+}
+
+.projectToggleIcon--collapsed {
+    transform: rotate(-90deg);
+}
+
 .projName {
     flex: 1 1 auto;
     min-width: 0;
@@ -207,6 +365,54 @@ function handlePointerDown(event) {
     white-space: nowrap;
     text-overflow: ellipsis;
     overflow: hidden;
+}
+
+.reportBatchBtn {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    background: #1f2937;
+    color: #cbd5f5;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.projectIssueBadge {
+    flex: 0 0 auto;
+    font-size: 12px;
+    line-height: 1;
+    padding: 4px 8px;
+    border-radius: 9999px;
+    border: 1px solid #4b5563;
+    background: #111827;
+    color: #fbbf24;
+    white-space: nowrap;
+}
+
+.reportProjectItem--collapsed {
+    gap: 4px;
+}
+
+.reportProjectBody {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.reportBatchBtn:hover {
+    background: #2563eb;
+    border-color: #1d4ed8;
+    color: #fff;
+}
+
+.reportBatchBtn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    background: #1e293b;
+    color: #94a3b8;
+    border-color: #1e293b;
 }
 
 .reportMeta {
