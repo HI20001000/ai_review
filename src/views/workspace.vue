@@ -1886,6 +1886,7 @@ onBeforeUnmount(() => {
                                             </div>
                                             <ol class="reportIssueList">
                                                 <li v-for="issue in activeReportDetails.issues" :key="issue.key">
+
                                                     <article class="reportIssueCard">
                                                         <header class="reportIssueCardHeader">
                                                             <span class="reportIssueIndex">#{{ issue.index }}</span>
@@ -1900,57 +1901,73 @@ onBeforeUnmount(() => {
                                                                 {{ issue.severityLabel }}
                                                             </span>
                                                         </header>
-                                                        <ul class="reportIssueMeta">
-                                                            <li v-if="issue.objectName">
-                                                                <span class="reportIssueMetaLabel">物件</span>
-                                                                <span class="reportIssueMetaValue">{{ issue.objectName }}</span>
-                                                            </li>
-                                                            <li v-if="issue.line !== null">
-                                                                <span class="reportIssueMetaLabel">行</span>
-                                                                <span class="reportIssueMetaValue">{{ issue.line }}</span>
-                                                            </li>
-                                                            <li v-if="issue.column !== null">
-                                                                <span class="reportIssueMetaLabel">列</span>
-                                                                <span class="reportIssueMetaValue">{{ issue.column }}</span>
-                                                            </li>
-                                                        </ul>
-                                                        <div v-if="issue.codeLines.length" class="reportIssueCodeBox">
-                                                            <div class="codeScroll reportIssueCodeScroll">
-                                                                <div class="codeEditor">
+                                                        <div class="reportIssueCodeBox">
+                                                            <section class="reportIssueRow reportIssueRow--code">
+                                                                <header class="reportIssueRowHeader">Code</header>
+                                                                <div class="reportIssueRowBody">
                                                                     <div
-                                                                        v-for="codeLine in issue.codeLines"
-                                                                        :key="codeLine.key"
-                                                                        class="codeLine"
-                                                                        :class="{ 'codeLine--issue': codeLine.highlight }"
+                                                                        v-if="issue.codeLines.length"
+                                                                        class="codeScroll reportIssueCodeScroll"
                                                                     >
-                                                                        <span
-                                                                            class="codeLineNo"
-                                                                            :data-line="codeLine.displayNumber"
-                                                                            aria-hidden="true"
-                                                                        ></span>
-                                                                        <span
-                                                                            class="codeLineContent"
-                                                                            :class="{ 'codeLineContent--issue': codeLine.highlight }"
-                                                                            v-html="codeLine.html"
-                                                                        ></span>
+                                                                        <div class="codeEditor">
+                                                                            <div
+                                                                                v-for="codeLine in issue.codeLines"
+                                                                                :key="codeLine.key"
+                                                                                class="codeLine"
+                                                                                :class="{ 'codeLine--issue': codeLine.highlight }"
+                                                                            >
+                                                                                <span
+                                                                                    class="codeLineNo"
+                                                                                    :data-line="codeLine.displayNumber"
+                                                                                    aria-hidden="true"
+                                                                                ></span>
+                                                                                <span
+                                                                                    class="codeLineContent"
+                                                                                    :class="{ 'codeLineContent--issue': codeLine.highlight }"
+                                                                                    v-html="codeLine.html"
+                                                                                ></span>
+                                                                            </div>
+                                                                        </div>
                                                                     </div>
+                                                                    <p v-else class="reportIssueEmpty">無可顯示的代碼片段。</p>
                                                                 </div>
-                                                            </div>
+                                                            </section>
+                                                            <section class="reportIssueRow reportIssueRow--issues">
+                                                                <header class="reportIssueRowHeader">Issues</header>
+                                                                <div class="reportIssueRowBody">
+                                                                    <p class="reportIssueMessage">
+                                                                        {{ issue.message || "未提供說明" }}
+                                                                    </p>
+                                                                    <ul class="reportIssueMeta">
+                                                                        <li v-if="issue.objectName">
+                                                                            <span class="reportIssueMetaLabel">物件</span>
+                                                                            <span class="reportIssueMetaValue">{{ issue.objectName }}</span>
+                                                                        </li>
+                                                                        <li v-if="issue.line !== null">
+                                                                            <span class="reportIssueMetaLabel">行</span>
+                                                                            <span class="reportIssueMetaValue">{{ issue.line }}</span>
+                                                                        </li>
+                                                                        <li v-if="issue.column !== null">
+                                                                            <span class="reportIssueMetaLabel">列</span>
+                                                                            <span class="reportIssueMetaValue">{{ issue.column }}</span>
+                                                                        </li>
+                                                                    </ul>
+                                                                    <pre
+                                                                        v-if="issue.evidence && issue.evidence !== issue.snippet"
+                                                                        class="reportIssueEvidence codeScroll"
+                                                                    >{{ issue.evidence }}
+                                                                    </pre>
+                                                                </div>
+                                                            </section>
+                                                            <section class="reportIssueRow reportIssueRow--fix">
+                                                                <header class="reportIssueRowHeader">How to Fix</header>
+                                                                <div class="reportIssueRowBody">
+                                                                    <p class="reportIssueSuggestion">
+                                                                        {{ issue.suggestion || "" }}
+                                                                    </p>
+                                                                </div>
+                                                            </section>
                                                         </div>
-                                                        <div class="reportIssueDetailsText">
-                                                            <p class="reportIssueMessage">
-                                                                {{ issue.message || "未提供說明" }}
-                                                            </p>
-                                                            <p v-if="issue.suggestion" class="reportIssueSuggestion">
-                                                                修改建議：{{ issue.suggestion }}
-                                                            </p>
-                                                        </div>
-                                                        <pre
-                                                            v-if="issue.evidence && issue.evidence !== issue.snippet"
-                                                            class="reportIssueEvidence codeScroll"
-                                                        >
-{{ issue.evidence }}
-                                                        </pre>
                                                     </article>
                                                 </li>
                                             </ol>
@@ -2587,12 +2604,6 @@ body,
     border-color: rgba(148, 163, 184, 0.25);
 }
 
-.reportIssueDetailsText {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
 .reportIssueMessage {
     margin: 0;
     font-size: 14px;
@@ -2636,10 +2647,56 @@ body,
 }
 
 .reportIssueCodeBox {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportIssueRow {
     border: 1px solid #2f2f2f;
-    border-radius: 6px;
-    background: #1b1b1b;
+    border-radius: 8px;
     overflow: hidden;
+    background: #111827;
+}
+
+.reportIssueRowHeader {
+    margin: 0;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.reportIssueRowBody {
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: #0f172a;
+}
+
+.reportIssueRow--code .reportIssueRowHeader {
+    background: #4b5563;
+    color: #f8fafc;
+}
+
+.reportIssueRow--issues .reportIssueRowHeader {
+    background: #b91c1c;
+    color: #fef2f2;
+}
+
+.reportIssueRow--issues .reportIssueRowBody {
+    background: rgba(239, 68, 68, 0.12);
+}
+
+.reportIssueRow--fix .reportIssueRowHeader {
+    background: #d97706;
+    color: #111827;
+}
+
+.reportIssueRow--fix .reportIssueRowBody {
+    background: rgba(234, 179, 8, 0.18);
 }
 
 .reportIssueCodeScroll {
@@ -2680,7 +2737,14 @@ body,
 .reportIssueSuggestion {
     margin: 0;
     font-size: 13px;
-    color: #fcd34d;
+    color: #facc15;
+    font-weight: 600;
+}
+
+.reportIssueEmpty {
+    margin: 0;
+    font-size: 13px;
+    color: #cbd5f5;
 }
 
 .reportIssuesEmpty {
