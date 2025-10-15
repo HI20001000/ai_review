@@ -387,6 +387,93 @@ const activeReportDetails = computed(() => {
 });
 
 const hasStructuredReport = computed(() => Boolean(activeReportDetails.value));
+const activeReportSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report) return "";
+    const text = report.state?.sourceText;
+    return typeof text === "string" ? text : "";
+});
+
+const activeReportSourceLines = computed(() => {
+    const text = activeReportSourceText.value;
+    if (!text) {
+        return [];
+    }
+    const normalised = text.replace(/\r\n?/g, "\n").split("\n");
+    if (!normalised.length) {
+        return [];
+    }
+    return normalised.map((raw, index) => ({
+        number: index + 1,
+        raw,
+        html: escapeHtml(raw) || "&nbsp;"
+    }));
+});
+
+const reportIssueLines = computed(() => {
+    const details = activeReportDetails.value;
+    const sourceLines = activeReportSourceLines.value;
+    const issues = Array.isArray(details?.issues) ? details.issues : [];
+
+    let maxLine = sourceLines.length;
+    const issuesByLine = new Map();
+    const orphanIssues = [];
+
+    for (const issue of issues) {
+        const lineNumber = Number(issue?.line);
+        if (Number.isFinite(lineNumber) && lineNumber > 0) {
+            const key = Math.max(1, Math.floor(lineNumber));
+            const bucket = issuesByLine.get(key) || [];
+            bucket.push(issue);
+            issuesByLine.set(key, bucket);
+            if (key > maxLine) {
+                maxLine = key;
+            }
+        } else {
+            orphanIssues.push(issue);
+        }
+    }
+
+    const result = [];
+
+    const ensureLineEntry = (lineNumber) => {
+        const index = lineNumber - 1;
+        if (index < sourceLines.length) {
+            return sourceLines[index];
+        }
+        return { number: lineNumber, raw: "", html: "&nbsp;" };
+    };
+
+    for (let lineNumber = 1; lineNumber <= Math.max(1, maxLine); lineNumber += 1) {
+        const baseLine = ensureLineEntry(lineNumber);
+        const lineIssues = issuesByLine.get(lineNumber) || [];
+        const hasIssue = lineIssues.length > 0;
+
+        result.push({
+            key: `code-${lineNumber}`,
+            type: "code",
+            number: lineNumber,
+            displayNumber: String(lineNumber),
+            html: baseLine.html,
+            hasIssue,
+            issues: lineIssues
+        });
+
+        if (hasIssue) {
+            result.push(buildIssueMetaLine("issues", lineNumber, lineIssues));
+            result.push(buildIssueMetaLine("fix", lineNumber, lineIssues));
+        }
+    }
+
+    if (orphanIssues.length) {
+        result.push(buildIssueMetaLine("issues", "orphan", orphanIssues, true));
+        result.push(buildIssueMetaLine("fix", "orphan", orphanIssues, true));
+    }
+
+    return result;
+});
+
+const hasReportIssueLines = computed(() => reportIssueLines.value.length > 0);
 const middlePaneStyle = computed(() => {
     const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
     const width = hasActiveTool ? middlePaneWidth.value : 0;
@@ -412,6 +499,100 @@ function escapeHtml(value) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+}
+
+function buildIssueMetaLine(type, keySource, issues, isOrphan = false) {
+    const label = type === "fix" ? "Fix" : "Issues";
+    const keySuffix = typeof keySource === "number" ? keySource : String(keySource || type);
+    const html = type === "fix"
+        ? buildIssueFixHtml(issues)
+        : buildIssueDetailsHtml(issues, isOrphan);
+    return {
+        key: `${type}-${keySuffix}`,
+        type,
+        number: typeof keySource === "number" ? keySource : null,
+        displayNumber: label,
+        html: html || "&nbsp;",
+        hasIssue: true,
+        issues,
+        isMeta: true,
+        isOrphan: Boolean(isOrphan)
+    };
+}
+
+function buildIssueDetailsHtml(issues, isOrphan = false) {
+    if (!Array.isArray(issues) || !issues.length) {
+        return '<div class="reportIssueInlineRow reportIssueInlineRow--empty">未檢測到問題</div>';
+    }
+
+    return issues
+        .map((issue) => {
+            const rows = [];
+            const badges = [];
+            const index = Number(issue?.index);
+            if (Number.isFinite(index)) {
+                badges.push(`<span class="reportIssueInlineIndex">#${index}</span>`);
+            }
+            if (issue?.ruleId) {
+                badges.push(`<span class="reportIssueInlineRule">${escapeHtml(issue.ruleId)}</span>`);
+            }
+            if (issue?.severityLabel) {
+                const severityClass = issue.severityClass || "info";
+                badges.push(
+                    `<span class="reportIssueInlineSeverity reportIssueInlineSeverity--${severityClass}">${escapeHtml(
+                        issue.severityLabel
+                    )}</span>`
+                );
+            }
+            if (isOrphan && Number.isFinite(issue?.line)) {
+                badges.push(`<span class="reportIssueInlineLine">Line ${escapeHtml(String(issue.line))}</span>`);
+            }
+
+            const badgeBlock = badges.length
+                ? `<span class="reportIssueInlineBadges">${badges.join(" ")}</span>`
+                : "";
+
+            const message = `<span class="reportIssueInlineMessage">${escapeHtml(
+                issue?.message || "未提供說明"
+            )}</span>`;
+
+            const metaParts = [];
+            if (issue?.objectName) {
+                metaParts.push(`<span class="reportIssueInlineObject">${escapeHtml(issue.objectName)}</span>`);
+            }
+            if (Number.isFinite(issue?.column)) {
+                metaParts.push(`<span class="reportIssueInlineColumn">列 ${escapeHtml(String(issue.column))}</span>`);
+            }
+            const meta = metaParts.length
+                ? `<span class="reportIssueInlineMeta">${metaParts.join(" · ")}</span>`
+                : "";
+
+            rows.push(`<div class="reportIssueInlineRow">${badgeBlock}${message}${meta}</div>`);
+            return rows.join("");
+        })
+        .join("");
+}
+
+function buildIssueFixHtml(issues) {
+    if (!Array.isArray(issues) || !issues.length) {
+        return '<div class="reportIssueInlineRow reportIssueInlineRow--empty">暫無建議</div>';
+    }
+
+    const rows = issues
+        .map((issue) => {
+            const suggestion = typeof issue?.suggestion === "string" ? issue.suggestion.trim() : "";
+            if (!suggestion) {
+                return "";
+            }
+            return `<div class="reportIssueInlineRow">${escapeHtml(suggestion)}</div>`;
+        })
+        .filter(Boolean);
+
+    if (!rows.length) {
+        return '<div class="reportIssueInlineRow reportIssueInlineRow--empty">暫無建議</div>';
+    }
+
+    return rows.join("");
 }
 
 function renderLineContent(line) {
@@ -906,7 +1087,11 @@ function createDefaultReportState() {
         conversationId: "",
         analysis: null,
         issueSummary: null,
-        parsedReport: null
+        parsedReport: null,
+        sourceText: "",
+        sourceLoaded: false,
+        sourceLoading: false,
+        sourceError: ""
     };
 }
 
@@ -1121,6 +1306,12 @@ async function hydrateReportsForProject(projectId) {
             const timestamp = parseHydratedTimestamp(record.generatedAt || record.updatedAt || record.createdAt);
             state.updatedAt = timestamp;
             state.updatedAtDisplay = timestamp ? timestamp.toLocaleString() : null;
+            if (typeof state.sourceText !== "string") {
+                state.sourceText = "";
+            }
+            state.sourceLoaded = Boolean(state.sourceText);
+            state.sourceLoading = false;
+            state.sourceError = "";
         }
         entry.hydratedReports = true;
     } catch (error) {
@@ -1187,6 +1378,10 @@ async function generateReportForFile(project, node, options = {}) {
     state.analysis = null;
     state.issueSummary = null;
     state.parsedReport = null;
+    state.sourceText = "";
+    state.sourceLoaded = false;
+    state.sourceLoading = false;
+    state.sourceError = "";
 
     try {
         const root = await getProjectRootHandleById(project.id);
@@ -1200,6 +1395,11 @@ async function generateReportForFile(project, node, options = {}) {
         if (!text.trim()) {
             throw new Error("檔案內容為空");
         }
+
+        state.sourceText = text;
+        state.sourceLoaded = true;
+        state.sourceLoading = false;
+        state.sourceError = "";
 
         const payload = await generateReportViaDify({
             projectId,
@@ -1240,6 +1440,10 @@ async function generateReportForFile(project, node, options = {}) {
         state.analysis = null;
         state.issueSummary = null;
         state.parsedReport = null;
+        state.sourceLoading = false;
+        if (!state.sourceText) {
+            state.sourceLoaded = false;
+        }
         const now = new Date();
         state.updatedAt = now;
         state.updatedAtDisplay = now.toLocaleString();
@@ -1408,6 +1612,46 @@ watch(
                 projectId: normaliseProjectId(next.project.id),
                 path: next.path
             };
+        }
+    },
+    { immediate: true }
+);
+
+watch(
+    activeReport,
+    async (report) => {
+        if (!report) return;
+        const state = report.state;
+        if (state.sourceLoaded || state.sourceLoading) {
+            return;
+        }
+        state.sourceLoading = true;
+        state.sourceError = "";
+        try {
+            const root = await getProjectRootHandleById(report.project.id);
+            if (!root) {
+                throw new Error("找不到專案根目錄，無法載入檔案內容");
+            }
+            const fileHandle = await fileSystemService.getFileHandleByPath(root, report.path);
+            if (!fileHandle) {
+                throw new Error("找不到對應的檔案");
+            }
+            const file = await fileHandle.getFile();
+            const text = await file.text();
+            state.sourceText = typeof text === "string" ? text : "";
+            state.sourceLoaded = state.sourceText.length > 0;
+            state.sourceError = "";
+        } catch (error) {
+            state.sourceText = "";
+            state.sourceLoaded = false;
+            state.sourceError = error?.message ? String(error.message) : "無法載入檔案內容";
+            console.error("[Report] Failed to load source text", {
+                projectId: report.project.id,
+                path: report.path,
+                error
+            });
+        } finally {
+            state.sourceLoading = false;
         }
     },
     { immediate: true }
@@ -1884,93 +2128,55 @@ onBeforeUnmount(() => {
                                                     >共 {{ activeReportDetails.issues.length }} 項</span
                                                 >
                                             </div>
-                                            <ol class="reportIssueList">
-                                                <li v-for="issue in activeReportDetails.issues" :key="issue.key">
-
-                                                    <article class="reportIssueCard">
-                                                        <header class="reportIssueCardHeader">
-                                                            <span class="reportIssueIndex">#{{ issue.index }}</span>
-                                                            <span v-if="issue.ruleId" class="reportIssueRule">{{ issue.ruleId }}</span>
+                                            <div v-if="activeReport.state.sourceLoading" class="reportIssuesNotice">
+                                                正在載入原始碼…
+                                            </div>
+                                            <div
+                                                v-else-if="activeReport.state.sourceError"
+                                                class="reportIssuesNotice reportIssuesNotice--error"
+                                            >
+                                                無法載入檔案內容：{{ activeReport.state.sourceError }}
+                                            </div>
+                                            <div v-else-if="hasReportIssueLines" class="pvBox codeBox reportIssuesBox">
+                                                <div class="codeScroll reportIssueCodeScroll">
+                                                    <div class="codeEditor">
+                                                        <div
+                                                            v-for="line in reportIssueLines"
+                                                            :key="line.key"
+                                                            class="codeLine"
+                                                            :class="{
+                                                                'codeLine--issue': line.type === 'code' && line.hasIssue,
+                                                                'codeLine--meta': line.type !== 'code',
+                                                                'codeLine--issuesMeta': line.type === 'issues',
+                                                                'codeLine--fixMeta': line.type === 'fix'
+                                                            }"
+                                                        >
                                                             <span
-                                                                v-if="issue.severityLabel"
-                                                                :class="[
-                                                                    'reportIssueSeverity',
-                                                                    `reportIssueSeverity--${issue.severityClass}`
-                                                                ]"
-                                                            >
-                                                                {{ issue.severityLabel }}
-                                                            </span>
-                                                        </header>
-                                                        <div class="reportIssueCodeBox">
-                                                            <section class="reportIssueRow reportIssueRow--code">
-                                                                <header class="reportIssueRowHeader">Code</header>
-                                                                <div class="reportIssueRowBody">
-                                                                    <div
-                                                                        v-if="issue.codeLines.length"
-                                                                        class="codeScroll reportIssueCodeScroll"
-                                                                    >
-                                                                        <div class="codeEditor">
-                                                                            <div
-                                                                                v-for="codeLine in issue.codeLines"
-                                                                                :key="codeLine.key"
-                                                                                class="codeLine"
-                                                                                :class="{ 'codeLine--issue': codeLine.highlight }"
-                                                                            >
-                                                                                <span
-                                                                                    class="codeLineNo"
-                                                                                    :data-line="codeLine.displayNumber"
-                                                                                    aria-hidden="true"
-                                                                                ></span>
-                                                                                <span
-                                                                                    class="codeLineContent"
-                                                                                    :class="{ 'codeLineContent--issue': codeLine.highlight }"
-                                                                                    v-html="codeLine.html"
-                                                                                ></span>
-                                                                            </div>
-                                                                        </div>
-                                                                    </div>
-                                                                    <p v-else class="reportIssueEmpty">無可顯示的代碼片段。</p>
-                                                                </div>
-                                                            </section>
-                                                            <section class="reportIssueRow reportIssueRow--issues">
-                                                                <header class="reportIssueRowHeader">Issues</header>
-                                                                <div class="reportIssueRowBody">
-                                                                    <p class="reportIssueMessage">
-                                                                        {{ issue.message || "未提供說明" }}
-                                                                    </p>
-                                                                    <ul class="reportIssueMeta">
-                                                                        <li v-if="issue.objectName">
-                                                                            <span class="reportIssueMetaLabel">物件</span>
-                                                                            <span class="reportIssueMetaValue">{{ issue.objectName }}</span>
-                                                                        </li>
-                                                                        <li v-if="issue.line !== null">
-                                                                            <span class="reportIssueMetaLabel">行</span>
-                                                                            <span class="reportIssueMetaValue">{{ issue.line }}</span>
-                                                                        </li>
-                                                                        <li v-if="issue.column !== null">
-                                                                            <span class="reportIssueMetaLabel">列</span>
-                                                                            <span class="reportIssueMetaValue">{{ issue.column }}</span>
-                                                                        </li>
-                                                                    </ul>
-                                                                    <pre
-                                                                        v-if="issue.evidence && issue.evidence !== issue.snippet"
-                                                                        class="reportIssueEvidence codeScroll"
-                                                                    >{{ issue.evidence }}
-                                                                    </pre>
-                                                                </div>
-                                                            </section>
-                                                            <section class="reportIssueRow reportIssueRow--fix">
-                                                                <header class="reportIssueRowHeader">How to Fix</header>
-                                                                <div class="reportIssueRowBody">
-                                                                    <p class="reportIssueSuggestion">
-                                                                        {{ issue.suggestion || "" }}
-                                                                    </p>
-                                                                </div>
-                                                            </section>
+                                                                class="codeLineNo"
+                                                                :class="{
+                                                                    'codeLineNo--issue': line.type === 'code' && line.hasIssue,
+                                                                    'codeLineNo--meta': line.type !== 'code',
+                                                                    'codeLineNo--issues': line.type === 'issues',
+                                                                    'codeLineNo--fix': line.type === 'fix'
+                                                                }"
+                                                                :data-line="line.displayNumber"
+                                                                aria-hidden="true"
+                                                            ></span>
+                                                            <span
+                                                                class="codeLineContent"
+                                                                :class="{
+                                                                    'codeLineContent--issueHighlight':
+                                                                        line.type === 'code' && line.hasIssue,
+                                                                    'codeLineContent--issues': line.type === 'issues',
+                                                                    'codeLineContent--fix': line.type === 'fix'
+                                                                }"
+                                                                v-html="line.html"
+                                                            ></span>
                                                         </div>
-                                                    </article>
-                                                </li>
-                                            </ol>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
                                         </section>
                                         <p v-else class="reportIssuesEmpty">未檢測到任何問題。</p>
 
@@ -2508,6 +2714,7 @@ body,
     color: #cbd5f5;
 }
 
+
 .reportIssuesSection {
     display: flex;
     flex-direction: column;
@@ -2531,220 +2738,191 @@ body,
     color: #94a3b8;
 }
 
-.reportIssueList {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.reportIssueCard {
-    border: 1px solid #2f2f2f;
+.reportIssuesNotice {
+    padding: 10px 14px;
     border-radius: 6px;
-    background: #1f1f1f;
-    padding: 12px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+    background: rgba(148, 163, 184, 0.12);
     color: #e2e8f0;
+    font-size: 13px;
 }
 
-.reportIssueCardHeader {
+.reportIssuesNotice--error {
+    background: rgba(248, 113, 113, 0.12);
+    color: #fda4af;
+}
+
+.reportIssuesBox .codeScroll {
+    max-height: 360px;
+}
+
+.reportIssuesBox .codeEditor {
+    padding: 4px 0;
+}
+
+.reportIssuesBox .codeLine {
+    border-left: 3px solid transparent;
+    padding: 2px 0;
+}
+
+.reportIssuesBox .codeLine--issue {
+    background: rgba(248, 113, 113, 0.12);
+    border-left-color: rgba(248, 113, 113, 0.65);
+}
+
+.codeLineNo--issue {
+    color: #fca5a5;
+}
+
+.codeLineContent--issueHighlight {
+    color: #fee2e2;
+    background: rgba(248, 113, 113, 0.08);
+}
+
+.reportIssuesBox .codeLine--meta {
+    background: rgba(15, 23, 42, 0.92);
+    border-left-color: rgba(148, 163, 184, 0.4);
+}
+
+.reportIssuesBox .codeLine--issuesMeta {
+    background: rgba(248, 113, 113, 0.14);
+    border-left-color: rgba(248, 113, 113, 0.5);
+}
+
+.reportIssuesBox .codeLine--fixMeta {
+    background: rgba(56, 189, 248, 0.14);
+    border-left-color: rgba(56, 189, 248, 0.5);
+}
+
+.codeLineNo--meta {
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #cbd5f5;
+}
+
+.codeLineNo--issues {
+    color: #f87171;
+}
+
+.codeLineNo--fix {
+    color: #38bdf8;
+}
+
+.codeLineContent--issues,
+.codeLineContent--fix {
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+}
+
+.codeLineContent--issues {
+    color: #fecaca;
+}
+
+.codeLineContent--fix {
+    color: #bae6fd;
+}
+
+.reportIssueInlineRow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-start;
+    margin: 0 0 6px;
+    color: #f8fafc;
+}
+
+.reportIssueInlineRow:last-child {
+    margin-bottom: 0;
+}
+
+.reportIssueInlineRow--empty {
+    color: #cbd5f5;
+    font-style: italic;
+}
+
+.reportIssueInlineBadges {
     display: flex;
     align-items: center;
-    gap: 10px;
-    font-size: 12px;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    color: #cbd5f5;
 }
 
-.reportIssueIndex {
-    font-weight: 700;
+.reportIssueInlineIndex {
     color: #bfdbfe;
 }
 
-.reportIssueRule {
+.reportIssueInlineRule {
     padding: 2px 8px;
     border-radius: 999px;
-    background: rgba(59, 130, 246, 0.18);
-    color: #cbd5f5;
+    background: rgba(59, 130, 246, 0.2);
+    color: #bfdbfe;
     font-weight: 600;
 }
 
-.reportIssueSeverity {
+.reportIssueInlineSeverity {
     padding: 2px 8px;
     border-radius: 999px;
     font-weight: 600;
     border: 1px solid transparent;
 }
 
-.reportIssueSeverity--error {
+.reportIssueInlineSeverity--error {
     background: rgba(248, 113, 113, 0.18);
-    color: #f87171;
+    color: #fca5a5;
     border-color: rgba(248, 113, 113, 0.35);
 }
 
-.reportIssueSeverity--warn {
-    background: rgba(250, 204, 21, 0.18);
+.reportIssueInlineSeverity--warn {
+    background: rgba(234, 179, 8, 0.2);
     color: #facc15;
-    border-color: rgba(250, 204, 21, 0.35);
+    border-color: rgba(234, 179, 8, 0.35);
 }
 
-.reportIssueSeverity--info {
-    background: rgba(59, 130, 246, 0.18);
-    color: #cbd5f5;
+.reportIssueInlineSeverity--info {
+    background: rgba(59, 130, 246, 0.2);
+    color: #bfdbfe;
     border-color: rgba(59, 130, 246, 0.35);
 }
 
-.reportIssueSeverity--muted {
-    background: rgba(148, 163, 184, 0.15);
+.reportIssueInlineSeverity--muted {
+    background: rgba(148, 163, 184, 0.2);
     color: #cbd5f5;
-    border-color: rgba(148, 163, 184, 0.25);
+    border-color: rgba(148, 163, 184, 0.35);
 }
 
-.reportIssueMessage {
-    margin: 0;
-    font-size: 14px;
+.reportIssueInlineLine {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.25);
+    color: #cbd5f5;
     font-weight: 600;
-    color: #f1f5f9;
 }
 
-.reportIssueMeta {
+.reportIssueInlineMessage {
+    flex: 1 1 220px;
+    min-width: 200px;
+    font-weight: 600;
+}
+
+.reportIssueInlineMeta {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
+    gap: 6px;
     font-size: 12px;
     color: #cbd5f5;
 }
 
-.reportIssueMetaLabel {
+.reportIssueInlineObject {
     font-weight: 600;
-    margin-right: 4px;
 }
 
-.reportIssueMetaValue {
+.reportIssueInlineColumn {
     color: #e2e8f0;
-}
-
-.reportIssueEvidence {
-    margin: 0;
-    padding: 12px;
-    border-radius: 4px;
-    border: 1px solid #2f2f2f;
-    background: #1b1b1b;
-    color: #d1d5db;
-    font-family: Consolas, "Courier New", monospace;
-    font-size: 12px;
-    line-height: 1.45;
-    white-space: pre-wrap;
-    word-break: break-word;
-    overflow: auto;
-}
-
-.reportIssueCodeBox {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.reportIssueRow {
-    border: 1px solid #2f2f2f;
-    border-radius: 8px;
-    overflow: hidden;
-    background: #111827;
-}
-
-.reportIssueRowHeader {
-    margin: 0;
-    padding: 8px 14px;
-    font-size: 13px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.reportIssueRowBody {
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    background: #0f172a;
-}
-
-.reportIssueRow--code .reportIssueRowHeader {
-    background: #4b5563;
-    color: #f8fafc;
-}
-
-.reportIssueRow--issues .reportIssueRowHeader {
-    background: #b91c1c;
-    color: #fef2f2;
-}
-
-.reportIssueRow--issues .reportIssueRowBody {
-    background: rgba(239, 68, 68, 0.12);
-}
-
-.reportIssueRow--fix .reportIssueRowHeader {
-    background: #d97706;
-    color: #111827;
-}
-
-.reportIssueRow--fix .reportIssueRowBody {
-    background: rgba(234, 179, 8, 0.18);
-}
-
-.reportIssueCodeScroll {
-    max-height: 220px;
-}
-
-.reportIssueCodeScroll .codeEditor {
-    padding: 4px 0;
-}
-
-.reportIssueCodeScroll .codeLine {
-    border-left: 3px solid transparent;
-}
-
-.reportIssueCodeScroll .codeLineNo {
-    padding-top: 2px;
-    padding-bottom: 2px;
-    color: #9ca3af;
-}
-
-.reportIssueCodeScroll .codeLineContent {
-    padding: 2px 12px;
-}
-
-.reportIssueCodeScroll .codeLine--issue {
-    background: rgba(248, 113, 113, 0.12);
-    border-left-color: rgba(248, 113, 113, 0.6);
-}
-
-.reportIssueCodeScroll .codeLine--issue .codeLineNo {
-    color: #f87171;
-}
-
-.reportIssueCodeScroll .codeLineContent--issue {
-    color: #fee2e2;
-}
-
-.reportIssueSuggestion {
-    margin: 0;
-    font-size: 13px;
-    color: #facc15;
-    font-weight: 600;
-}
-
-.reportIssueEmpty {
-    margin: 0;
-    font-size: 13px;
-    color: #cbd5f5;
 }
 
 .reportIssuesEmpty {
