@@ -511,7 +511,8 @@ function buildIssueMetaLine(type, keySource, issues, isOrphan = false) {
         key: `${type}-${keySuffix}`,
         type,
         number: typeof keySource === "number" ? keySource : null,
-        displayNumber: label,
+        displayNumber: "",
+        iconLabel: label,
         html: html || "&nbsp;",
         hasIssue: true,
         issues,
@@ -2160,8 +2161,32 @@ onBeforeUnmount(() => {
                                                                     'codeLineNo--fix': line.type === 'fix'
                                                                 }"
                                                                 :data-line="line.displayNumber"
-                                                                aria-hidden="true"
-                                                            ></span>
+                                                                :aria-label="line.type !== 'code' ? line.iconLabel : null"
+                                                                :aria-hidden="line.type === 'code'"
+                                                            >
+                                                                <svg
+                                                                    v-if="line.type === 'issues'"
+                                                                    class="codeLineNoIcon codeLineNoIcon--warning"
+                                                                    viewBox="0 0 20 20"
+                                                                    focusable="false"
+                                                                    aria-hidden="true"
+                                                                >
+                                                                    <path
+                                                                        d="M10.447 2.105a1 1 0 00-1.894 0l-7 14A1 1 0 002.447 18h15.106a1 1 0 00.894-1.447l-7-14zM10 6a1 1 0 01.993.883L11 7v4a1 1 0 01-1.993.117L9 11V7a1 1 0 011-1zm0 8a1 1 0 110 2 1 1 0 010-2z"
+                                                                    />
+                                                                </svg>
+                                                                <svg
+                                                                    v-else-if="line.type === 'fix'"
+                                                                    class="codeLineNoIcon codeLineNoIcon--fix"
+                                                                    viewBox="0 0 20 20"
+                                                                    focusable="false"
+                                                                    aria-hidden="true"
+                                                                >
+                                                                    <path
+                                                                        d="M17.898 2.102a1 1 0 00-1.517.127l-2.156 2.873-1.21-.403a1 1 0 00-1.043.24l-4.95 4.95a1 1 0 000 1.414l1.775 1.775-5.189 5.189a1 1 0 001.414 1.414l5.189-5.189 1.775 1.775a1 1 0 001.414 0l4.95-4.95a1 1 0 00.24-1.043l-.403-1.21 2.873-2.156a1 1 0 00.127-1.517l-.489-.489z"
+                                                                    />
+                                                                </svg>
+                                                            </span>
                                                             <span
                                                                 class="codeLineContent"
                                                                 :class="{
@@ -2639,6 +2664,8 @@ body,
     display: flex;
     flex-direction: column;
     gap: 20px;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .reportSummaryGrid {
@@ -2719,6 +2746,8 @@ body,
     display: flex;
     flex-direction: column;
     gap: 12px;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .reportIssuesHeader {
@@ -2751,8 +2780,17 @@ body,
     color: #fda4af;
 }
 
+.reportIssuesBox {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 .reportIssuesBox .codeScroll {
-    max-height: 360px;
+    flex: 1 1 auto;
+    max-height: none;
+    overflow: auto;
 }
 
 .reportIssuesBox .codeEditor {
@@ -2784,8 +2822,8 @@ body,
 }
 
 .reportIssuesBox .codeLine--issuesMeta {
-    background: rgba(248, 113, 113, 0.14);
-    border-left-color: rgba(248, 113, 113, 0.5);
+    background: rgba(251, 146, 60, 0.18);
+    border-left-color: rgba(251, 146, 60, 0.55);
 }
 
 .reportIssuesBox .codeLine--fixMeta {
@@ -2794,18 +2832,34 @@ body,
 }
 
 .codeLineNo--meta {
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
     color: #cbd5f5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-right: 0;
+}
+
+.codeLineNo--meta::before {
+    content: "";
 }
 
 .codeLineNo--issues {
-    color: #f87171;
+    color: #f97316;
 }
 
 .codeLineNo--fix {
     color: #38bdf8;
+}
+
+.codeLineNoIcon {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+    display: block;
+}
+
+.codeLineNoIcon--warning {
+    color: inherit;
 }
 
 .codeLineContent--issues,
@@ -2816,7 +2870,7 @@ body,
 }
 
 .codeLineContent--issues {
-    color: #fecaca;
+    color: #fed7aa;
 }
 
 .codeLineContent--fix {
