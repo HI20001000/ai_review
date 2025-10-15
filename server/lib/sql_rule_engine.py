@@ -96,6 +96,7 @@ def _add_issue(
 
 # ---------- rule checks ----------
 def _check_cjk(sql: str, issues: List[Dict]) -> None:
+    """Rule 1: object names must avoid non-ASCII characters."""
     masked = _mask_comments_and_strings(sql)
     match = CJK_RE.search(masked)
     if match:
@@ -111,6 +112,7 @@ def _check_cjk(sql: str, issues: List[Dict]) -> None:
 
 
 def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
+    """Rule 4 & Rule 14: enforce object prefixes and block TMP_TMP_TMP tables."""
     table_re = re.finditer(
         r'\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w\.\$#@]+)',
         sql,
@@ -196,6 +198,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
 
 
 def _check_delete_full_table(sql: str, issues: List[Dict]) -> None:
+    """Rule 16: DELETE without WHERE must be replaced by TRUNCATE."""
     delete_re = re.finditer(
         r'\bDELETE\s+FROM\s+([`"\[\]\w\.\$#@]+)([^;]*)',
         sql,
@@ -228,6 +231,7 @@ def _slice_from_clauses(sql: str) -> List[Tuple[int, int, str]]:
 
 
 def _check_cartesian(sql: str, issues: List[Dict]) -> None:
+    """Rule 21: prevent implicit cartesian products in queries."""
     for start, _end, fragment in _slice_from_clauses(sql):
         if "," in fragment and re.search(r"\bJOIN\b", fragment, flags=re.IGNORECASE) is None:
             _add_issue(

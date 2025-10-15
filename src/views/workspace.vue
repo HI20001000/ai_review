@@ -2166,7 +2166,7 @@ onBeforeUnmount(() => {
                                             </div>
                                         </section>
 
-                                        <section class="reportIssuesSection" v-if="activeReportDetails?.issues?.length">
+                                        <section class="reportIssuesSection" v-if="shouldShowReportIssuesSection">
                                             <div class="reportIssuesHeader">
                                                 <div class="reportIssuesHeaderInfo">
                                                     <h4>問題清單</h4>
@@ -2274,6 +2274,13 @@ onBeforeUnmount(() => {
                                                                 </div>
                                                             </div>
                                                         </div>
+                                                        <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
+                                                    </template>
+                                                    <p v-else class="reportIssuesEmpty">此報告不支援結構化檢視。</p>
+                                                </template>
+                                                <template v-else-if="reportIssuesViewMode === 'raw'">
+                                                    <div v-if="activeReportRawText.trim().length" class="reportRow">
+                                                        <pre class="reportRowContent codeScroll">{{ activeReportRawText }}</pre>
                                                     </div>
                                                     <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
                                                 </template>
