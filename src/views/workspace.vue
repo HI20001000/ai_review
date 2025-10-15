@@ -284,13 +284,49 @@ const activeReportDetails = computed(() => {
             (typeof issue?.modificationAdvice === "string" && issue.modificationAdvice.trim()) ||
             "";
 
-        const snippet = typeof issue?.snippet === "string" ? issue.snippet : "";
-        const evidence = typeof issue?.evidence === "string" ? issue.evidence : "";
-
         let line = Number(issue?.line);
         if (!Number.isFinite(line)) line = null;
         let column = Number(issue?.column);
         if (!Number.isFinite(column)) column = null;
+
+        const snippet = typeof issue?.snippet === "string" ? issue.snippet : "";
+        const evidence = typeof issue?.evidence === "string" ? issue.evidence : "";
+        const snippetLines = snippet ? snippet.replace(/\r\n?/g, "\n").split("\n") : [];
+
+        const codeLines = snippetLines.map((lineText, idx) => {
+            const rawText = lineText.replace(/\r$/, "");
+            const number = line !== null ? line + idx : null;
+            const displayNumber = number !== null ? String(number) : "";
+            const safeHtml = escapeHtml(rawText);
+            return {
+                key: `${index}-line-${idx}`,
+                number,
+                displayNumber,
+                raw: rawText,
+                html: safeHtml.length ? safeHtml : "&nbsp;",
+                highlight: false
+            };
+        });
+
+        if (codeLines.length) {
+            let highlightApplied = false;
+            if (line !== null) {
+                codeLines.forEach((codeLine) => {
+                    if (codeLine.number === line) {
+                        codeLine.highlight = true;
+                        highlightApplied = true;
+                    }
+                });
+            }
+
+            if (!highlightApplied) {
+                const fallbackIndex = codeLines.findIndex((item) => item.raw.trim().length > 0);
+                const indexToHighlight = fallbackIndex >= 0 ? fallbackIndex : 0;
+                if (codeLines[indexToHighlight]) {
+                    codeLines[indexToHighlight].highlight = true;
+                }
+            }
+        }
 
         return {
             key: `${ruleId || "issue"}-${index}`,
@@ -308,7 +344,8 @@ const activeReportDetails = computed(() => {
             column,
             snippet,
             evidence,
-            suggestion
+            suggestion,
+            codeLines
         };
     });
 
@@ -1863,9 +1900,6 @@ onBeforeUnmount(() => {
                                                                 {{ issue.severityLabel }}
                                                             </span>
                                                         </header>
-                                                        <p class="reportIssueMessage">
-                                                            {{ issue.message || "未提供說明" }}
-                                                        </p>
                                                         <ul class="reportIssueMeta">
                                                             <li v-if="issue.objectName">
                                                                 <span class="reportIssueMetaLabel">物件</span>
@@ -1880,18 +1914,43 @@ onBeforeUnmount(() => {
                                                                 <span class="reportIssueMetaValue">{{ issue.column }}</span>
                                                             </li>
                                                         </ul>
-                                                        <pre v-if="issue.snippet" class="reportIssueSnippet codeScroll">
-{{ issue.snippet }}
-                                                        </pre>
+                                                        <div v-if="issue.codeLines.length" class="reportIssueCodeBox">
+                                                            <div class="codeScroll reportIssueCodeScroll">
+                                                                <div class="codeEditor">
+                                                                    <div
+                                                                        v-for="codeLine in issue.codeLines"
+                                                                        :key="codeLine.key"
+                                                                        class="codeLine"
+                                                                        :class="{ 'codeLine--issue': codeLine.highlight }"
+                                                                    >
+                                                                        <span
+                                                                            class="codeLineNo"
+                                                                            :data-line="codeLine.displayNumber"
+                                                                            aria-hidden="true"
+                                                                        ></span>
+                                                                        <span
+                                                                            class="codeLineContent"
+                                                                            :class="{ 'codeLineContent--issue': codeLine.highlight }"
+                                                                            v-html="codeLine.html"
+                                                                        ></span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="reportIssueDetailsText">
+                                                            <p class="reportIssueMessage">
+                                                                {{ issue.message || "未提供說明" }}
+                                                            </p>
+                                                            <p v-if="issue.suggestion" class="reportIssueSuggestion">
+                                                                修改建議：{{ issue.suggestion }}
+                                                            </p>
+                                                        </div>
                                                         <pre
                                                             v-if="issue.evidence && issue.evidence !== issue.snippet"
                                                             class="reportIssueEvidence codeScroll"
                                                         >
 {{ issue.evidence }}
                                                         </pre>
-                                                        <p v-if="issue.suggestion" class="reportIssueSuggestion">
-                                                            修改建議：{{ issue.suggestion }}
-                                                        </p>
                                                     </article>
                                                 </li>
                                             </ol>
@@ -2367,7 +2426,7 @@ body,
 
 .reportSummaryCard {
     border: 1px solid #2f2f2f;
-    background: #111827;
+    background: #1f1f1f;
     border-radius: 6px;
     padding: 12px 14px;
     display: flex;
@@ -2376,8 +2435,8 @@ body,
 }
 
 .reportSummaryCard--total {
-    background: radial-gradient(circle at top, rgba(59, 130, 246, 0.18), rgba(14, 165, 233, 0.12));
-    border-color: rgba(59, 130, 246, 0.4);
+    background: #1f1f1f;
+    border-color: #2f2f2f;
 }
 
 .reportSummaryCard--span {
@@ -2467,11 +2526,11 @@ body,
 .reportIssueCard {
     border: 1px solid #2f2f2f;
     border-radius: 6px;
-    background: #101827;
+    background: #1f1f1f;
     padding: 12px 16px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
     color: #e2e8f0;
 }
 
@@ -2528,6 +2587,12 @@ body,
     border-color: rgba(148, 163, 184, 0.25);
 }
 
+.reportIssueDetailsText {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
 .reportIssueMessage {
     margin: 0;
     font-size: 14px;
@@ -2555,7 +2620,6 @@ body,
     color: #e2e8f0;
 }
 
-.reportIssueSnippet,
 .reportIssueEvidence {
     margin: 0;
     padding: 12px;
@@ -2569,6 +2633,48 @@ body,
     white-space: pre-wrap;
     word-break: break-word;
     overflow: auto;
+}
+
+.reportIssueCodeBox {
+    border: 1px solid #2f2f2f;
+    border-radius: 6px;
+    background: #1b1b1b;
+    overflow: hidden;
+}
+
+.reportIssueCodeScroll {
+    max-height: 220px;
+}
+
+.reportIssueCodeScroll .codeEditor {
+    padding: 4px 0;
+}
+
+.reportIssueCodeScroll .codeLine {
+    border-left: 3px solid transparent;
+}
+
+.reportIssueCodeScroll .codeLineNo {
+    padding-top: 2px;
+    padding-bottom: 2px;
+    color: #9ca3af;
+}
+
+.reportIssueCodeScroll .codeLineContent {
+    padding: 2px 12px;
+}
+
+.reportIssueCodeScroll .codeLine--issue {
+    background: rgba(248, 113, 113, 0.12);
+    border-left-color: rgba(248, 113, 113, 0.6);
+}
+
+.reportIssueCodeScroll .codeLine--issue .codeLineNo {
+    color: #f87171;
+}
+
+.reportIssueCodeScroll .codeLineContent--issue {
+    color: #fee2e2;
 }
 
 .reportIssueSuggestion {
