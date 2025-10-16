@@ -280,6 +280,7 @@ const activeReportDetails = computed(() => {
             "";
 
         const suggestion =
+            (typeof issue?.recommendation === "string" && issue.recommendation.trim()) ||
             (typeof issue?.修改建議 === "string" && issue.修改建議.trim()) ||
             (typeof issue?.modificationAdvice === "string" && issue.modificationAdvice.trim()) ||
             "";

@@ -95,7 +95,7 @@ def _add_issue(
             "column": col,
             "snippet": snippet,
             "evidence": evidence or snippet,
-            "修改建議": "",
+            "recommendation": "",
         }
     )
 
@@ -244,7 +244,8 @@ def _slice_from_clauses(sql: str) -> List[Tuple[int, int, str]]:
 def _check_cartesian(sql: str, issues: List[Dict]) -> None:
     """Rule 21: prevent implicit cartesian products in queries."""
     for start, _end, fragment in _slice_from_clauses(sql):
-        if "," in fragment and re.search(r"\bJOIN\b", fragment, flags=re.IGNORECASE) is None:
+        masked_fragment = _mask_block_comments(fragment)
+        if "," in masked_fragment and re.search(r"\bJOIN\b", masked_fragment, flags=re.IGNORECASE) is None:
             _add_issue(
                 issues,
                 "RULE_21_FROM_COMMA",
