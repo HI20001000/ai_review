@@ -1,288 +1,295 @@
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import {
-    getDifyConfigSummary,
-    partitionContent,
-    requestDifyJsonEnrichment
-} from "./difyClient.js";
+const CJK_REGEX = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]/u;
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const SCRIPT_PATH = resolve(__dirname, "sql_rule_engine.py");
-
-function parseCommand(command) {
-    if (!command || typeof command !== "string") {
-        return null;
-    }
-    const parts = command.trim().split(/\s+/).filter(Boolean);
-    if (parts.length === 0) {
-        return null;
-    }
-    return { command: parts[0], args: parts.slice(1) };
+function idxToLineCol(sql, index) {
+    const preceding = index > 0 ? sql.slice(0, index) : "";
+    const line = (preceding.match(/\n/g) || []).length + 1;
+    const lastNewline = sql.lastIndexOf("\n", index - 1);
+    const column = index - (lastNewline + 1) + 1;
+    return { line, column };
 }
 
-function gatherPythonCandidates() {
-    const envCandidates = [
-        process.env.SQL_ANALYZER_PYTHON,
-        process.env.PYTHON,
-        process.env.PYTHON_PATH,
-        process.env.PYTHON3_PATH
-    ]
-        .map(parseCommand)
-        .filter(Boolean);
-
-    const defaultCandidates = ["python3", "python", "py -3", "py"]
-        .map(parseCommand)
-        .filter(Boolean);
-
-    const seen = new Set();
-    const deduped = [];
-    for (const candidate of [...envCandidates, ...defaultCandidates]) {
-        const key = `${candidate.command} ${candidate.args.join(" ")}`.trim();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        deduped.push(candidate);
+function lineSnippet(sql, index, maxLength = 240) {
+    const start = Math.max(sql.lastIndexOf("\n", index - 1) + 1, 0);
+    let end = sql.indexOf("\n", index);
+    if (end === -1) {
+        end = sql.length;
     }
-    return deduped;
+    let snippet = sql.slice(start, end).replace(/\r$/, "");
+    if (snippet.length > maxLength) {
+        snippet = `${snippet.slice(0, maxLength)}...`;
+    }
+    return snippet;
 }
 
-function isMissingInterpreterError(error, stderr) {
-    if (!error) return false;
-    if (error.code === "ENOENT") {
-        return true;
-    }
-    const message = [error.message, stderr].filter(Boolean).join("\n");
-    return /python was not found/i.test(message);
-}
-
-function runPythonCandidate(candidate, sqlText) {
-    return new Promise((resolve, reject) => {
-        const args = [...candidate.args, "-u", SCRIPT_PATH];
-        const child = spawn(candidate.command, args, { stdio: ["pipe", "pipe", "pipe"] });
-
-        let stdout = "";
-        let stderr = "";
-        let stdinError = null;
-
-        child.stdout.setEncoding("utf8");
-        child.stdout.on("data", (chunk) => {
-            stdout += chunk;
-        });
-
-        child.stderr.setEncoding("utf8");
-        child.stderr.on("data", (chunk) => {
-            stderr += chunk;
-        });
-
-        child.stdin.on("error", (error) => {
-            stdinError = error;
-        });
-
-        child.on("error", (error) => {
-            const err = error;
-            err.stderr = stderr;
-            reject(err);
-        });
-
-        child.on("close", (code) => {
-            if (code !== 0) {
-                const error = new Error(`Python analyzer exited with code ${code}`);
-                error.stderr = stderr;
-                if (stdinError) {
-                    error.stdinError = stdinError;
-                }
-                reject(error);
-                return;
+function maskMatchesWithSpaces(source, pattern, flags) {
+    const regex = new RegExp(pattern, flags.includes("g") ? flags : `${flags}g`);
+    const chars = Array.from(source);
+    let match;
+    while ((match = regex.exec(source)) !== null) {
+        const start = match.index;
+        const end = start + match[0].length;
+        for (let i = start; i < end; i += 1) {
+            if (chars[i] !== "\n") {
+                chars[i] = " ";
             }
-            resolve({ stdout, stderr });
-        });
-
-        try {
-            child.stdin.end(sqlText ?? "");
-        } catch (error) {
-            reject(error);
         }
+        if (match[0].length === 0) {
+            regex.lastIndex += 1;
+        }
+    }
+    return chars.join("");
+}
+
+function maskCommentsAndStrings(sql) {
+    let masked = sql;
+    masked = maskMatchesWithSpaces(masked, "/\\*.*?\\*/", "gs");
+    masked = maskMatchesWithSpaces(masked, "--.*?$", "gm");
+    masked = maskMatchesWithSpaces(masked, "'(?:''|[^'])*'", "gs");
+    masked = maskMatchesWithSpaces(masked, '"(?:""|[^"])*"', "gs");
+    return masked;
+}
+
+function lastIdentifier(token) {
+    let result = token.trim();
+    if (result.includes(".")) {
+        const parts = result.split(".");
+        result = parts[parts.length - 1];
+    }
+    if (result.startsWith("[") && result.endsWith("]")) {
+        result = result.slice(1, -1);
+    }
+    result = result.replace(/^`|`$/g, "").replace(/^"|"$/g, "");
+    return result;
+}
+
+function addIssue(issues, { ruleId, message, sql, index, evidence = "", severity = "ERROR", objectName = "" }) {
+    const { line, column } = idxToLineCol(sql, index);
+    const snippet = lineSnippet(sql, index);
+    issues.push({
+        rule_id: ruleId,
+        severity,
+        message,
+        object: objectName,
+        line,
+        column,
+        snippet,
+        evidence: (evidence || snippet).slice(0, 300),
     });
 }
 
-let cachedInterpreter = null;
-
-async function executeSqlAnalysis(sqlText) {
-    const candidates = cachedInterpreter ? [cachedInterpreter] : gatherPythonCandidates();
-    let lastError = null;
-
-    for (const candidate of candidates) {
-        try {
-            const { stdout } = await runPythonCandidate(candidate, sqlText);
-            const trimmed = stdout.trim();
-            if (!trimmed) {
-                const emptyError = new Error("SQL 分析器未返回任何輸出");
-                emptyError.stderr = stdout;
-                throw emptyError;
-            }
-            let parsed;
-            try {
-                parsed = JSON.parse(trimmed);
-            } catch (parseError) {
-                const errorMessage = `無法解析 SQL 分析器輸出：${trimmed}`;
-                const error = new Error(errorMessage);
-                error.stderr = trimmed;
-                if (/python was not found/i.test(trimmed)) {
-                    error.missingInterpreter = true;
-                }
-                throw error;
-            }
-            if (parsed.error) {
-                const engineError = new Error(parsed.error);
-                engineError.stderr = parsed.error;
-                throw engineError;
-            }
-            if (typeof parsed.result !== "string") {
-                const invalidError = new Error("SQL 分析器輸出缺少 result 欄位");
-                invalidError.stderr = JSON.stringify(parsed);
-                throw invalidError;
-            }
-            cachedInterpreter = candidate;
-            return parsed;
-        } catch (error) {
-            const stderr = error?.stderr || "";
-            if (error?.missingInterpreter || isMissingInterpreterError(error, stderr)) {
-                lastError = error;
-                cachedInterpreter = null;
-                continue;
-            }
-            throw error;
-        }
+function checkCjk(sql, issues) {
+    const masked = maskCommentsAndStrings(sql);
+    const match = masked.match(CJK_REGEX);
+    if (match && match.index !== undefined) {
+        addIssue(issues, {
+            ruleId: "R1_CJK_NAME",
+            message: "检测到中文/非 ASCII 字符（疑似用于对象/列命名），应使用英文单词/短语/缩写。",
+            sql,
+            index: match.index,
+            evidence: `...${match[0]}...`,
+        });
     }
-
-    const hint =
-        "無法找到可用的 Python 執行檔。請在環境變數 SQL_ANALYZER_PYTHON 或 PYTHON_PATH 中指定完整的 python.exe 路徑，或確保 'python' 指令可用。";
-    const error = new Error(lastError?.message ? `${lastError.message}\n${hint}` : hint);
-    error.stderr = lastError?.stderr;
-    throw error;
 }
 
-function extractJsonFromText(value) {
-    if (value == null) {
-        return "";
-    }
-    if (typeof value === "object") {
-        try {
-            return JSON.stringify(value);
-        } catch (_error) {
-            return "";
+function checkNamingPrefixes(sql, issues) {
+    const tableRegex = /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w\.\$#@]+)/gi;
+    let match;
+    while ((match = tableRegex.exec(sql)) !== null) {
+        const rawName = match[1];
+        const name = lastIdentifier(rawName);
+        if (!name.toUpperCase().startsWith("T_")) {
+            addIssue(issues, {
+                ruleId: "R2_PREFIX_TABLE",
+                message: `表名需以 T_ 开头：发现 ${name}`,
+                sql,
+                index: match.index,
+                evidence: match[0],
+                objectName: name,
+            });
         }
-    }
-    if (typeof value !== "string") {
-        return "";
-    }
-
-    const trimmed = value.trim();
-    if (!trimmed) {
-        return "";
-    }
-
-    const candidates = [];
-
-    const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (fenceMatch && fenceMatch[1]) {
-        candidates.push(fenceMatch[1].trim());
-    }
-
-    const braceStart = trimmed.indexOf("{");
-    const braceEnd = trimmed.lastIndexOf("}");
-    if (braceStart !== -1 && braceEnd !== -1 && braceEnd > braceStart) {
-        candidates.push(trimmed.slice(braceStart, braceEnd + 1));
-    }
-
-    candidates.push(trimmed);
-
-    for (const candidate of candidates) {
-        try {
-            const parsed = JSON.parse(candidate);
-            return JSON.stringify(parsed);
-        } catch (_error) {
-            continue;
+        if (name.toUpperCase().startsWith("TMP_TMP_TMP")) {
+            addIssue(issues, {
+                ruleId: "R3_TMP_TRIPLE",
+                message: `中间表命名不得使用 TMP_TMP_TMP 前缀：发现 ${name}`,
+                sql,
+                index: match.index,
+                evidence: match[0],
+                objectName: name,
+            });
+        }
+        if (match[0].length === 0) {
+            tableRegex.lastIndex += 1;
         }
     }
 
-    return "";
+    const viewRegex = /\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+([`"\[\]\w\.\$#@]+)/gi;
+    while ((match = viewRegex.exec(sql)) !== null) {
+        const name = lastIdentifier(match[1]);
+        if (!name.toUpperCase().startsWith("V_")) {
+            addIssue(issues, {
+                ruleId: "R2_PREFIX_VIEW",
+                message: `视图名需以 V_ 开头：发现 ${name}`,
+                sql,
+                index: match.index,
+                evidence: match[0],
+                objectName: name,
+            });
+        }
+        if (match[0].length === 0) {
+            viewRegex.lastIndex += 1;
+        }
+    }
+
+    const procRegex = /\bCREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+([`"\[\]\w\.\$#@]+)/gi;
+    while ((match = procRegex.exec(sql)) !== null) {
+        const name = lastIdentifier(match[1]);
+        if (!name.toUpperCase().startsWith("P_")) {
+            addIssue(issues, {
+                ruleId: "R2_PREFIX_PROC",
+                message: `存储过程名需以 P_ 开头：发现 ${name}`,
+                sql,
+                index: match.index,
+                evidence: match[0],
+                objectName: name,
+            });
+        }
+        if (match[0].length === 0) {
+            procRegex.lastIndex += 1;
+        }
+    }
+
+    const funcRegex = /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([`"\[\]\w\.\$#@]+)/gi;
+    while ((match = funcRegex.exec(sql)) !== null) {
+        const name = lastIdentifier(match[1]);
+        if (!name.toUpperCase().startsWith("F_")) {
+            addIssue(issues, {
+                ruleId: "R2_PREFIX_FUNC",
+                message: `函数名需以 F_ 开头：发现 ${name}`,
+                sql,
+                index: match.index,
+                evidence: match[0],
+                objectName: name,
+            });
+        }
+        if (match[0].length === 0) {
+            funcRegex.lastIndex += 1;
+        }
+    }
 }
 
-function normaliseDifyOutput(dify, rawReport) {
-    if (!dify || typeof dify !== "object") {
-        return dify ?? null;
+function checkDeleteFullTable(sql, issues) {
+    const deleteRegex = /\bDELETE\s+FROM\s+([`"\[\]\w\.\$#@]+)([^;]*)/gi;
+    let match;
+    while ((match = deleteRegex.exec(sql)) !== null) {
+        const tail = match[2] || "";
+        if (!/\bWHERE\b/i.test(tail)) {
+            const tableName = lastIdentifier(match[1]);
+            addIssue(issues, {
+                ruleId: "R4_DELETE_NO_WHERE",
+                message: `检测到对表 ${tableName} 的全表删除（DELETE 无 WHERE）。请使用 TRUNCATE。`,
+                sql,
+                index: match.index,
+                evidence: match[0],
+                objectName: tableName,
+            });
+        }
+        if (match[0].length === 0) {
+            deleteRegex.lastIndex += 1;
+        }
+    }
+}
+
+function sliceFromClauses(sql) {
+    const slices = [];
+    const fromRegex = /\bFROM\b/gi;
+    let match;
+    while ((match = fromRegex.exec(sql)) !== null) {
+        const start = match.index + match[0].length;
+        const tail = sql.slice(start);
+        const boundaryRegex = /\bWHERE\b|\bGROUP\b|\bORDER\b|\bHAVING\b|\bLIMIT\b|;/i;
+        const boundaryMatch = boundaryRegex.exec(tail);
+        const end = boundaryMatch ? start + boundaryMatch.index : sql.length;
+        slices.push({ start, end, fragment: sql.slice(start, end) });
+        if (match[0].length === 0) {
+            fromRegex.lastIndex += 1;
+        }
+    }
+    return slices;
+}
+
+function checkCartesian(sql, issues) {
+    const slices = sliceFromClauses(sql);
+    slices.forEach(({ start, fragment }) => {
+        if (fragment.includes(",") && !/\bJOIN\b/i.test(fragment)) {
+            addIssue(issues, {
+                ruleId: "R5_FROM_COMMA",
+                message: "FROM 子句使用逗号进行隐式连接，容易产生笛卡尔积。请使用显式 JOIN ... ON。",
+                sql,
+                index: start,
+                evidence: fragment.trim(),
+            });
+        }
+    });
+
+    const joinRegex = /\bJOIN\b([\s\S]*?)(?=\bJOIN\b|\bWHERE\b|\bGROUP\b|\bORDER\b|\bHAVING\b|\bLIMIT\b|;|$)/gi;
+    let match;
+    while ((match = joinRegex.exec(sql)) !== null) {
+        const segment = match[1] || "";
+        if (!/\bON\b|\bUSING\b|\bNATURAL\b|\bCROSS\b/i.test(segment)) {
+            addIssue(issues, {
+                ruleId: "R5_JOIN_NO_ON",
+                message: "出现 JOIN 但未检测到 ON/USING/NATURAL（可能导致笛卡尔积或语义不清）。",
+                sql,
+                index: match.index,
+                evidence: `JOIN${segment}`.trim(),
+            });
+        }
+        if (match[0].length === 0) {
+            joinRegex.lastIndex += 1;
+        }
+    }
+}
+
+function runStaticSqlAnalysis(sqlText) {
+    if (typeof sqlText !== "string") {
+        return {
+            result: JSON.stringify({ summary: "输入不是字符串。", issues: [] }, null, 2),
+        };
     }
 
-    const resolvedReport = extractJsonFromText(dify.report ?? dify.answer ?? "");
-    const normalisedReport = resolvedReport || rawReport || "";
+    const issues = [];
+    const sql = sqlText || "";
 
-    const normalisedChunks = Array.isArray(dify.chunks)
-        ? dify.chunks.map((chunk) => ({
-              ...chunk,
-              answer: extractJsonFromText(chunk?.answer) || chunk?.answer || "",
-              raw: chunk?.raw
-          }))
-        : dify.chunks;
+    checkCjk(sql, issues);
+    checkNamingPrefixes(sql, issues);
+    checkDeleteFullTable(sql, issues);
+    checkCartesian(sql, issues);
+
+    let payload;
+    if (issues.length === 0) {
+        payload = { summary: "代码正常", issues: [] };
+    } else {
+        const byRule = issues.reduce((acc, issue) => {
+            const key = issue.rule_id;
+            acc[key] = (acc[key] || 0) + 1;
+            return acc;
+        }, {});
+        payload = {
+            summary: {
+                total_issues: issues.length,
+                by_rule: byRule,
+            },
+            issues,
+        };
+    }
 
     return {
-        ...dify,
-        report: normalisedReport,
-        chunks: normalisedChunks,
-        originalReport: typeof dify.report === "string" ? dify.report : rawReport || "",
-        originalChunks: Array.isArray(dify.chunks) ? dify.chunks : undefined
+        result: JSON.stringify(payload, null, 2),
     };
 }
 
-export async function analyseSqlToReport(sqlText, options = {}) {
-    const analysis = await executeSqlAnalysis(sqlText);
-    const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
-    const trimmedReport = rawReport.trim();
-
-    if (!trimmedReport) {
-        return { analysis, dify: null, difyError: null };
-    }
-
-    const {
-        projectId = "",
-        projectName = "",
-        path = "",
-        userId = "",
-        files = undefined
-    } = options || {};
-
-    const resolvedProjectName = projectName || projectId || "sql-report";
-    const resolvedUserId = typeof userId === "string" && userId.trim() ? userId.trim() : undefined;
-    const analysisFilePath = path ? `${path}.analysis.json` : "analysis.json";
-    const segments = partitionContent(trimmedReport);
-    const summary = getDifyConfigSummary();
-
-    console.log(
-        `[sql+dify] Enriching SQL analysis project=${projectId || resolvedProjectName} path=${path || analysisFilePath} ` +
-            `segments=${segments.length} maxSegmentChars=${summary.maxSegmentChars}`
-    );
-
-    try {
-        const difyRaw = await requestDifyJsonEnrichment({
-            projectName: resolvedProjectName,
-            filePath: analysisFilePath,
-            content: trimmedReport,
-            userId: resolvedUserId,
-            segments,
-            files
-        });
-        const dify = normaliseDifyOutput(difyRaw, trimmedReport);
-        return { analysis, dify, difyError: null };
-    } catch (error) {
-        const message = error?.message || String(error);
-        const locationLabel = path || analysisFilePath;
-        console.warn(
-            `[sql+dify] Falling back to static SQL analysis project=${projectId || resolvedProjectName} path=${locationLabel} :: ${message}`,
-            error
-        );
-        return { analysis, dify: null, difyError: error };
-    }
+export async function analyseSqlToReport(sqlText) {
+    return runStaticSqlAnalysis(sqlText);
 }
 
 export function buildSqlReportPayload({ analysis, content, dify, difyError }) {
