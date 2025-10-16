@@ -119,26 +119,11 @@ const projectBatchRunning = (projectId) => {
     return Boolean(state?.running);
 };
 
-function batchProgress(projectId) {
+const projectBatchProgress = (projectId) => {
     const state = props.getProjectBatchState(projectId);
     if (!state?.running) return "";
     return `${state.processed}/${state.total}`;
-}
-
-function batchProgress(projectId) {
-    const state = props.getProjectBatchState(projectId);
-    if (!state?.running) return "";
-    return `${state.processed}/${state.total}`;
-}
-
-watch(
-    () => props.enableResizeEdge,
-    (enabled) => {
-        if (!enabled) {
-            isHoveringResizeEdge.value = false;
-        }
-    }
-);
+};
 </script>
 
 <template>
@@ -178,7 +163,7 @@ watch(
                                 @click="handleProjectGenerateClick($event, entry.project)"
                             >
                                 <span v-if="projectBatchRunning(entry.project.id)">
-                                    批次生成中 {{ batchProgress(entry.project.id) }}
+                                    批次生成中 {{ projectBatchProgress(entry.project.id) }}
                                 </span>
                                 <span v-else>一鍵生成</span>
                             </button>
