@@ -105,7 +105,7 @@
                                 <span class="chatWindow__messageAuthor">{{ msg.role === 'assistant' ? 'AI' : 'User' }}</span>
                                 <span class="chatWindow__messageTime">{{ formatTime(msg.timestamp) }}</span>
                             </header>
-                            <p class="chatWindow__messageBody">{{ msg.content }}</p>
+                            <div class="chatWindow__messageBody" v-html="renderMessageContent(msg)"></div>
                         </article>
                     </template>
                     <div v-else class="chatWindow__messagesEmpty">No messages yet. Start typing!</div>
@@ -144,6 +144,8 @@
 import { ref, computed, watch, nextTick } from "vue";
 
 const DEFAULT_STATUS_MESSAGE = "連接中...";
+
+import { renderMarkdown } from "../scripts/utils/renderMarkdown.js";
 
 const props = defineProps({
     visible: { type: Boolean, default: false },
@@ -369,6 +371,12 @@ function formatTime(value) {
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) return "";
     return date.toLocaleTimeString();
+}
+
+function renderMessageContent(msg) {
+    if (!msg) return "";
+    const content = msg.content ?? "";
+    return renderMarkdown(content);
 }
 </script>
 
@@ -617,8 +625,70 @@ function formatTime(value) {
 
 .chatWindow__messageBody {
     font-size: 13px;
+    line-height: 1.6;
+    display: block;
+}
+
+.chatWindow__messageBody > *:last-child {
+    margin-bottom: 0;
+}
+
+.chatWindow__messageBody p {
+    margin: 0 0 0.75em;
+}
+
+.chatWindow__messageBody ul,
+.chatWindow__messageBody ol {
+    margin: 0 0 0.75em;
+    padding-left: 1.4em;
+}
+
+.chatWindow__messageBody li + li {
+    margin-top: 0.3em;
+}
+
+.chatWindow__messageBody code {
+    font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    background: rgba(148, 163, 184, 0.18);
+    border-radius: 4px;
+    padding: 0.1em 0.4em;
+    font-size: 0.92em;
+}
+
+.chatWindow__messageBody pre {
+    margin: 0 0 0.75em;
+    background: #0f172a;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 8px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
     line-height: 1.5;
-    white-space: pre-wrap;
+}
+
+.chatWindow__messageBody pre code {
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+}
+
+.chatWindow__messageBody a {
+    color: #60a5fa;
+    text-decoration: underline;
+}
+
+.chatWindow__messageBody hr {
+    border: none;
+    border-top: 1px solid rgba(148, 163, 184, 0.3);
+    margin: 0.75em 0;
+}
+
+.chatWindow__messageBody blockquote {
+    margin: 0 0 0.75em;
+    padding-left: 0.9em;
+    border-left: 3px solid rgba(148, 163, 184, 0.35);
+    color: #cbd5f5;
 }
 
 .chatWindow__footer {

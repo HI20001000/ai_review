@@ -101,13 +101,32 @@ function toIsoString(value) {
     return null;
 }
 
+function extractAnalysisFromChunks(chunks) {
+    if (!Array.isArray(chunks)) return null;
+    for (const chunk of chunks) {
+        const raw = typeof chunk?.rawAnalysis === "string" ? chunk.rawAnalysis : null;
+        if (raw && raw.trim()) {
+            return { result: raw };
+        }
+        const nested = chunk?.raw?.analysisResult || chunk?.raw?.rawAnalysis;
+        if (typeof nested === "string" && nested.trim()) {
+            return { result: nested };
+        }
+    }
+    return null;
+}
+
 function mapReportRow(row) {
+    const chunks = safeParseArray(row.chunks_json);
+    const segments = safeParseArray(row.segments_json);
+    const analysis = extractAnalysisFromChunks(chunks);
     return {
         projectId: row.project_id,
         path: row.path,
         report: row.report || "",
-        chunks: safeParseArray(row.chunks_json),
-        segments: safeParseArray(row.segments_json),
+        chunks,
+        segments,
+        analysis,
         conversationId: row.conversation_id || "",
         userId: row.user_id || "",
         generatedAt: toIsoString(row.generated_at),
@@ -407,15 +426,27 @@ app.post("/api/reports/dify", async (req, res, next) => {
         const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
         if (isSqlPath(path)) {
             console.log(`[sql] Running static SQL analysis project=${projectId} path=${path}`);
-            let analysis;
+            let sqlAnalysis;
             try {
-                analysis = await analyseSqlToReport(content);
+                sqlAnalysis = await analyseSqlToReport(content, {
+                    projectId,
+                    projectName,
+                    path,
+                    userId: resolvedUserId,
+                    files
+                });
             } catch (error) {
                 console.error("[sql] Failed to analyse SQL", error);
                 res.status(502).json({ message: error?.message || "SQL 靜態分析失敗" });
                 return;
             }
-            const reportPayload = buildSqlReportPayload({ analysis, content });
+
+            const reportPayload = buildSqlReportPayload({
+                analysis: sqlAnalysis.analysis,
+                content,
+                dify: sqlAnalysis.dify,
+                difyError: sqlAnalysis.difyError
+            });
             await upsertReport({
                 projectId,
                 path,
@@ -431,7 +462,10 @@ app.post("/api/reports/dify", async (req, res, next) => {
                 projectId,
                 path,
                 ...reportPayload,
-                savedAt: savedAtIso
+                savedAt: savedAtIso,
+                difyError:
+                    reportPayload.difyErrorMessage ||
+                    (sqlAnalysis.difyError ? sqlAnalysis.difyError.message || String(sqlAnalysis.difyError) : undefined)
             });
             return;
         }
@@ -492,22 +526,38 @@ app.post("/api/reports/dify/snippet", async (req, res, next) => {
             return;
         }
 
+        const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+
         if (isSqlPath(path)) {
             console.log(`[sql] Running static SQL analysis for snippet project=${projectId} path=${path}`);
-            let analysis;
+            let sqlAnalysis;
             try {
-                analysis = await analyseSqlToReport(normalised.content);
+                sqlAnalysis = await analyseSqlToReport(normalised.content, {
+                    projectId,
+                    projectName,
+                    path,
+                    userId: resolvedUserId,
+                    files
+                });
             } catch (error) {
                 console.error("[sql] Failed to analyse SQL snippet", error);
                 res.status(502).json({ message: error?.message || "SQL 靜態分析失敗" });
                 return;
             }
-            const reportPayload = buildSqlReportPayload({ analysis, content: normalised.content });
+            const reportPayload = buildSqlReportPayload({
+                analysis: sqlAnalysis.analysis,
+                content: normalised.content,
+                dify: sqlAnalysis.dify,
+                difyError: sqlAnalysis.difyError
+            });
             res.json({
                 projectId,
                 path,
                 selection: normalised.meta || undefined,
-                ...reportPayload
+                ...reportPayload,
+                difyError:
+                    reportPayload.difyErrorMessage ||
+                    (sqlAnalysis.difyError ? sqlAnalysis.difyError.message || String(sqlAnalysis.difyError) : undefined)
             });
             return;
         }

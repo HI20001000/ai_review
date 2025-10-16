@@ -292,25 +292,84 @@ export async function analyseSqlToReport(sqlText) {
     return runStaticSqlAnalysis(sqlText);
 }
 
-export function buildSqlReportPayload({ analysis, content }) {
-    const resultText = typeof analysis?.result === "string" ? analysis.result : "";
-    const reportText = resultText || "";
-    const generatedAt = new Date().toISOString();
+export function buildSqlReportPayload({ analysis, content, dify, difyError }) {
+    const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
+    const difyReport = typeof dify?.report === "string" && dify.report.trim().length
+        ? dify.report
+        : rawReport;
+    const difyChunks = Array.isArray(dify?.chunks) && dify.chunks.length
+        ? dify.chunks
+        : null;
+    const annotatedChunks = difyChunks
+        ? difyChunks.map((chunk, index) => ({
+              ...chunk,
+              rawAnalysis: index === 0 ? rawReport : chunk.rawAnalysis
+          }))
+        : [
+              {
+                  index: 1,
+                  total: 1,
+                  answer: rawReport,
+                  raw: rawReport,
+                  rawAnalysis: rawReport
+              }
+          ];
+    const segments = dify?.segments && Array.isArray(dify.segments) && dify.segments.length
+        ? dify.segments
+        : [rawReport || content || ""];
+    let finalReport = difyReport;
+    if (finalReport && finalReport.trim()) {
+        try {
+            JSON.parse(finalReport);
+        } catch (_error) {
+            finalReport = rawReport;
+        }
+    } else {
+        finalReport = rawReport;
+    }
+    const generatedAt = dify?.generatedAt || new Date().toISOString();
+    const difyErrorMessage = difyError ? difyError.message || String(difyError) : "";
+    const enrichmentStatus = dify ? "succeeded" : "failed";
+
+    const originalResult = typeof analysis?.result === "string" ? analysis.result : rawReport;
+    const analysisPayload =
+        analysis && typeof analysis === "object" ? { ...analysis } : originalResult ? {} : null;
+
+    if (analysisPayload) {
+        if (originalResult && typeof analysisPayload.originalResult !== "string") {
+            analysisPayload.originalResult = originalResult;
+        }
+        if (rawReport && typeof analysisPayload.rawReport !== "string") {
+            analysisPayload.rawReport = rawReport;
+        }
+        if (finalReport && finalReport.trim()) {
+            analysisPayload.result = finalReport;
+        } else if (!analysisPayload.result && rawReport) {
+            analysisPayload.result = rawReport;
+        }
+        analysisPayload.enriched = Boolean(dify);
+        if (!analysisPayload.enrichmentStatus) {
+            analysisPayload.enrichmentStatus = enrichmentStatus;
+        }
+        if (difyErrorMessage) {
+            analysisPayload.difyErrorMessage = difyErrorMessage;
+        } else if (!dify) {
+            analysisPayload.difyErrorMessage = "";
+        }
+    }
+
     return {
-        report: reportText,
-        conversationId: "",
-        chunks: [
-            {
-                index: 1,
-                total: 1,
-                answer: reportText,
-                raw: analysis?.result ?? reportText,
-            },
-        ],
-        segments: [content ?? ""],
+        report: finalReport,
+        conversationId: typeof dify?.conversationId === "string" ? dify.conversationId : "",
+        chunks: annotatedChunks,
+        segments,
         generatedAt,
-        analysis,
-        source: "sql-static-analyzer",
+        analysis: analysisPayload,
+        rawReport,
+        dify: dify || null,
+        source: dify ? "sql-rule-engine+dify" : "sql-rule-engine",
+        enrichmentStatus,
+        difyErrorMessage: difyErrorMessage || undefined
     };
 }
 

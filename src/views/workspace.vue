@@ -8,7 +8,6 @@ import * as fileSystemService from "../scripts/services/fileSystemService.js";
 import { generateReportViaDify, fetchProjectReports } from "../scripts/services/reportService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
-import ReportPanel from "../components/reports/ReportPanel.vue";
 
 const preview = usePreview();
 
@@ -144,6 +143,27 @@ const reportProjectEntries = computed(() => {
         };
     });
 });
+
+const reportPanelConfig = computed(() => {
+    if (!isReportToolActive.value) {
+        return null;
+    }
+    return {
+        entries: reportProjectEntries.value,
+        normaliseProjectId,
+        isNodeExpanded: isReportNodeExpanded,
+        toggleNode: toggleReportNode,
+        getReportState: getReportStateForFile,
+        onGenerate: generateReportForFile,
+        onSelect: selectReport,
+        getStatusLabel,
+        onReloadProject: loadReportTreeForProject,
+        onGenerateProject: generateProjectReports,
+        getProjectBatchState,
+        getProjectIssueCount,
+        activeTarget: activeReportTarget.value
+    };
+});
 const readyReports = computed(() => {
     const list = [];
     const projectList = Array.isArray(projects.value) ? projects.value : [];
@@ -168,6 +188,20 @@ const readyReports = computed(() => {
     });
 
     return list;
+});
+
+const projectIssueTotals = computed(() => {
+    const totals = new Map();
+    Object.entries(reportStates).forEach(([key, state]) => {
+        const summary = state?.issueSummary;
+        if (!summary || !Number.isFinite(summary.totalIssues)) return;
+        const parsed = parseReportKey(key);
+        if (!parsed.projectId) return;
+        const previous = totals.get(parsed.projectId);
+        const base = typeof previous === "number" && Number.isFinite(previous) ? previous : 0;
+        totals.set(parsed.projectId, base + summary.totalIssues);
+    });
+    return totals;
 });
 const hasReadyReports = computed(() => readyReports.value.length > 0);
 const activeReport = computed(() => {
@@ -199,6 +233,498 @@ const hasChunkDetails = computed(() => {
     const chunks = report.state.chunks;
     return Array.isArray(chunks) && chunks.length > 1;
 });
+
+const activeReportDetails = computed(() => {
+    const report = activeReport.value;
+    if (!report || report.state.status !== "ready") return null;
+    const parsed = report.state.parsedReport;
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const issues = Array.isArray(parsed.issues) ? parsed.issues : [];
+    const summary = parsed.summary;
+
+    let total = report.state.issueSummary?.totalIssues;
+    if (!Number.isFinite(total)) {
+        const summaryObject = summary && typeof summary === "object" ? summary : null;
+        if (summaryObject) {
+            const candidate = Number(summaryObject.total_issues ?? summaryObject.totalIssues);
+            if (Number.isFinite(candidate)) {
+                total = candidate;
+            }
+        }
+        if (!Number.isFinite(total)) {
+            let computedTotal = 0;
+            for (const issue of issues) {
+                if (Array.isArray(issue?.issues) && issue.issues.length) {
+                    const filtered = issue.issues.filter((entry) => typeof entry === "string" && entry.trim());
+                    computedTotal += filtered.length || issue.issues.length;
+                } else if (typeof issue?.message === "string" && issue.message.trim()) {
+                    computedTotal += 1;
+                }
+            }
+            total = computedTotal;
+        }
+    }
+
+    const summaryText = typeof summary === "string" ? summary.trim() : "";
+    const summaryObject = summary && typeof summary === "object" ? summary : null;
+
+    const severityCounts = new Map();
+    const ruleCounts = new Map();
+
+    const toStringList = (value) => {
+        if (Array.isArray(value)) {
+            return value.map((item) => {
+                if (item == null) return "";
+                return typeof item === "string" ? item : String(item);
+            });
+        }
+        if (value == null) return [];
+        return [typeof value === "string" ? value : String(value)];
+    };
+
+    const toNumberList = (value) => {
+        if (Array.isArray(value)) {
+            return value
+                .map((item) => {
+                    const numeric = Number(item);
+                    return Number.isFinite(numeric) ? numeric : null;
+                })
+                .filter((item) => item !== null);
+        }
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? [numeric] : [];
+    };
+
+    const normalisedIssues = issues.map((issue, index) => {
+        const ruleList = toStringList(issue?.rule_ids);
+        if (!ruleList.length) {
+            ruleList.push(...toStringList(issue?.ruleId));
+            ruleList.push(...toStringList(issue?.rule_id));
+            ruleList.push(...toStringList(issue?.rule));
+        }
+
+        const severityList = toStringList(issue?.severity_levels);
+        if (!severityList.length) {
+            severityList.push(...toStringList(issue?.severity));
+            severityList.push(...toStringList(issue?.level));
+        }
+
+        const messageList = toStringList(issue?.issues);
+        if (!messageList.length) {
+            messageList.push(...toStringList(issue?.message));
+            messageList.push(...toStringList(issue?.description));
+        }
+
+        const recommendationList = toStringList(issue?.recommendation);
+        if (!recommendationList.length) {
+            recommendationList.push(...toStringList(issue?.修改建議));
+            recommendationList.push(...toStringList(issue?.modificationAdvice));
+        }
+
+        const evidenceList = toStringList(issue?.evidence_list);
+        if (!evidenceList.length) {
+            evidenceList.push(...toStringList(issue?.evidence));
+        }
+
+        const columnList = toNumberList(issue?.column);
+        if (!columnList.length) {
+            columnList.push(...toNumberList(issue?.columns));
+        }
+
+        const detailCount = Math.max(
+            messageList.length,
+            ruleList.length,
+            severityList.length,
+            recommendationList.length,
+            columnList.length,
+            evidenceList.length
+        );
+
+        const details = [];
+        for (let detailIndex = 0; detailIndex < detailCount; detailIndex += 1) {
+            const ruleCandidate = ruleList[detailIndex] ?? ruleList[0] ?? "";
+            const messageCandidate = messageList[detailIndex] ?? messageList[0] ?? "";
+            const severityCandidate = severityList[detailIndex] ?? severityList[0] ?? "";
+            const recommendationCandidate = recommendationList[detailIndex] ?? recommendationList[0] ?? "";
+            const evidenceCandidate = evidenceList[detailIndex] ?? evidenceList[0] ?? "";
+            const columnCandidate = columnList[detailIndex] ?? columnList[0] ?? null;
+
+            const ruleId = typeof ruleCandidate === "string" ? ruleCandidate.trim() : String(ruleCandidate ?? "").trim();
+            const message = typeof messageCandidate === "string" ? messageCandidate.trim() : String(messageCandidate ?? "").trim();
+            const severityRaw = typeof severityCandidate === "string" ? severityCandidate.trim() : String(severityCandidate ?? "").trim();
+            const severityKey = severityRaw ? severityRaw.toUpperCase() : "未標示";
+            let severityClass = "info";
+            if (!severityRaw || severityKey === "未標示") {
+                severityClass = "muted";
+            } else if (severityKey.includes("CRIT") || severityKey.includes("ERR")) {
+                severityClass = "error";
+            } else if (severityKey.includes("WARN")) {
+                severityClass = "warn";
+            }
+            const columnNumber = Number(columnCandidate);
+            const column = Number.isFinite(columnNumber) ? columnNumber : null;
+            const suggestion =
+                typeof recommendationCandidate === "string"
+                    ? recommendationCandidate.trim()
+                    : String(recommendationCandidate ?? "").trim();
+            const evidence = typeof evidenceCandidate === "string" ? evidenceCandidate : String(evidenceCandidate ?? "");
+
+            details.push({
+                key: `${index}-detail-${detailIndex}`,
+                index: details.length + 1,
+                ruleId,
+                severity: severityRaw,
+                severityLabel: severityKey,
+                severityClass,
+                message,
+                column,
+                suggestion,
+                evidence
+            });
+        }
+
+        if (!details.length) {
+            details.push({
+                key: `${index}-detail-0`,
+                index: 1,
+                ruleId: "",
+                severity: "",
+                severityLabel: "未標示",
+                severityClass: "muted",
+                message: "",
+                column: null,
+                suggestion: "",
+                evidence: typeof issue?.evidence === "string" ? issue.evidence : ""
+            });
+        }
+
+        details.forEach((detail) => {
+            const severityLabel = detail.severityLabel || "未標示";
+            severityCounts.set(severityLabel, (severityCounts.get(severityLabel) || 0) + 1);
+            if (detail.ruleId) {
+                ruleCounts.set(detail.ruleId, (ruleCounts.get(detail.ruleId) || 0) + 1);
+            }
+        });
+
+        const objectName =
+            (typeof issue?.object === "string" && issue.object.trim()) ||
+            (typeof issue?.object_name === "string" && issue.object_name.trim()) ||
+            "";
+
+        let line = Number(issue?.line);
+        if (!Number.isFinite(line)) line = null;
+
+        const snippet = typeof issue?.snippet === "string" ? issue.snippet : "";
+        const snippetLines = snippet ? snippet.replace(/\r\n?/g, "\n").split("\n") : [];
+
+        const codeLines = snippetLines.map((lineText, idx) => {
+            const rawText = lineText.replace(/\r$/, "");
+            const number = line !== null ? line + idx : null;
+            const displayNumber = number !== null ? String(number) : "";
+            const safeHtml = escapeHtml(rawText);
+            return {
+                key: `${index}-line-${idx}`,
+                number,
+                displayNumber,
+                raw: rawText,
+                html: safeHtml.length ? safeHtml : "&nbsp;",
+                highlight: false
+            };
+        });
+
+        if (codeLines.length) {
+            let highlightApplied = false;
+            if (line !== null) {
+                codeLines.forEach((codeLine) => {
+                    if (codeLine.number === line) {
+                        codeLine.highlight = true;
+                        highlightApplied = true;
+                    }
+                });
+            }
+
+            if (!highlightApplied) {
+                const fallbackIndex = codeLines.findIndex((item) => item.raw.trim().length > 0);
+                const indexToHighlight = fallbackIndex >= 0 ? fallbackIndex : 0;
+                if (codeLines[indexToHighlight]) {
+                    codeLines[indexToHighlight].highlight = true;
+                }
+            }
+        }
+
+        const suggestionList = details
+            .map((detail) => (typeof detail.suggestion === "string" ? detail.suggestion.trim() : ""))
+            .filter((value) => value);
+
+        const fixedCode =
+            (typeof issue?.fixed_code === "string" && issue.fixed_code.trim()) ||
+            (typeof issue?.fixedCode === "string" && issue.fixedCode.trim()) ||
+            "";
+
+        const primaryDetail = details[0];
+        const primaryRuleId = details.find((detail) => detail.ruleId)?.ruleId || "";
+        const primaryMessage = primaryDetail?.message || "";
+        const primarySeverity = primaryDetail?.severity || "";
+        const primarySeverityLabel = primaryDetail?.severityLabel || "未標示";
+        const primarySeverityClass = primaryDetail?.severityClass || "info";
+        const primaryEvidence =
+            (typeof issue?.evidence === "string" && issue.evidence) || primaryDetail?.evidence || "";
+
+        const columns = columnList;
+        const columnPrimary = columns.length ? columns[0] : null;
+
+        return {
+            key: `${primaryRuleId || "issue"}-${index}`,
+            index: index + 1,
+            ruleId: primaryRuleId,
+            ruleIds: ruleList.map((value) => (typeof value === "string" ? value.trim() : String(value ?? "").trim())).filter(Boolean),
+            severity: primarySeverity,
+            severityLabel: primarySeverityLabel,
+            severityClass: primarySeverityClass,
+            message: primaryMessage,
+            objectName,
+            line,
+            column: columns,
+            columnPrimary,
+            snippet,
+            evidence: primaryEvidence,
+            suggestion: suggestionList[0] || "",
+            suggestionList,
+            fixedCode,
+            codeLines,
+            details
+        };
+    });
+
+    if (summaryObject?.by_rule && typeof summaryObject.by_rule === "object") {
+        for (const [rule, count] of Object.entries(summaryObject.by_rule)) {
+            const key = typeof rule === "string" && rule.trim() ? rule.trim() : "";
+            const numeric = Number(count);
+            if (!Number.isFinite(numeric)) continue;
+            const previous = ruleCounts.get(key) || 0;
+            ruleCounts.set(key || "未分類", Math.max(previous, numeric));
+        }
+    }
+
+    const severityBreakdown = Array.from(severityCounts.entries()).map(([label, count]) => ({
+        label,
+        count
+    }));
+
+    severityBreakdown.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+
+    const ruleBreakdown = Array.from(ruleCounts.entries())
+        .filter(([, count]) => Number.isFinite(count) && count > 0)
+        .map(([label, count]) => ({
+            label: label || "未分類",
+            count
+        }));
+
+    ruleBreakdown.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+
+    return {
+        totalIssues: Number.isFinite(total) ? total : null,
+        summaryText,
+        summaryObject,
+        issues: normalisedIssues,
+        severityBreakdown,
+        ruleBreakdown,
+        raw: parsed
+    };
+});
+
+const hasStructuredReport = computed(() => Boolean(activeReportDetails.value));
+const activeReportSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report) return "";
+    const text = report.state?.sourceText;
+    return typeof text === "string" ? text : "";
+});
+
+const activeReportSourceLines = computed(() => {
+    const text = activeReportSourceText.value;
+    if (!text) {
+        return [];
+    }
+    const normalised = text.replace(/\r\n?/g, "\n").split("\n");
+    if (!normalised.length) {
+        return [];
+    }
+    return normalised.map((raw, index) => ({
+        number: index + 1,
+        raw,
+        html: escapeHtml(raw) || "&nbsp;"
+    }));
+});
+
+const reportIssueLines = computed(() => {
+    const details = activeReportDetails.value;
+    const sourceLines = activeReportSourceLines.value;
+    const issues = Array.isArray(details?.issues) ? details.issues : [];
+
+    let maxLine = sourceLines.length;
+    const issuesByLine = new Map();
+    const orphanIssues = [];
+
+    for (const issue of issues) {
+        const lineNumber = Number(issue?.line);
+        if (Number.isFinite(lineNumber) && lineNumber > 0) {
+            const key = Math.max(1, Math.floor(lineNumber));
+            const bucket = issuesByLine.get(key) || [];
+            bucket.push(issue);
+            issuesByLine.set(key, bucket);
+            if (key > maxLine) {
+                maxLine = key;
+            }
+        } else {
+            orphanIssues.push(issue);
+        }
+    }
+
+    const result = [];
+
+    const ensureLineEntry = (lineNumber) => {
+        const index = lineNumber - 1;
+        if (index < sourceLines.length) {
+            return sourceLines[index];
+        }
+        return { number: lineNumber, raw: "", html: "&nbsp;" };
+    };
+
+    for (let lineNumber = 1; lineNumber <= Math.max(1, maxLine); lineNumber += 1) {
+        const baseLine = ensureLineEntry(lineNumber);
+        const lineIssues = issuesByLine.get(lineNumber) || [];
+        const hasIssue = lineIssues.length > 0;
+
+        result.push({
+            key: `code-${lineNumber}`,
+            type: "code",
+            number: lineNumber,
+            displayNumber: String(lineNumber),
+            html: baseLine.html,
+            hasIssue,
+            issues: lineIssues
+        });
+
+        if (hasIssue) {
+            result.push(buildIssueMetaLine("issues", lineNumber, lineIssues));
+            result.push(buildIssueMetaLine("fix", lineNumber, lineIssues));
+        }
+    }
+
+    if (orphanIssues.length) {
+        result.push(buildIssueMetaLine("issues", "orphan", orphanIssues, true));
+        result.push(buildIssueMetaLine("fix", "orphan", orphanIssues, true));
+    }
+
+    return result;
+});
+
+const hasReportIssueLines = computed(() => reportIssueLines.value.length > 0);
+
+const reportIssuesViewMode = ref("code");
+
+const activeReportRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report) return "";
+    const enrichedText = typeof report.state?.report === "string" ? report.state.report : "";
+    if (enrichedText && enrichedText.trim()) {
+        return enrichedText;
+    }
+    const analysisText = report.state?.analysis?.result;
+    if (typeof analysisText === "string" && analysisText.trim()) {
+        return analysisText;
+    }
+    const original = report.state?.analysis?.originalResult;
+    if (typeof original === "string" && original.trim()) {
+        return original;
+    }
+    return "";
+});
+
+function formatReportRawText(rawText) {
+    if (typeof rawText !== "string") return "";
+    let candidate = rawText.trim();
+    if (!candidate) return "";
+
+    let depth = 0;
+    while (depth < 2) {
+        try {
+            const parsed = JSON.parse(candidate);
+            if (typeof parsed === "string") {
+                candidate = parsed.trim();
+                depth += 1;
+                continue;
+            }
+            return JSON.stringify(parsed, null, 2);
+        } catch (error) {
+            break;
+        }
+    }
+
+    return candidate;
+}
+
+const activeReportRawText = computed(() => formatReportRawText(activeReportRawSourceText.value));
+
+const canShowCodeIssues = computed(() => {
+    const report = activeReport.value;
+    if (!report) return false;
+    if (report.state?.sourceLoading || report.state?.sourceError) {
+        return true;
+    }
+    return hasReportIssueLines.value;
+});
+
+const canShowRawIssues = computed(() => activeReportRawText.value.trim().length > 0);
+
+const shouldShowReportIssuesSection = computed(
+    () => Boolean(activeReportDetails.value) || canShowRawIssues.value
+);
+
+const activeReportIssueCount = computed(() => {
+    const details = activeReportDetails.value;
+    if (!details) return null;
+    if (Number.isFinite(details.totalIssues)) return Number(details.totalIssues);
+    const list = Array.isArray(details.issues) ? details.issues : [];
+    return list.length;
+});
+
+function setReportIssuesViewMode(mode) {
+    if (mode !== "code" && mode !== "raw") return;
+    if (mode === reportIssuesViewMode.value) return;
+    if (mode === "code" && !canShowCodeIssues.value) return;
+    if (mode === "raw" && !canShowRawIssues.value) return;
+    reportIssuesViewMode.value = mode;
+}
+
+watch(
+    activeReport,
+    (report) => {
+        if (!report) {
+            reportIssuesViewMode.value = "code";
+            return;
+        }
+        if (canShowCodeIssues.value) {
+            reportIssuesViewMode.value = "code";
+            return;
+        }
+        reportIssuesViewMode.value = activeReportRawText.value.trim() ? "raw" : "code";
+    }
+);
+
+watch(
+    [canShowCodeIssues, canShowRawIssues],
+    ([codeAvailable, rawAvailable]) => {
+        if (reportIssuesViewMode.value === "code" && !codeAvailable && rawAvailable) {
+            reportIssuesViewMode.value = "raw";
+        } else if (reportIssuesViewMode.value === "raw" && !rawAvailable && codeAvailable) {
+            reportIssuesViewMode.value = "code";
+        }
+    },
+    { immediate: true }
+);
 const middlePaneStyle = computed(() => {
     const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
     const width = hasActiveTool ? middlePaneWidth.value : 0;
@@ -224,6 +750,152 @@ function escapeHtml(value) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+}
+
+function buildIssueMetaLine(type, keySource, issues, isOrphan = false) {
+    const label = type === "fix" ? "Fix" : "Issues";
+    const keySuffix = typeof keySource === "number" ? keySource : String(keySource || type);
+    const html = type === "fix"
+        ? buildIssueFixHtml(issues)
+        : buildIssueDetailsHtml(issues, isOrphan);
+    return {
+        key: `${type}-${keySuffix}`,
+        type,
+        number: typeof keySource === "number" ? keySource : null,
+        displayNumber: "",
+        iconLabel: label,
+        html: html || "&nbsp;",
+        hasIssue: true,
+        issues,
+        isMeta: true,
+        isOrphan: Boolean(isOrphan)
+    };
+}
+
+function buildIssueDetailsHtml(issues, isOrphan = false) {
+    if (!Array.isArray(issues) || !issues.length) {
+        return '<div class="reportIssueInlineRow reportIssueInlineRow--empty">未檢測到問題</div>';
+    }
+
+    const rows = [];
+
+    issues.forEach((issue) => {
+        const details = Array.isArray(issue?.details) && issue.details.length ? issue.details : [issue];
+        details.forEach((detail, detailIndex) => {
+            const lineIndex = Number(detail?.index ?? detailIndex + 1);
+            const badges = [];
+            if (Number.isFinite(lineIndex)) {
+                badges.push(`<span class="reportIssueInlineIndex">#${lineIndex}</span>`);
+            }
+            if (detail?.ruleId) {
+                badges.push(`<span class="reportIssueInlineRule">${escapeHtml(detail.ruleId)}</span>`);
+            }
+            if (detail?.severityLabel) {
+                const severityClass = detail.severityClass || "info";
+                badges.push(
+                    `<span class="reportIssueInlineSeverity reportIssueInlineSeverity--${severityClass}">${escapeHtml(
+                        detail.severityLabel
+                    )}</span>`
+                );
+            }
+            if (isOrphan && Number.isFinite(issue?.line)) {
+                badges.push(`<span class="reportIssueInlineLine">Line ${escapeHtml(String(issue.line))}</span>`);
+            }
+
+            const badgeBlock = badges.length
+                ? `<span class="reportIssueInlineBadges">${badges.join(" ")}</span>`
+                : "";
+
+            const messageText =
+                typeof detail?.message === "string" && detail.message.trim()
+                    ? detail.message.trim()
+                    : typeof issue?.message === "string" && issue.message.trim()
+                      ? issue.message.trim()
+                      : "未提供說明";
+            const message = `<span class="reportIssueInlineMessage">${escapeHtml(messageText)}</span>`;
+
+            const metaParts = [];
+            if (issue?.objectName) {
+                metaParts.push(`<span class="reportIssueInlineObject">${escapeHtml(issue.objectName)}</span>`);
+            }
+            if (Number.isFinite(detail?.column)) {
+                metaParts.push(`<span class="reportIssueInlineColumn">列 ${escapeHtml(String(detail.column))}</span>`);
+            }
+            const meta = metaParts.length
+                ? `<span class="reportIssueInlineMeta">${metaParts.join(" · ")}</span>`
+                : "";
+
+            rows.push(`<div class="reportIssueInlineRow">${badgeBlock}${message}${meta}</div>`);
+        });
+    });
+
+    if (!rows.length) {
+        return '<div class="reportIssueInlineRow reportIssueInlineRow--empty">未檢測到問題</div>';
+    }
+
+    return rows.join("");
+}
+
+function buildIssueFixHtml(issues) {
+    if (!Array.isArray(issues) || !issues.length) {
+        return '<div class="reportIssueInlineRow reportIssueInlineRow--empty">暫無建議</div>';
+    }
+
+    const rows = [];
+    const suggestionSet = new Set();
+    const suggestionQueue = [];
+    const fixedCodeSet = new Set();
+    const fixedCodeQueue = [];
+
+    const pushSuggestion = (value) => {
+        if (typeof value !== "string") return;
+        const trimmed = value.trim();
+        if (!trimmed || suggestionSet.has(trimmed)) return;
+        suggestionSet.add(trimmed);
+        suggestionQueue.push(trimmed);
+    };
+
+    issues.forEach((issue) => {
+        const details = Array.isArray(issue?.details) && issue.details.length ? issue.details : [];
+        details.forEach((detail) => {
+            if (typeof detail?.suggestion === "string") {
+                pushSuggestion(detail.suggestion);
+            }
+        });
+
+        const suggestionList = Array.isArray(issue?.suggestionList) ? issue.suggestionList : [];
+        suggestionList.forEach((item) => {
+            if (typeof item === "string") {
+                pushSuggestion(item);
+            }
+        });
+
+        if (typeof issue?.suggestion === "string") {
+            pushSuggestion(issue.suggestion);
+        }
+
+        const fixedCode = typeof issue?.fixedCode === "string" ? issue.fixedCode.trim() : "";
+        if (fixedCode && !fixedCodeSet.has(fixedCode)) {
+            fixedCodeSet.add(fixedCode);
+            fixedCodeQueue.push(fixedCode);
+        }
+    });
+
+    suggestionQueue.forEach((text) => {
+        rows.push(`<div class="reportIssueInlineRow">${escapeHtml(text)}</div>`);
+    });
+
+    fixedCodeQueue.forEach((code) => {
+        rows.push(
+            `<pre class="reportIssueInlineRow reportIssueInlineCode"><code>${escapeHtml(code)}</code></pre>`
+        );
+    });
+
+    if (!rows.length) {
+        return '<div class="reportIssueInlineRow reportIssueInlineRow--empty">暫無建議</div>';
+    }
+
+    return rows.join("");
 }
 
 function renderLineContent(line) {
@@ -676,11 +1348,13 @@ function handleSelectProject(project) {
 }
 
 function toggleProjectTool() {
-    activeRailTool.value = isProjectToolActive.value ? null : "projects";
+    if (isProjectToolActive.value) return;
+    activeRailTool.value = "projects";
 }
 
 function toggleReportTool() {
-    activeRailTool.value = isReportToolActive.value ? null : "reports";
+    if (isReportToolActive.value) return;
+    activeRailTool.value = "reports";
 }
 
 function normaliseProjectId(projectId) {
@@ -715,7 +1389,63 @@ function createDefaultReportState() {
         error: "",
         chunks: [],
         segments: [],
-        conversationId: ""
+        conversationId: "",
+        analysis: null,
+        issueSummary: null,
+        parsedReport: null,
+        sourceText: "",
+        sourceLoaded: false,
+        sourceLoading: false,
+        sourceError: ""
+    };
+}
+
+function parseReportJson(reportText) {
+    if (typeof reportText !== "string") return null;
+    const trimmed = reportText.trim();
+    if (!trimmed) return null;
+    if (!/^\s*[\[{]/.test(trimmed)) return null;
+    try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+            return { issues: parsed };
+        }
+        if (parsed && typeof parsed === "object") {
+            return parsed;
+        }
+        return null;
+    } catch (_error) {
+        return null;
+    }
+}
+
+function computeIssueSummary(reportText, parsedOverride = null) {
+    const parsed = parsedOverride || parseReportJson(reportText);
+    if (!parsed || typeof parsed !== "object") {
+        return null;
+    }
+    const summary = parsed?.summary;
+    let total = null;
+    if (summary && typeof summary === "object") {
+        const candidate = summary.total_issues ?? summary.totalIssues;
+        const numeric = Number(candidate);
+        if (Number.isFinite(numeric)) {
+            total = numeric;
+        }
+    }
+    if (total === null && Array.isArray(parsed?.issues)) {
+        total = parsed.issues.length;
+    }
+    if (total === null && typeof summary === "string") {
+        const normalised = summary.trim();
+        if (normalised === "代码正常" || normalised === "代碼正常" || normalised === "OK") {
+            total = 0;
+        }
+    }
+    return {
+        totalIssues: Number.isFinite(total) ? total : null,
+        summary,
+        raw: parsed
     };
 }
 
@@ -753,6 +1483,14 @@ function getProjectBatchState(projectId) {
     const key = normaliseProjectId(projectId);
     if (!key) return null;
     return reportBatchStates[key] || null;
+}
+
+function getProjectIssueCount(projectId) {
+    const key = normaliseProjectId(projectId);
+    if (!key) return null;
+    const totals = projectIssueTotals.value;
+    if (!totals.has(key)) return null;
+    return totals.get(key);
 }
 
 function ensureFileReportState(projectId, path) {
@@ -867,9 +1605,18 @@ async function hydrateReportsForProject(projectId) {
             state.chunks = Array.isArray(record.chunks) ? record.chunks : [];
             state.segments = Array.isArray(record.segments) ? record.segments : [];
             state.conversationId = record.conversationId || "";
+            state.analysis = record.analysis || null;
+            state.parsedReport = parseReportJson(state.report);
+            state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
             const timestamp = parseHydratedTimestamp(record.generatedAt || record.updatedAt || record.createdAt);
             state.updatedAt = timestamp;
             state.updatedAtDisplay = timestamp ? timestamp.toLocaleString() : null;
+            if (typeof state.sourceText !== "string") {
+                state.sourceText = "";
+            }
+            state.sourceLoaded = Boolean(state.sourceText);
+            state.sourceLoading = false;
+            state.sourceError = "";
         }
         entry.hydratedReports = true;
     } catch (error) {
@@ -933,6 +1680,13 @@ async function generateReportForFile(project, node, options = {}) {
     state.chunks = [];
     state.segments = [];
     state.conversationId = "";
+    state.analysis = null;
+    state.issueSummary = null;
+    state.parsedReport = null;
+    state.sourceText = "";
+    state.sourceLoaded = false;
+    state.sourceLoading = false;
+    state.sourceError = "";
 
     try {
         const root = await getProjectRootHandleById(project.id);
@@ -946,6 +1700,11 @@ async function generateReportForFile(project, node, options = {}) {
         if (!text.trim()) {
             throw new Error("檔案內容為空");
         }
+
+        state.sourceText = text;
+        state.sourceLoaded = true;
+        state.sourceLoading = false;
+        state.sourceError = "";
 
         const payload = await generateReportViaDify({
             projectId,
@@ -962,6 +1721,9 @@ async function generateReportForFile(project, node, options = {}) {
         state.chunks = Array.isArray(payload?.chunks) ? payload.chunks : [];
         state.segments = Array.isArray(payload?.segments) ? payload.segments : [];
         state.conversationId = payload?.conversationId || "";
+        state.analysis = payload?.analysis || null;
+        state.parsedReport = parseReportJson(state.report);
+        state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
         state.error = "";
 
         if (autoSelect) {
@@ -980,6 +1742,13 @@ async function generateReportForFile(project, node, options = {}) {
         state.chunks = [];
         state.segments = [];
         state.conversationId = "";
+        state.analysis = null;
+        state.issueSummary = null;
+        state.parsedReport = null;
+        state.sourceLoading = false;
+        if (!state.sourceText) {
+            state.sourceLoaded = false;
+        }
         const now = new Date();
         state.updatedAt = now;
         state.updatedAtDisplay = now.toLocaleString();
@@ -1153,6 +1922,46 @@ watch(
     { immediate: true }
 );
 
+watch(
+    activeReport,
+    async (report) => {
+        if (!report) return;
+        const state = report.state;
+        if (state.sourceLoaded || state.sourceLoading) {
+            return;
+        }
+        state.sourceLoading = true;
+        state.sourceError = "";
+        try {
+            const root = await getProjectRootHandleById(report.project.id);
+            if (!root) {
+                throw new Error("找不到專案根目錄，無法載入檔案內容");
+            }
+            const fileHandle = await fileSystemService.getFileHandleByPath(root, report.path);
+            if (!fileHandle) {
+                throw new Error("找不到對應的檔案");
+            }
+            const file = await fileHandle.getFile();
+            const text = await file.text();
+            state.sourceText = typeof text === "string" ? text : "";
+            state.sourceLoaded = state.sourceText.length > 0;
+            state.sourceError = "";
+        } catch (error) {
+            state.sourceText = "";
+            state.sourceLoaded = false;
+            state.sourceError = error?.message ? String(error.message) : "無法載入檔案內容";
+            console.error("[Report] Failed to load source text", {
+                projectId: report.project.id,
+                path: report.path,
+                error
+            });
+        } finally {
+            state.sourceLoading = false;
+        }
+    },
+    { immediate: true }
+);
+
 function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
 }
@@ -1272,12 +2081,9 @@ function closeChatWindow() {
 }
 
 function toggleChatWindow() {
-    if (isChatWindowOpen.value) {
-        closeChatWindow();
-    } else {
-        if (!isChatToggleDisabled.value) {
-            openChatWindow();
-        }
+    if (isChatWindowOpen.value) return;
+    if (!isChatToggleDisabled.value) {
+        openChatWindow();
     }
 }
 
@@ -1503,28 +2309,9 @@ onBeforeUnmount(() => {
                 :is-loading-tree="isLoadingTree"
                 :open-node="openNode"
                 :select-tree-node="selectTreeNode"
+                :report-config="reportPanelConfig"
                 @resize-start="startPreviewResize"
-            >
-                <template v-if="isReportToolActive">
-                    <ReportPanel
-                        :style-width="{ flex: '1 1 auto', width: '100%' }"
-                        :entries="reportProjectEntries"
-                        :normalise-project-id="normaliseProjectId"
-                        :is-node-expanded="isReportNodeExpanded"
-                        :toggle-node="toggleReportNode"
-                        :get-report-state="getReportStateForFile"
-                        :on-generate="generateReportForFile"
-                        :on-select="selectReport"
-                        :get-status-label="getStatusLabel"
-                        :on-reload-project="loadReportTreeForProject"
-                        :on-generate-project="generateProjectReports"
-                        :get-project-batch-state="getProjectBatchState"
-                        :active-target="activeReportTarget"
-                        :is-resizing="false"
-                        :enable-resize-edge="false"
-                    />
-                </template>
-            </PanelRail>
+            />
 
             <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive }">
                 <template v-if="isReportToolActive">
@@ -1558,7 +2345,193 @@ onBeforeUnmount(() => {
                                     <p class="reportErrorHint">請檢查檔案權限、Dify 設定或稍後再試。</p>
                                 </div>
                                 <template v-else>
-                                    <pre class="reportBody codeScroll">{{ activeReport.state.report }}</pre>
+                                    <div v-if="hasStructuredReport" class="reportStructured">
+                                        <section class="reportSummaryGrid">
+                                            <div class="reportSummaryCard reportSummaryCard--total">
+                                                <span class="reportSummaryLabel">總問題</span>
+                                                <span class="reportSummaryValue">
+                                                    {{
+                                                        activeReportDetails?.totalIssues === null
+                                                            ? "—"
+                                                            : activeReportDetails.totalIssues
+                                                    }}
+                                                </span>
+                                            </div>
+                                            <div
+                                                v-if="activeReportDetails?.summaryText"
+                                                class="reportSummaryCard reportSummaryCard--span"
+                                            >
+                                                <span class="reportSummaryLabel">摘要</span>
+                                                <p class="reportSummaryText">{{ activeReportDetails.summaryText }}</p>
+                                            </div>
+                                            <div
+                                                v-else-if="activeReportDetails && activeReportDetails.totalIssues === 0"
+                                                class="reportSummaryCard reportSummaryCard--span"
+                                            >
+                                                <span class="reportSummaryLabel">摘要</span>
+                                                <p class="reportSummaryText">未檢測到問題。</p>
+                                            </div>
+                                            <div
+                                                v-if="activeReportDetails?.ruleBreakdown?.length"
+                                                class="reportSummaryCard"
+                                            >
+                                                <span class="reportSummaryLabel">規則分佈</span>
+                                                <ul class="reportSummaryList">
+                                                    <li
+                                                        v-for="item in activeReportDetails.ruleBreakdown"
+                                                        :key="`${item.label}-${item.count}`"
+                                                    >
+                                                        <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                                                        <span class="reportSummaryItemValue">{{ item.count }}</span>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <div
+                                                v-if="activeReportDetails?.severityBreakdown?.length"
+                                                class="reportSummaryCard"
+                                            >
+                                                <span class="reportSummaryLabel">嚴重度</span>
+                                                <ul class="reportSummaryList">
+                                                    <li
+                                                        v-for="item in activeReportDetails.severityBreakdown"
+                                                        :key="`${item.label}-${item.count}`"
+                                                    >
+                                                        <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                                                        <span class="reportSummaryItemValue">{{ item.count }}</span>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                        </section>
+
+                                        <section class="reportIssuesSection" v-if="shouldShowReportIssuesSection">
+                                            <div class="reportIssuesHeader">
+                                                <div class="reportIssuesHeaderInfo">
+                                                    <h4>問題清單</h4>
+                                                    <span class="reportIssuesTotal">
+                                                        <template v-if="activeReportIssueCount !== null">
+                                                            共 {{ activeReportIssueCount }} 項
+                                                        </template>
+                                                        <template v-else>—</template>
+                                                    </span>
+                                                </div>
+                                                <div class="reportIssuesToggle" role="group" aria-label="檢視模式">
+                                                    <button
+                                                        type="button"
+                                                        class="reportIssuesToggleButton"
+                                                        :class="{ active: reportIssuesViewMode === 'code' }"
+                                                        :disabled="!canShowCodeIssues"
+                                                        @click="setReportIssuesViewMode('code')"
+                                                    >
+                                                        代碼視圖
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        class="reportIssuesToggleButton"
+                                                        :class="{ active: reportIssuesViewMode === 'raw' }"
+                                                        :disabled="!canShowRawIssues"
+                                                        @click="setReportIssuesViewMode('raw')"
+                                                    >
+                                                        原始資料
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div class="reportIssuesContent">
+                                                <template v-if="reportIssuesViewMode === 'code'">
+                                                    <template v-if="activeReportDetails">
+                                                        <div
+                                                            v-if="activeReport.state.sourceLoading"
+                                                            class="reportIssuesNotice"
+                                                        >
+                                                            正在載入原始碼…
+                                                        </div>
+                                                        <div
+                                                            v-else-if="activeReport.state.sourceError"
+                                                            class="reportIssuesNotice reportIssuesNotice--error"
+                                                        >
+                                                            無法載入檔案內容：{{ activeReport.state.sourceError }}
+                                                        </div>
+                                                        <div
+                                                            v-else-if="hasReportIssueLines"
+                                                            class="pvBox codeBox reportIssuesBox"
+                                                        >
+                                                            <div class="codeScroll reportIssueCodeScroll">
+                                                                <div class="codeEditor">
+                                                                    <div
+                                                                        v-for="line in reportIssueLines"
+                                                                        :key="line.key"
+                                                                        class="codeLine"
+                                                                        :class="{
+                                                                            'codeLine--issue': line.type === 'code' && line.hasIssue,
+                                                                            'codeLine--meta': line.type !== 'code',
+                                                                            'codeLine--issuesMeta': line.type === 'issues',
+                                                                            'codeLine--fixMeta': line.type === 'fix'
+                                                                        }"
+                                                                    >
+                                                                        <span
+                                                                            class="codeLineNo"
+                                                                            :class="{
+                                                                                'codeLineNo--issue': line.type === 'code' && line.hasIssue,
+                                                                                'codeLineNo--meta': line.type !== 'code',
+                                                                                'codeLineNo--issues': line.type === 'issues',
+                                                                                'codeLineNo--fix': line.type === 'fix'
+                                                                            }"
+                                                                            :data-line="line.displayNumber"
+                                                                            :aria-label="line.type !== 'code' ? line.iconLabel : null"
+                                                                            :aria-hidden="line.type === 'code'"
+                                                                        >
+                                                                            <svg
+                                                                                v-if="line.type === 'issues'"
+                                                                                class="codeLineNoIcon codeLineNoIcon--warning"
+                                                                                viewBox="0 0 20 20"
+                                                                                focusable="false"
+                                                                                aria-hidden="true"
+                                                                            >
+                                                                                <path
+                                                                                    d="M10.447 2.105a1 1 0 00-1.894 0l-7 14A1 1 0 002.447 18h15.106a1 1 0 00.894-1.447l-7-14zM10 6a1 1 0 01.993.883L11 7v4a1 1 0 01-1.993.117L9 11V7a1 1 0 011-1zm0 8a1 1 0 110 2 1 1 0 010-2z"
+                                                                                />
+                                                                            </svg>
+                                                                            <svg
+                                                                                v-else-if="line.type === 'fix'"
+                                                                                class="codeLineNoIcon codeLineNoIcon--fix"
+                                                                                viewBox="0 0 20 20"
+                                                                                focusable="false"
+                                                                                aria-hidden="true"
+                                                                            >
+                                                                                <path
+                                                                                    d="M17.898 2.102a1 1 0 00-1.517.127l-2.156 2.873-1.21-.403a1 1 0 00-1.043.24l-4.95 4.95a1 1 0 000 1.414l1.775 1.775-5.189 5.189a1 1 0 001.414 1.414l5.189-5.189 1.775 1.775a1 1 0 001.414 0l4.95-4.95a1 1 0 00.24-1.043l-.403-1.21 2.873-2.156a1 1 0 00.127-1.517l-.489-.489z"
+                                                                                />
+                                                                            </svg>
+                                                                        </span>
+                                                                        <span
+                                                                            class="codeLineContent"
+                                                                            :class="{
+                                                                                'codeLineContent--issueHighlight':
+                                                                                    line.type === 'code' && line.hasIssue,
+                                                                                'codeLineContent--issues': line.type === 'issues',
+                                                                                'codeLineContent--fix': line.type === 'fix'
+                                                                            }"
+                                                                            v-html="line.html"
+                                                                        ></span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
+                                                    </template>
+                                                    <p v-else class="reportIssuesEmpty">此報告不支援結構化檢視。</p>
+                                                </template>
+                                                <template v-else-if="reportIssuesViewMode === 'raw'">
+                                                    <div v-if="activeReportRawText.trim().length" class="reportRow">
+                                                        <pre class="reportRowContent codeScroll">{{ activeReportRawText }}</pre>
+                                                    </div>
+                                                    <p v-else class="reportIssuesEmpty">尚未取得原始報告內容。</p>
+                                                </template>
+                                            </div>
+                                        </section>
+                                        <p v-else class="reportIssuesEmpty">未檢測到任何問題。</p>
+
+                                    </div>
+                                    <pre v-else class="reportBody codeScroll">{{ activeReport.state.report }}</pre>
                                     <details v-if="hasChunkDetails" class="reportChunks">
                                         <summary>分段輸出（{{ activeReport.state.chunks.length }}）</summary>
                                         <ol class="reportChunkList">
@@ -2006,6 +2979,435 @@ body,
     word-break: break-word;
     overflow: auto;
     max-height: 100%;
+}
+
+.reportStructured {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.reportSummaryGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.reportSummaryCard {
+    border: 1px solid #2f2f2f;
+    background: #1f1f1f;
+    border-radius: 6px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.reportSummaryCard--total {
+    background: #1f1f1f;
+    border-color: #2f2f2f;
+}
+
+.reportSummaryCard--span {
+    grid-column: span 2;
+}
+
+@media (max-width: 720px) {
+    .reportSummaryCard--span {
+        grid-column: span 1;
+    }
+}
+
+.reportSummaryLabel {
+    font-size: 12px;
+    font-weight: 600;
+    color: #cbd5f5;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.reportSummaryValue {
+    font-size: 28px;
+    font-weight: 700;
+    color: #f8fafc;
+    line-height: 1;
+}
+
+.reportSummaryText {
+    margin: 0;
+    font-size: 13px;
+    color: #e2e8f0;
+    line-height: 1.5;
+}
+
+.reportSummaryList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    color: #e2e8f0;
+}
+
+.reportSummaryItemLabel {
+    font-weight: 600;
+    margin-right: 6px;
+}
+
+.reportSummaryItemValue {
+    color: #cbd5f5;
+}
+
+
+.reportIssuesSection {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+
+.reportIssuesHeader {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.reportIssuesHeaderInfo {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.reportIssuesToggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.reportIssuesToggleButton {
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.14);
+    color: #e2e8f0;
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.reportIssuesToggleButton.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.28), rgba(14, 165, 233, 0.28));
+    border-color: rgba(59, 130, 246, 0.5);
+    color: #f8fafc;
+}
+
+.reportIssuesToggleButton:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.reportIssuesContent {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportIssuesHeader h4 {
+    margin: 0;
+    font-size: 16px;
+    color: #f8fafc;
+}
+
+.reportIssuesTotal {
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportIssuesNotice {
+    padding: 10px 14px;
+    border-radius: 6px;
+    background: rgba(148, 163, 184, 0.12);
+    color: #e2e8f0;
+    font-size: 13px;
+}
+
+.reportIssuesNotice--error {
+    background: rgba(248, 113, 113, 0.12);
+    color: #fda4af;
+}
+
+.reportIssuesBox {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.reportIssuesBox .codeScroll {
+    flex: 1 1 auto;
+    max-height: none;
+    overflow: auto;
+}
+
+.reportRow {
+    flex: 1 1 auto;
+    min-height: 0;
+    border: 1px solid #2f2f2f;
+    border-radius: 6px;
+    background: #1b1b1b;
+    display: flex;
+    flex-direction: column;
+}
+
+.reportRowContent {
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 16px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.45;
+    color: #e2e8f0;
+    background: transparent;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.reportIssuesBox .codeEditor {
+    padding: 4px 0;
+}
+
+.reportIssuesBox .codeLine {
+    border-left: 3px solid transparent;
+    padding: 2px 0;
+}
+
+.reportIssuesBox .codeLine--issue {
+    background: rgba(248, 113, 113, 0.12);
+    border-left-color: rgba(248, 113, 113, 0.65);
+}
+
+.codeLineNo--issue {
+    color: #fca5a5;
+}
+
+.codeLineContent--issueHighlight {
+    color: #fee2e2;
+    background: rgba(248, 113, 113, 0.08);
+}
+
+.reportIssuesBox .codeLine--meta {
+    background: rgba(15, 23, 42, 0.92);
+    border-left-color: rgba(148, 163, 184, 0.4);
+}
+
+.reportIssuesBox .codeLine--issuesMeta {
+    background: rgba(251, 146, 60, 0.18);
+    border-left-color: rgba(251, 146, 60, 0.55);
+}
+
+.reportIssuesBox .codeLine--fixMeta {
+    background: rgba(56, 189, 248, 0.14);
+    border-left-color: rgba(56, 189, 248, 0.5);
+}
+
+.codeLineNo--meta {
+    color: #cbd5f5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-right: 0;
+}
+
+.codeLineNo--meta::before {
+    content: "";
+}
+
+.codeLineNo--issues {
+    color: #f97316;
+}
+
+.codeLineNo--fix {
+    color: #38bdf8;
+}
+
+.codeLineNoIcon {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+    display: block;
+}
+
+.codeLineNoIcon--warning {
+    color: inherit;
+}
+
+.codeLineContent--issues,
+.codeLineContent--fix {
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+}
+
+.codeLineContent--issues {
+    color: #fed7aa;
+}
+
+.codeLineContent--fix {
+    color: #bae6fd;
+}
+
+.reportIssueInlineRow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-start;
+    margin: 0 0 6px;
+    color: #f8fafc;
+}
+
+.reportIssueInlineRow:last-child {
+    margin-bottom: 0;
+}
+
+.reportIssueInlineRow--empty {
+    color: #cbd5f5;
+    font-style: italic;
+}
+
+.reportIssueInlineCode {
+    width: 100%;
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: var(--code-font, "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    color: #e2e8f0;
+    background-clip: padding-box;
+}
+
+.reportIssueInlineCode code {
+    font-family: inherit;
+}
+
+.reportIssueInlineBadges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #cbd5f5;
+}
+
+.reportIssueInlineIndex {
+    color: #bfdbfe;
+}
+
+.reportIssueInlineRule {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(59, 130, 246, 0.2);
+    color: #bfdbfe;
+    font-weight: 600;
+}
+
+.reportIssueInlineSeverity {
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    border: 1px solid transparent;
+}
+
+.reportIssueInlineSeverity--error {
+    background: rgba(248, 113, 113, 0.18);
+    color: #fca5a5;
+    border-color: rgba(248, 113, 113, 0.35);
+}
+
+.reportIssueInlineSeverity--warn {
+    background: rgba(234, 179, 8, 0.2);
+    color: #facc15;
+    border-color: rgba(234, 179, 8, 0.35);
+}
+
+.reportIssueInlineSeverity--info {
+    background: rgba(59, 130, 246, 0.2);
+    color: #bfdbfe;
+    border-color: rgba(59, 130, 246, 0.35);
+}
+
+.reportIssueInlineSeverity--muted {
+    background: rgba(148, 163, 184, 0.2);
+    color: #cbd5f5;
+    border-color: rgba(148, 163, 184, 0.35);
+}
+
+.reportIssueInlineLine {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.25);
+    color: #cbd5f5;
+    font-weight: 600;
+}
+
+.reportIssueInlineMessage {
+    flex: 1 1 220px;
+    min-width: 200px;
+    font-weight: 600;
+}
+
+.reportIssueInlineMeta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 12px;
+    color: #cbd5f5;
+}
+
+.reportIssueInlineObject {
+    font-weight: 600;
+}
+
+.reportIssueInlineColumn {
+    color: #e2e8f0;
+}
+
+.reportIssuesEmpty {
+    margin: 0;
+    font-size: 13px;
+    color: #94a3b8;
+}
+
+.reportRaw {
+    border: 1px solid #2f2f2f;
+    border-radius: 6px;
+    background: #111827;
+    padding: 10px 14px;
+}
+
+.reportRaw > summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+    color: #cbd5f5;
+}
+
+.reportRaw > summary::marker {
+    color: #94a3b8;
 }
 
 .reportBody,

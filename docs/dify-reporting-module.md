@@ -38,6 +38,26 @@ DIFY_CHAT_ENDPOINT=/workflow/run
 
 後端服務與 `npm run db:init` 等指令會透過 `server/lib/env.js` 自動載入 `.env`，並在成功讀取時顯示 `[env] Loaded environment variables from ...`。重新啟動伺服器後，可從啟動日誌中的 `[env]`、`[dify]` 訊息確認設定是否生效。
 
+## SQL 靜態分析器
+
+當請求的檔案副檔名為 `.sql` 時，後端會改用專屬的靜態規則引擎（`server/lib/sql_rule_engine.py`）產生報告，不會呼叫 Dify。伺服器會將檔案內容透過標準輸入傳給該 Python 腳本，然後直接使用回傳的 JSON 結果填入報告。
+
+預設會依序嘗試以下命令尋找 Python 直譯器：
+
+1. `.env` 或系統環境中的 `SQL_ANALYZER_PYTHON`、`PYTHON_PATH`、`PYTHON`
+2. `python3`
+3. `python`
+4. `py -3`
+5. `py`
+
+若伺服器日誌仍出現 `Python was not found` 相關訊息，可在 `.env` 明確指定直譯器路徑，例如：
+
+```ini
+SQL_ANALYZER_PYTHON=C:\\Python312\\python.exe
+```
+
+重新啟動 `npm run server` 後，啟動日誌會在第一次執行 SQL 分析時輸出 `[sql]` 前綴的訊息。若 Python 找不到或腳本回傳錯誤，API 會以 502 回應並將實際錯誤訊息包含在 body 中，方便排查。
+
 ## 區塊審查（Snippet Review）
 
 除了整個檔案的報告外，工作區左側工具欄新增了「區塊審查」圖示，可在同一個兩欄版面中保留檔案樹，並於主視窗選取特定行段後一鍵送交 Dify。瀏覽器會監聽文字預覽區的選取範圍，自動記錄起迄行數與行數統計，並於成功回傳後在右側面板顯示最新的片段報告與分段輸出。
