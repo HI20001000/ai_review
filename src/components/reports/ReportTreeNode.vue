@@ -316,6 +316,11 @@ function handleSelect(event) {
     background: var(--tree-badge-error);
 }
 
+.statusBadge--error {
+    background: rgba(248, 113, 113, 0.2);
+    color: #f87171;
+}
+
 .reportActionBtn {
     flex: 0 0 auto;
     padding: 6px 12px;
@@ -365,6 +370,13 @@ function handleSelect(event) {
     font-size: 12px;
     color: #f87171;
     padding-left: 62px;
+}
+
+.reportErrorMessage {
+    margin: 0;
+    font-size: 12px;
+    color: #f87171;
+    padding-left: 54px;
 }
 
 .reportTimestamp {
