@@ -82,23 +82,54 @@ def _add_issue(
     evidence: str = "",
     severity: str = "ERROR",
     obj_name: str = "",
+    recommendation: str = "",
 ) -> None:
     line, col = _idx_to_linecol(sql, pos_idx)
     snippet = _line_snippet(sql, pos_idx)
-    issues.append(
-        {
+    resolved_evidence = evidence or snippet
+
+    # Ensure issues affecting the same line are aggregated so arrays remain aligned
+    existing = None
+    for entry in issues:
+        if entry.get("line") == line:
+            existing = entry
+            break
+
+    if existing is None:
+        existing = {
             "rule_id": rule_id,
+            "rule_ids": [rule_id],
             "severity": severity,
+            "severity_levels": [severity],
             "message": message,
+            "issues": [message],
             "object": obj_name,
             "line": line,
-            "column": col,
+            "column": [col],
             "snippet": snippet,
-            "evidence": evidence or snippet,
-            "recommendation": "",
+            "evidence": resolved_evidence,
+            "evidence_list": [resolved_evidence],
+            "recommendation": [recommendation or ""],
             "fixed_code": "",
         }
-    )
+        issues.append(existing)
+        return
+
+    existing.setdefault("rule_ids", []).append(rule_id)
+    existing.setdefault("severity_levels", []).append(severity)
+    columns = existing.setdefault("column", [])
+    columns.append(col)
+    entries = existing.setdefault("issues", [])
+    entries.append(message)
+    existing.setdefault("recommendation", []).append(recommendation or "")
+    evidence_list = existing.setdefault("evidence_list", [])
+    evidence_list.append(resolved_evidence)
+
+    # Keep single-value fallbacks in sync for legacy consumers
+    existing["rule_id"] = existing["rule_ids"][0]
+    existing["severity"] = existing["severity_levels"][0]
+    existing["message"] = existing["issues"][0]
+    existing["evidence"] = existing["evidence_list"][0]
 
 
 # ---------- rule checks ----------
@@ -293,25 +324,46 @@ def main(sql_query: str) -> Dict[str, str]:
     file_extension = ".sql"
 
     if not issues:
-        payload: Dict = {
+        payload = {
             "summary": {
                 "message": "代码正常",
                 "file_extension": file_extension,
-                "total_issues": 0
+                "total_issues": 0,
             },
-            "issues": []
+            "issues": [],
         }
     else:
         by_rule: Dict[str, int] = {}
+        total_count = 0
         for issue in issues:
-            by_rule[issue["rule_id"]] = by_rule.get(issue["rule_id"], 0) + 1
+            rule_ids = issue.get("rule_ids")
+            if isinstance(rule_ids, list) and rule_ids:
+                for rule in rule_ids:
+                    if not isinstance(rule, str):
+                        continue
+                    key = rule.strip()
+                    if not key:
+                        continue
+                    by_rule[key] = by_rule.get(key, 0) + 1
+            else:
+                rule = issue.get("rule_id")
+                if isinstance(rule, str) and rule.strip():
+                    key = rule.strip()
+                    by_rule[key] = by_rule.get(key, 0) + 1
+
+            entries = issue.get("issues")
+            if isinstance(entries, list) and entries:
+                total_count += len(entries)
+            else:
+                total_count += 1
+
         payload = {
             "summary": {
-                "total_issues": len(issues),
+                "total_issues": total_count,
                 "by_rule": by_rule,
-                "file_extension": file_extension
+                "file_extension": file_extension,
             },
-            "issues": issues
+            "issues": issues,
         }
 
     result = json.dumps(payload, ensure_ascii=False, indent=2)

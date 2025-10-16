@@ -253,7 +253,16 @@ const activeReportDetails = computed(() => {
             }
         }
         if (!Number.isFinite(total)) {
-            total = issues.length;
+            let computedTotal = 0;
+            for (const issue of issues) {
+                if (Array.isArray(issue?.issues) && issue.issues.length) {
+                    const filtered = issue.issues.filter((entry) => typeof entry === "string" && entry.trim());
+                    computedTotal += filtered.length || issue.issues.length;
+                } else if (typeof issue?.message === "string" && issue.message.trim()) {
+                    computedTotal += 1;
+                }
+            }
+            total = computedTotal;
         }
     }
 
@@ -263,59 +272,150 @@ const activeReportDetails = computed(() => {
     const severityCounts = new Map();
     const ruleCounts = new Map();
 
+    const toStringList = (value) => {
+        if (Array.isArray(value)) {
+            return value.map((item) => {
+                if (item == null) return "";
+                return typeof item === "string" ? item : String(item);
+            });
+        }
+        if (value == null) return [];
+        return [typeof value === "string" ? value : String(value)];
+    };
+
+    const toNumberList = (value) => {
+        if (Array.isArray(value)) {
+            return value
+                .map((item) => {
+                    const numeric = Number(item);
+                    return Number.isFinite(numeric) ? numeric : null;
+                })
+                .filter((item) => item !== null);
+        }
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? [numeric] : [];
+    };
+
     const normalisedIssues = issues.map((issue, index) => {
-        const ruleIdRaw =
-            (typeof issue?.rule_id === "string" && issue.rule_id.trim()) ||
-            (typeof issue?.ruleId === "string" && issue.ruleId.trim()) ||
-            (typeof issue?.rule === "string" && issue.rule.trim()) ||
-            "";
-        const ruleId = ruleIdRaw || "";
-        if (ruleId) {
-            ruleCounts.set(ruleId, (ruleCounts.get(ruleId) || 0) + 1);
+        const ruleList = toStringList(issue?.rule_ids);
+        if (!ruleList.length) {
+            ruleList.push(...toStringList(issue?.ruleId));
+            ruleList.push(...toStringList(issue?.rule_id));
+            ruleList.push(...toStringList(issue?.rule));
         }
 
-        const severityRaw =
-            (typeof issue?.severity === "string" && issue.severity.trim()) ||
-            (typeof issue?.level === "string" && issue.level.trim()) ||
-            "";
-        const severity = severityRaw || "";
-        const severityKey = severity ? severity.toUpperCase() : "未標示";
-        severityCounts.set(severityKey, (severityCounts.get(severityKey) || 0) + 1);
-
-        let severityClass = "info";
-        const severityNormalised = severityKey.toUpperCase();
-        if (!severity || severityKey === "未標示") {
-            severityClass = "muted";
-        } else if (severityNormalised.includes("CRIT") || severityNormalised.includes("ERR")) {
-            severityClass = "error";
-        } else if (severityNormalised.includes("WARN")) {
-            severityClass = "warn";
-        } else if (severityNormalised.includes("INFO")) {
-            severityClass = "info";
+        const severityList = toStringList(issue?.severity_levels);
+        if (!severityList.length) {
+            severityList.push(...toStringList(issue?.severity));
+            severityList.push(...toStringList(issue?.level));
         }
+
+        const messageList = toStringList(issue?.issues);
+        if (!messageList.length) {
+            messageList.push(...toStringList(issue?.message));
+            messageList.push(...toStringList(issue?.description));
+        }
+
+        const recommendationList = toStringList(issue?.recommendation);
+        if (!recommendationList.length) {
+            recommendationList.push(...toStringList(issue?.修改建議));
+            recommendationList.push(...toStringList(issue?.modificationAdvice));
+        }
+
+        const evidenceList = toStringList(issue?.evidence_list);
+        if (!evidenceList.length) {
+            evidenceList.push(...toStringList(issue?.evidence));
+        }
+
+        const columnList = toNumberList(issue?.column);
+        if (!columnList.length) {
+            columnList.push(...toNumberList(issue?.columns));
+        }
+
+        const detailCount = Math.max(
+            messageList.length,
+            ruleList.length,
+            severityList.length,
+            recommendationList.length,
+            columnList.length,
+            evidenceList.length
+        );
+
+        const details = [];
+        for (let detailIndex = 0; detailIndex < detailCount; detailIndex += 1) {
+            const ruleCandidate = ruleList[detailIndex] ?? ruleList[0] ?? "";
+            const messageCandidate = messageList[detailIndex] ?? messageList[0] ?? "";
+            const severityCandidate = severityList[detailIndex] ?? severityList[0] ?? "";
+            const recommendationCandidate = recommendationList[detailIndex] ?? recommendationList[0] ?? "";
+            const evidenceCandidate = evidenceList[detailIndex] ?? evidenceList[0] ?? "";
+            const columnCandidate = columnList[detailIndex] ?? columnList[0] ?? null;
+
+            const ruleId = typeof ruleCandidate === "string" ? ruleCandidate.trim() : String(ruleCandidate ?? "").trim();
+            const message = typeof messageCandidate === "string" ? messageCandidate.trim() : String(messageCandidate ?? "").trim();
+            const severityRaw = typeof severityCandidate === "string" ? severityCandidate.trim() : String(severityCandidate ?? "").trim();
+            const severityKey = severityRaw ? severityRaw.toUpperCase() : "未標示";
+            let severityClass = "info";
+            if (!severityRaw || severityKey === "未標示") {
+                severityClass = "muted";
+            } else if (severityKey.includes("CRIT") || severityKey.includes("ERR")) {
+                severityClass = "error";
+            } else if (severityKey.includes("WARN")) {
+                severityClass = "warn";
+            }
+            const columnNumber = Number(columnCandidate);
+            const column = Number.isFinite(columnNumber) ? columnNumber : null;
+            const suggestion =
+                typeof recommendationCandidate === "string"
+                    ? recommendationCandidate.trim()
+                    : String(recommendationCandidate ?? "").trim();
+            const evidence = typeof evidenceCandidate === "string" ? evidenceCandidate : String(evidenceCandidate ?? "");
+
+            details.push({
+                key: `${index}-detail-${detailIndex}`,
+                index: details.length + 1,
+                ruleId,
+                severity: severityRaw,
+                severityLabel: severityKey,
+                severityClass,
+                message,
+                column,
+                suggestion,
+                evidence
+            });
+        }
+
+        if (!details.length) {
+            details.push({
+                key: `${index}-detail-0`,
+                index: 1,
+                ruleId: "",
+                severity: "",
+                severityLabel: "未標示",
+                severityClass: "muted",
+                message: "",
+                column: null,
+                suggestion: "",
+                evidence: typeof issue?.evidence === "string" ? issue.evidence : ""
+            });
+        }
+
+        details.forEach((detail) => {
+            const severityLabel = detail.severityLabel || "未標示";
+            severityCounts.set(severityLabel, (severityCounts.get(severityLabel) || 0) + 1);
+            if (detail.ruleId) {
+                ruleCounts.set(detail.ruleId, (ruleCounts.get(detail.ruleId) || 0) + 1);
+            }
+        });
 
         const objectName =
             (typeof issue?.object === "string" && issue.object.trim()) ||
             (typeof issue?.object_name === "string" && issue.object_name.trim()) ||
             "";
 
-        const suggestion =
-            (typeof issue?.recommendation === "string" && issue.recommendation.trim()) ||
-            (typeof issue?.修改建議 === "string" && issue.修改建議.trim()) ||
-            (typeof issue?.modificationAdvice === "string" && issue.modificationAdvice.trim()) ||
-            "";
-        const fixedCode =
-            (typeof issue?.fixed_code === "string" && issue.fixed_code.trim()) ||
-            (typeof issue?.fixedCode === "string" && issue.fixedCode.trim()) ||
-            "";
-
         let line = Number(issue?.line);
         if (!Number.isFinite(line)) line = null;
-        let column = Number(issue?.column);
-        if (!Number.isFinite(column)) column = null;
 
         const snippet = typeof issue?.snippet === "string" ? issue.snippet : "";
-        const evidence = typeof issue?.evidence === "string" ? issue.evidence : "";
         const snippetLines = snippet ? snippet.replace(/\r\n?/g, "\n").split("\n") : [];
 
         const codeLines = snippetLines.map((lineText, idx) => {
@@ -353,25 +453,47 @@ const activeReportDetails = computed(() => {
             }
         }
 
+        const suggestionList = details
+            .map((detail) => (typeof detail.suggestion === "string" ? detail.suggestion.trim() : ""))
+            .filter((value) => value);
+
+        const fixedCode =
+            (typeof issue?.fixed_code === "string" && issue.fixed_code.trim()) ||
+            (typeof issue?.fixedCode === "string" && issue.fixedCode.trim()) ||
+            "";
+
+        const primaryDetail = details[0];
+        const primaryRuleId = details.find((detail) => detail.ruleId)?.ruleId || "";
+        const primaryMessage = primaryDetail?.message || "";
+        const primarySeverity = primaryDetail?.severity || "";
+        const primarySeverityLabel = primaryDetail?.severityLabel || "未標示";
+        const primarySeverityClass = primaryDetail?.severityClass || "info";
+        const primaryEvidence =
+            (typeof issue?.evidence === "string" && issue.evidence) || primaryDetail?.evidence || "";
+
+        const columns = columnList;
+        const columnPrimary = columns.length ? columns[0] : null;
+
         return {
-            key: `${ruleId || "issue"}-${index}`,
+            key: `${primaryRuleId || "issue"}-${index}`,
             index: index + 1,
-            ruleId,
-            severity: severity || (severityKey === "未標示" ? "" : severityKey),
-            severityLabel: severityKey,
-            severityClass,
-            message:
-                (typeof issue?.message === "string" && issue.message.trim()) ||
-                (typeof issue?.description === "string" && issue.description.trim()) ||
-                "",
+            ruleId: primaryRuleId,
+            ruleIds: ruleList.map((value) => (typeof value === "string" ? value.trim() : String(value ?? "").trim())).filter(Boolean),
+            severity: primarySeverity,
+            severityLabel: primarySeverityLabel,
+            severityClass: primarySeverityClass,
+            message: primaryMessage,
             objectName,
             line,
-            column,
+            column: columns,
+            columnPrimary,
             snippet,
-            evidence,
-            suggestion,
+            evidence: primaryEvidence,
+            suggestion: suggestionList[0] || "",
+            suggestionList,
             fixedCode,
-            codeLines
+            codeLines,
+            details
         };
     });
 
@@ -630,22 +752,24 @@ function buildIssueDetailsHtml(issues, isOrphan = false) {
         return '<div class="reportIssueInlineRow reportIssueInlineRow--empty">未檢測到問題</div>';
     }
 
-    return issues
-        .map((issue) => {
-            const rows = [];
+    const rows = [];
+
+    issues.forEach((issue) => {
+        const details = Array.isArray(issue?.details) && issue.details.length ? issue.details : [issue];
+        details.forEach((detail, detailIndex) => {
+            const lineIndex = Number(detail?.index ?? detailIndex + 1);
             const badges = [];
-            const index = Number(issue?.index);
-            if (Number.isFinite(index)) {
-                badges.push(`<span class="reportIssueInlineIndex">#${index}</span>`);
+            if (Number.isFinite(lineIndex)) {
+                badges.push(`<span class="reportIssueInlineIndex">#${lineIndex}</span>`);
             }
-            if (issue?.ruleId) {
-                badges.push(`<span class="reportIssueInlineRule">${escapeHtml(issue.ruleId)}</span>`);
+            if (detail?.ruleId) {
+                badges.push(`<span class="reportIssueInlineRule">${escapeHtml(detail.ruleId)}</span>`);
             }
-            if (issue?.severityLabel) {
-                const severityClass = issue.severityClass || "info";
+            if (detail?.severityLabel) {
+                const severityClass = detail.severityClass || "info";
                 badges.push(
                     `<span class="reportIssueInlineSeverity reportIssueInlineSeverity--${severityClass}">${escapeHtml(
-                        issue.severityLabel
+                        detail.severityLabel
                     )}</span>`
                 );
             }
@@ -657,25 +781,34 @@ function buildIssueDetailsHtml(issues, isOrphan = false) {
                 ? `<span class="reportIssueInlineBadges">${badges.join(" ")}</span>`
                 : "";
 
-            const message = `<span class="reportIssueInlineMessage">${escapeHtml(
-                issue?.message || "未提供說明"
-            )}</span>`;
+            const messageText =
+                typeof detail?.message === "string" && detail.message.trim()
+                    ? detail.message.trim()
+                    : typeof issue?.message === "string" && issue.message.trim()
+                      ? issue.message.trim()
+                      : "未提供說明";
+            const message = `<span class="reportIssueInlineMessage">${escapeHtml(messageText)}</span>`;
 
             const metaParts = [];
             if (issue?.objectName) {
                 metaParts.push(`<span class="reportIssueInlineObject">${escapeHtml(issue.objectName)}</span>`);
             }
-            if (Number.isFinite(issue?.column)) {
-                metaParts.push(`<span class="reportIssueInlineColumn">列 ${escapeHtml(String(issue.column))}</span>`);
+            if (Number.isFinite(detail?.column)) {
+                metaParts.push(`<span class="reportIssueInlineColumn">列 ${escapeHtml(String(detail.column))}</span>`);
             }
             const meta = metaParts.length
                 ? `<span class="reportIssueInlineMeta">${metaParts.join(" · ")}</span>`
                 : "";
 
             rows.push(`<div class="reportIssueInlineRow">${badgeBlock}${message}${meta}</div>`);
-            return rows.join("");
-        })
-        .join("");
+        });
+    });
+
+    if (!rows.length) {
+        return '<div class="reportIssueInlineRow reportIssueInlineRow--empty">未檢測到問題</div>';
+    }
+
+    return rows.join("");
 }
 
 function buildIssueFixHtml(issues) {
@@ -684,19 +817,53 @@ function buildIssueFixHtml(issues) {
     }
 
     const rows = [];
+    const suggestionSet = new Set();
+    const suggestionQueue = [];
+    const fixedCodeSet = new Set();
+    const fixedCodeQueue = [];
+
+    const pushSuggestion = (value) => {
+        if (typeof value !== "string") return;
+        const trimmed = value.trim();
+        if (!trimmed || suggestionSet.has(trimmed)) return;
+        suggestionSet.add(trimmed);
+        suggestionQueue.push(trimmed);
+    };
 
     issues.forEach((issue) => {
-        const suggestion = typeof issue?.suggestion === "string" ? issue.suggestion.trim() : "";
-        const fixedCode = typeof issue?.fixedCode === "string" ? issue.fixedCode.trim() : "";
+        const details = Array.isArray(issue?.details) && issue.details.length ? issue.details : [];
+        details.forEach((detail) => {
+            if (typeof detail?.suggestion === "string") {
+                pushSuggestion(detail.suggestion);
+            }
+        });
 
-        if (suggestion) {
-            rows.push(`<div class="reportIssueInlineRow">${escapeHtml(suggestion)}</div>`);
+        const suggestionList = Array.isArray(issue?.suggestionList) ? issue.suggestionList : [];
+        suggestionList.forEach((item) => {
+            if (typeof item === "string") {
+                pushSuggestion(item);
+            }
+        });
+
+        if (typeof issue?.suggestion === "string") {
+            pushSuggestion(issue.suggestion);
         }
-        if (fixedCode) {
-            rows.push(
-                `<pre class="reportIssueInlineRow reportIssueInlineCode"><code>${escapeHtml(fixedCode)}</code></pre>`
-            );
+
+        const fixedCode = typeof issue?.fixedCode === "string" ? issue.fixedCode.trim() : "";
+        if (fixedCode && !fixedCodeSet.has(fixedCode)) {
+            fixedCodeSet.add(fixedCode);
+            fixedCodeQueue.push(fixedCode);
         }
+    });
+
+    suggestionQueue.forEach((text) => {
+        rows.push(`<div class="reportIssueInlineRow">${escapeHtml(text)}</div>`);
+    });
+
+    fixedCodeQueue.forEach((code) => {
+        rows.push(
+            `<pre class="reportIssueInlineRow reportIssueInlineCode"><code>${escapeHtml(code)}</code></pre>`
+        );
     });
 
     if (!rows.length) {
