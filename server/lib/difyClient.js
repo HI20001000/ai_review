@@ -358,6 +358,27 @@ export async function requestDifyReport({
     };
 }
 
+export async function requestDifyJsonEnrichment({
+    projectName,
+    filePath,
+    content,
+    userId,
+    segments,
+    files,
+    selection
+}) {
+    const jsonString = typeof content === "string" ? content : JSON.stringify(content ?? {});
+    return requestDifyReport({
+        projectName,
+        filePath,
+        content: jsonString,
+        userId,
+        segments,
+        files,
+        selection
+    });
+}
+
 export function getDifyConfigSummary() {
     return {
         baseUrl,

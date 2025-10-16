@@ -1,7 +1,11 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { getDifyConfigSummary, partitionContent, requestDifyReport } from "./difyClient.js";
+import {
+    getDifyConfigSummary,
+    partitionContent,
+    requestDifyJsonEnrichment
+} from "./difyClient.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -188,7 +192,7 @@ export async function analyseSqlToReport(sqlText, options = {}) {
     );
 
     try {
-        const dify = await requestDifyReport({
+        const dify = await requestDifyJsonEnrichment({
             projectName: resolvedProjectName,
             filePath: analysisFilePath,
             content: trimmedReport,

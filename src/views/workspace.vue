@@ -161,9 +161,7 @@ const reportPanelConfig = computed(() => {
         onGenerateProject: generateProjectReports,
         getProjectBatchState,
         getProjectIssueCount,
-        activeTarget: activeReportTarget.value,
-        isResizing: false,
-        enableResizeEdge: false
+        activeTarget: activeReportTarget.value
     };
 });
 const readyReports = computed(() => {

@@ -103,8 +103,6 @@ const isHoveringResizeEdge = ref(false);
 
 const EDGE_THRESHOLD = 8;
 
-const defaultReportPanelStyle = Object.freeze({ flex: "1 1 auto", width: "100%" });
-
 const reportPanelProps = computed(() => {
     if (!isReportsMode.value) {
         return null;
@@ -113,14 +111,7 @@ const reportPanelProps = computed(() => {
     if (!config || typeof config !== "object") {
         return null;
     }
-    const { styleWidth, enableResizeEdge, ...rest } = config;
-    return {
-        styleWidth: styleWidth && typeof styleWidth === "object"
-            ? { ...defaultReportPanelStyle, ...styleWidth }
-            : defaultReportPanelStyle,
-        enableResizeEdge: typeof enableResizeEdge === "boolean" ? enableResizeEdge : false,
-        ...rest
-    };
+    return { ...config };
 });
 
 function updateResizeHoverState(event) {
@@ -217,7 +208,7 @@ function handlePointerDown(event) {
             </template>
             <template v-else-if="isReportsMode">
                 <div class="projectPanel projectPanel--reports">
-                    <div class="panelHeader">Reports</div>
+                    <div class="panelHeader">代碼審查</div>
                     <div class="reportPanelWrapper">
                         <ReportPanel v-if="reportPanelProps" v-bind="reportPanelProps" />
                         <div v-else class="emptyTree">尚未載入任何報告專案。</div>

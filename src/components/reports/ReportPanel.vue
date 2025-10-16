@@ -3,14 +3,6 @@ import { computed, ref, watch } from "vue";
 import ReportTreeNode from "./ReportTreeNode.vue";
 
 const props = defineProps({
-    styleWidth: {
-        type: Object,
-        required: true
-    },
-    enableResizeEdge: {
-        type: Boolean,
-        default: true
-    },
     entries: {
         type: Array,
         default: () => []
@@ -62,21 +54,10 @@ const props = defineProps({
     activeTarget: {
         type: Object,
         default: null
-    },
-    isResizing: {
-        type: Boolean,
-        default: false
     }
 });
 
-const emit = defineEmits(["resizeStart"]);
-
 const hasEntries = computed(() => (props.entries || []).length > 0);
-
-const isHoveringResizeEdge = ref(false);
-const showHoverEdge = computed(() => props.enableResizeEdge && isHoveringResizeEdge.value);
-
-const EDGE_THRESHOLD = 8;
 
 const collapsedProjects = ref({});
 
@@ -128,32 +109,20 @@ function projectIssueCount(projectId) {
     return null;
 }
 
-function updateResizeHoverState(event) {
-    const panel = event.currentTarget;
-    if (!panel) return false;
-    const rect = panel.getBoundingClientRect();
-    const offsetX = event.clientX - rect.left;
-    const hovering = rect.width - offsetX <= EDGE_THRESHOLD;
-    if (isHoveringResizeEdge.value !== hovering) {
-        isHoveringResizeEdge.value = hovering;
-    }
-    return hovering;
+function handleGenerateProject(event, project) {
+    event?.stopPropagation?.();
+    props.onGenerateProject(project);
 }
 
-function handlePointerMove(event) {
-    if (!props.enableResizeEdge) return;
-    updateResizeHoverState(event);
+function isBatchRunning(projectId) {
+    const state = props.getProjectBatchState(projectId);
+    return Boolean(state?.running);
 }
 
-function handlePointerLeave() {
-    isHoveringResizeEdge.value = false;
-}
-
-function handlePointerDown(event) {
-    if (!props.enableResizeEdge) return;
-    const hovering = updateResizeHoverState(event);
-    if (!hovering) return;
-    emit("resizeStart", event);
+function batchProgress(projectId) {
+    const state = props.getProjectBatchState(projectId);
+    if (!state?.running) return "";
+    return `${state.processed}/${state.total}`;
 }
 
 function handleGenerateProject(event, project) {
@@ -183,29 +152,17 @@ watch(
 </script>
 
 <template>
-    <aside
-        class="reportProjects"
-        :class="{
-            'reportProjects--hoverEdge': showHoverEdge,
-            'reportProjects--resizing': isResizing
-        }"
-        :style="styleWidth"
-        @pointermove="handlePointerMove"
-        @pointerleave="handlePointerLeave"
-        @pointerdown="handlePointerDown"
-    >
-        <div class="panelHeader">代碼審查</div>
-        <template v-if="hasEntries">
-            <ul class="reportProjectList">
-                <li
-                    v-for="entry in entries"
-                    :key="entry.project.id"
-                    :class="[
-                        'reportProjectItem',
-                        { 'reportProjectItem--collapsed': isProjectCollapsed(entry.project.id) }
-                    ]"
-                >
-                    <div class="projectHeader">
+    <template v-if="hasEntries">
+        <ul class="reportProjectList">
+            <li
+                v-for="entry in entries"
+                :key="entry.project.id"
+                :class="[
+                    'reportProjectItem',
+                    { 'reportProjectItem--collapsed': isProjectCollapsed(entry.project.id) }
+                ]"
+            >
+                <div class="projectHeader">
                         <button
                             type="button"
                             class="projectToggle"
@@ -274,43 +231,13 @@ watch(
                             </ul>
                         </div>
                     </div>
-                </li>
-            </ul>
-        </template>
-        <p v-else class="emptyProjects">尚未匯入任何專案。</p>
-    </aside>
+            </li>
+        </ul>
+    </template>
+    <p v-else class="reportEmpty">尚未載入任何報告專案。</p>
 </template>
 
 <style scoped>
-.reportProjects {
-    flex: 0 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    background: var(--panel-surface-alt);
-    border: 1px solid var(--panel-border);
-    border-radius: 12px;
-    padding: 16px;
-    overflow-y: auto;
-    box-sizing: border-box;
-    min-width: 260px;
-    position: relative;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
-}
-
-.reportProjects--hoverEdge,
-.reportProjects--resizing {
-    cursor: col-resize;
-}
-
-.panelHeader {
-    font-weight: 700;
-    color: var(--panel-heading);
-    font-size: 14px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-}
-
 .reportProjectList {
     list-style: none;
     margin: 0;
@@ -487,11 +414,5 @@ watch(
     display: flex;
     flex-direction: column;
     gap: 6px;
-}
-
-.emptyProjects {
-    margin: 0;
-    color: var(--panel-muted);
-    font-size: 13px;
 }
 </style>
