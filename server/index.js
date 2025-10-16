@@ -444,7 +444,8 @@ app.post("/api/reports/dify", async (req, res, next) => {
             const reportPayload = buildSqlReportPayload({
                 analysis: sqlAnalysis.analysis,
                 content,
-                dify: sqlAnalysis.dify
+                dify: sqlAnalysis.dify,
+                difyError: sqlAnalysis.difyError
             });
             await upsertReport({
                 projectId,
@@ -462,9 +463,9 @@ app.post("/api/reports/dify", async (req, res, next) => {
                 path,
                 ...reportPayload,
                 savedAt: savedAtIso,
-                difyError: sqlAnalysis.difyError
-                    ? sqlAnalysis.difyError.message || String(sqlAnalysis.difyError)
-                    : undefined
+                difyError:
+                    reportPayload.difyErrorMessage ||
+                    (sqlAnalysis.difyError ? sqlAnalysis.difyError.message || String(sqlAnalysis.difyError) : undefined)
             });
             return;
         }
@@ -546,16 +547,17 @@ app.post("/api/reports/dify/snippet", async (req, res, next) => {
             const reportPayload = buildSqlReportPayload({
                 analysis: sqlAnalysis.analysis,
                 content: normalised.content,
-                dify: sqlAnalysis.dify
+                dify: sqlAnalysis.dify,
+                difyError: sqlAnalysis.difyError
             });
             res.json({
                 projectId,
                 path,
                 selection: normalised.meta || undefined,
                 ...reportPayload,
-                difyError: sqlAnalysis.difyError
-                    ? sqlAnalysis.difyError.message || String(sqlAnalysis.difyError)
-                    : undefined
+                difyError:
+                    reportPayload.difyErrorMessage ||
+                    (sqlAnalysis.difyError ? sqlAnalysis.difyError.message || String(sqlAnalysis.difyError) : undefined)
             });
             return;
         }

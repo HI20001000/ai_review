@@ -275,12 +275,17 @@ export async function analyseSqlToReport(sqlText, options = {}) {
         const dify = normaliseDifyOutput(difyRaw, trimmedReport);
         return { analysis, dify, difyError: null };
     } catch (error) {
-        console.error("[sql+dify] Failed to enrich SQL analysis via Dify", error);
+        const message = error?.message || String(error);
+        const locationLabel = path || analysisFilePath;
+        console.warn(
+            `[sql+dify] Falling back to static SQL analysis project=${projectId || resolvedProjectName} path=${locationLabel} :: ${message}`,
+            error
+        );
         return { analysis, dify: null, difyError: error };
     }
 }
 
-export function buildSqlReportPayload({ analysis, content, dify }) {
+export function buildSqlReportPayload({ analysis, content, dify, difyError }) {
     const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
     const difyReport = typeof dify?.report === "string" && dify.report.trim().length
         ? dify.report
@@ -316,6 +321,8 @@ export function buildSqlReportPayload({ analysis, content, dify }) {
         finalReport = rawReport;
     }
     const generatedAt = dify?.generatedAt || new Date().toISOString();
+    const difyErrorMessage = difyError ? difyError.message || String(difyError) : "";
+    const enrichmentStatus = dify ? "succeeded" : "failed";
 
     const originalResult = typeof analysis?.result === "string" ? analysis.result : rawReport;
     const analysisPayload =
@@ -334,6 +341,14 @@ export function buildSqlReportPayload({ analysis, content, dify }) {
             analysisPayload.result = rawReport;
         }
         analysisPayload.enriched = Boolean(dify);
+        if (!analysisPayload.enrichmentStatus) {
+            analysisPayload.enrichmentStatus = enrichmentStatus;
+        }
+        if (difyErrorMessage) {
+            analysisPayload.difyErrorMessage = difyErrorMessage;
+        } else if (!dify) {
+            analysisPayload.difyErrorMessage = "";
+        }
     }
 
     return {
@@ -345,7 +360,9 @@ export function buildSqlReportPayload({ analysis, content, dify }) {
         analysis: analysisPayload,
         rawReport,
         dify: dify || null,
-        source: dify ? "sql-rule-engine+dify" : "sql-rule-engine"
+        source: dify ? "sql-rule-engine+dify" : "sql-rule-engine",
+        enrichmentStatus,
+        difyErrorMessage: difyErrorMessage || undefined
     };
 }
 
