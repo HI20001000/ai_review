@@ -48,6 +48,14 @@
                             </button>
                             <button
                                 type="button"
+                                class="chatWindow__btn"
+                                :disabled="controlsDisabled"
+                                @click="emit('add-selection')"
+                            >
+                                Add selection
+                            </button>
+                            <button
+                                type="button"
                                 class="chatWindow__btn ghost"
                                 :disabled="clearDisabled"
                                 @click="emit('clear-context')"
@@ -62,9 +70,9 @@
                                 v-for="item in contextItems"
                                 :key="item.id"
                                 class="chatWindow__chip"
-                                :title="item.path || item.label"
+                                :title="chipTitle(item)"
                             >
-                                <span class="chatWindow__chipType">{{ item.type === 'dir' ? 'DIR' : 'FILE' }}</span>
+                                <span class="chatWindow__chipType">{{ formatChipType(item.type) }}</span>
                                 <span class="chatWindow__chipLabel">{{ item.label }}</span>
                                 <button
                                     type="button"
@@ -79,7 +87,7 @@
                     </div>
                 </section>
 
-                <section ref="messagesRef" class="chatWindow__messages">
+                <section ref="messagesRef" class="chatWindow__messages themed-scrollbar">
                     <template v-if="messages.length">
                         <article
                             v-for="msg in messages"
@@ -97,7 +105,7 @@
                                 <span class="chatWindow__messageAuthor">{{ msg.role === 'assistant' ? 'AI' : 'User' }}</span>
                                 <span class="chatWindow__messageTime">{{ formatTime(msg.timestamp) }}</span>
                             </header>
-                            <p class="chatWindow__messageBody">{{ msg.content }}</p>
+                            <div class="chatWindow__messageBody" v-html="renderMessageContent(msg)"></div>
                         </article>
                     </template>
                     <div v-else class="chatWindow__messagesEmpty">No messages yet. Start typing!</div>
@@ -137,6 +145,8 @@ import { ref, computed, watch, nextTick } from "vue";
 
 const DEFAULT_STATUS_MESSAGE = "連接中...";
 
+import { renderMarkdown } from "../scripts/utils/renderMarkdown.js";
+
 const props = defineProps({
     visible: { type: Boolean, default: false },
     floatingStyle: { type: Object, default: () => ({}) },
@@ -151,6 +161,7 @@ const emit = defineEmits([
     "remove-context",
     "clear-context",
     "add-active",
+    "add-selection",
     "send-message",
     "close",
     "drag-start",
@@ -176,6 +187,48 @@ const statusStyle = computed(() => {
 });
 const controlsDisabled = computed(() => props.disabled || props.loading);
 const clearDisabled = computed(() => controlsDisabled.value || !(props.contextItems || []).length);
+
+function formatChipType(type) {
+    if (type === "dir") return "DIR";
+    if (type === "snippet") return "SNIP";
+    return "FILE";
+}
+
+function chipTitle(item) {
+    if (!item) return "";
+    if (item.type === "snippet" && item.snippet) {
+        const { path, startLine, endLine, startColumn, endColumn, lineCount } = item.snippet;
+        const parts = [];
+        if (item.label) parts.push(item.label);
+        if (path && (!item.label || !item.label.includes(path))) {
+            parts.push(path);
+        }
+        if (Number.isFinite(startLine)) {
+            const range = Number.isFinite(endLine) && endLine !== startLine ? `${startLine}-${endLine}` : `${startLine}`;
+            parts.push(`行 ${range}`);
+        }
+        const hasStartColumn = Number.isFinite(startColumn);
+        const hasEndColumn = Number.isFinite(endColumn);
+        const isSingleLine = Number.isFinite(startLine) && Number.isFinite(endLine) && startLine === endLine;
+        if (isSingleLine) {
+            if (hasStartColumn && hasEndColumn) {
+                parts.push(`字元 ${startColumn === endColumn ? startColumn : `${startColumn}-${endColumn}`}`);
+            } else if (hasStartColumn) {
+                parts.push(`字元 ${startColumn} 起`);
+            } else if (hasEndColumn) {
+                parts.push(`字元 ${endColumn} 止`);
+            }
+        } else {
+            if (hasStartColumn) parts.push(`起始字元 ${startColumn}`);
+            if (hasEndColumn) parts.push(`結束字元 ${endColumn}`);
+        }
+        if (Number.isFinite(lineCount) && lineCount > 0) {
+            parts.push(`共 ${lineCount} 行`);
+        }
+        return parts.join(" | ") || item.label || "Snippet";
+    }
+    return item.path || item.label;
+}
 
 watch(
     () => props.messages,
@@ -318,6 +371,12 @@ function formatTime(value) {
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) return "";
     return date.toLocaleTimeString();
+}
+
+function renderMessageContent(msg) {
+    if (!msg) return "";
+    const content = msg.content ?? "";
+    return renderMarkdown(content);
 }
 </script>
 
@@ -566,8 +625,70 @@ function formatTime(value) {
 
 .chatWindow__messageBody {
     font-size: 13px;
+    line-height: 1.6;
+    display: block;
+}
+
+.chatWindow__messageBody > *:last-child {
+    margin-bottom: 0;
+}
+
+.chatWindow__messageBody p {
+    margin: 0 0 0.75em;
+}
+
+.chatWindow__messageBody ul,
+.chatWindow__messageBody ol {
+    margin: 0 0 0.75em;
+    padding-left: 1.4em;
+}
+
+.chatWindow__messageBody li + li {
+    margin-top: 0.3em;
+}
+
+.chatWindow__messageBody code {
+    font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    background: rgba(148, 163, 184, 0.18);
+    border-radius: 4px;
+    padding: 0.1em 0.4em;
+    font-size: 0.92em;
+}
+
+.chatWindow__messageBody pre {
+    margin: 0 0 0.75em;
+    background: #0f172a;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 8px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
     line-height: 1.5;
-    white-space: pre-wrap;
+}
+
+.chatWindow__messageBody pre code {
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+}
+
+.chatWindow__messageBody a {
+    color: #60a5fa;
+    text-decoration: underline;
+}
+
+.chatWindow__messageBody hr {
+    border: none;
+    border-top: 1px solid rgba(148, 163, 184, 0.3);
+    margin: 0.75em 0;
+}
+
+.chatWindow__messageBody blockquote {
+    margin: 0 0 0.75em;
+    padding-left: 0.9em;
+    border-left: 3px solid rgba(148, 163, 184, 0.35);
+    color: #cbd5f5;
 }
 
 .chatWindow__footer {
