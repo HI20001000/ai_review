@@ -292,6 +292,7 @@ function handlePointerDown(event) {
     gap: 10px;
     max-height: 220px;
     overflow: auto;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 .projectItem {
@@ -429,6 +430,7 @@ function handlePointerDown(event) {
     margin: 0;
     padding: 0 8px 8px 0;
     overflow: auto;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 @media (max-width: 900px) {
