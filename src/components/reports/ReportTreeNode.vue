@@ -241,25 +241,25 @@ function handleSelect(event) {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 2px 4px;
-    border-radius: 6px;
-    transition: background 0.2s ease;
+    padding: 4px 6px;
+    border-radius: 8px;
+    transition: background 0.2s ease, color 0.2s ease;
 }
 
 .reportTreeRow:hover {
-    background: rgba(148, 163, 184, 0.08);
+    background: var(--tree-row-hover);
 }
 
 .reportTreeRow--active {
-    background: rgba(59, 130, 246, 0.18);
+    background: var(--tree-row-active);
 }
 
 .reportTreeCaret {
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     border: none;
     background: transparent;
-    color: #cbd5f5;
+    color: var(--tree-icon);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -276,13 +276,14 @@ function handleSelect(event) {
     width: 20px;
     text-align: center;
     font-size: 16px;
+    color: var(--tree-icon);
 }
 
 .reportTreeLabel {
     flex: 1 1 auto;
     min-width: 0;
     font-size: 13px;
-    color: #e2e8f0;
+    color: var(--tree-text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -296,21 +297,23 @@ function handleSelect(event) {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    color: var(--tree-badge-text);
 }
 
 .statusBadge--idle {
-    background: rgba(148, 163, 184, 0.18);
-    color: #cbd5f5;
+    background: var(--tree-badge-idle);
 }
 
 .statusBadge--processing {
-    background: rgba(251, 191, 36, 0.2);
-    color: #facc15;
+    background: var(--tree-badge-processing);
 }
 
 .statusBadge--ready {
-    background: rgba(34, 197, 94, 0.2);
-    color: #4ade80;
+    background: var(--tree-badge-ready);
+}
+
+.statusBadge--error {
+    background: var(--tree-badge-error);
 }
 
 .statusBadge--error {
@@ -321,43 +324,52 @@ function handleSelect(event) {
 .reportActionBtn {
     flex: 0 0 auto;
     padding: 6px 12px;
-    border-radius: 0;
-    border: 1px solid #2563eb;
-    background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(14, 165, 233, 0.18));
-    color: #bfdbfe;
+    border-radius: 6px;
+    border: 1px solid var(--panel-accent);
+    background: var(--panel-accent-soft);
+    color: var(--panel-heading);
     font-size: 12px;
     cursor: pointer;
-    transition: transform 0.2s ease, background 0.2s ease;
+    transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 }
 
 .reportActionBtn:hover {
     transform: translateY(-1px);
-    background: linear-gradient(135deg, rgba(37, 99, 235, 0.28), rgba(14, 165, 233, 0.28));
+    background: rgba(96, 165, 250, 0.24);
+    border-color: var(--panel-border-strong);
 }
 
 .reportActionBtn:disabled {
     cursor: progress;
-    opacity: 0.7;
+    opacity: 0.75;
     transform: none;
     background: rgba(148, 163, 184, 0.12);
-    border-color: rgba(148, 163, 184, 0.3);
-    color: #cbd5f5;
+    border-color: rgba(148, 163, 184, 0.35);
+    color: var(--panel-muted);
 }
 
 .reportViewBtn {
     margin-left: auto;
     padding: 4px 10px;
-    border-radius: 4px;
-    border: 1px solid rgba(148, 163, 184, 0.4);
+    border-radius: 6px;
+    border: 1px solid var(--panel-border);
     background: rgba(148, 163, 184, 0.12);
-    color: #e2e8f0;
+    color: var(--tree-text);
     font-size: 12px;
     cursor: pointer;
-    transition: background 0.2s ease;
+    transition: background 0.2s ease, border-color 0.2s ease;
 }
 
 .reportViewBtn:hover {
     background: rgba(148, 163, 184, 0.2);
+    border-color: var(--panel-border-strong);
+}
+
+.reportErrorMessage {
+    margin: 0;
+    font-size: 12px;
+    color: #f87171;
+    padding-left: 62px;
 }
 
 .reportErrorMessage {
@@ -370,17 +382,24 @@ function handleSelect(event) {
 .reportTimestamp {
     margin: 0;
     font-size: 11px;
-    color: #94a3b8;
-    padding-left: 54px;
+    color: var(--panel-muted);
+    padding-left: 62px;
 }
 
 .reportFileTreeChildren {
     list-style: none;
     margin: 4px 0 0 22px;
     padding: 0 0 0 16px;
-    border-left: 1px dashed rgba(148, 163, 184, 0.25);
+    border-left: 1px dashed var(--tree-connector);
     display: flex;
     flex-direction: column;
     gap: 6px;
+}
+
+.reportFileTreeChildren:empty {
+    display: none;
+    margin: 0;
+    padding: 0;
+    border-left: none;
 }
 </style>

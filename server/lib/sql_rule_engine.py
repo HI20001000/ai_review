@@ -9,6 +9,7 @@ import sys
 from typing import Dict, List, Tuple
 
 CJK_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]")
+BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 
 
 # ---------- position helpers ----------
@@ -37,12 +38,17 @@ def _mask_span_with_spaces(text: str, start: int, end: int) -> str:
     return text[:start] + "".join("\n" if ch == "\n" else " " for ch in text[start:end]) + text[end:]
 
 
+def _mask_block_comments(sql: str) -> str:
+    """Replace /* ... */ comment bodies with spaces while keeping length consistent."""
+    masked = sql
+    for match in BLOCK_COMMENT_RE.finditer(sql):
+        masked = _mask_span_with_spaces(masked, match.start(), match.end())
+    return masked
+
+
 def _mask_comments_and_strings(sql: str) -> str:
     """Replace comment/string contents with spaces but keep newlines & length."""
-    masked = sql
-
-    for match in re.finditer(r"/\*.*?\*/", masked, flags=re.DOTALL):
-        masked = _mask_span_with_spaces(masked, match.start(), match.end())
+    masked = _mask_block_comments(sql)
 
     for match in re.finditer(r"--.*?$", masked, flags=re.MULTILINE):
         masked = _mask_span_with_spaces(masked, match.start(), match.end())
@@ -89,7 +95,7 @@ def _add_issue(
             "column": col,
             "snippet": snippet,
             "evidence": evidence or snippet,
-            "suggestions": "",
+            "修改建議": "",
         }
     )
 
@@ -103,7 +109,7 @@ def _check_cjk(sql: str, issues: List[Dict]) -> None:
         ch = match.group(0)
         _add_issue(
             issues,
-            "R1_CJK_NAME",
+            "RULE_01_CJK_NAME",
             "检测到中文/非 ASCII 字符（疑似用于对象/列命名），应使用英文单词/短语/缩写。",
             sql,
             match.start(),
@@ -113,9 +119,11 @@ def _check_cjk(sql: str, issues: List[Dict]) -> None:
 
 def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
     """Rule 4 & Rule 14: enforce object prefixes and block TMP_TMP_TMP tables."""
+    masked = _mask_block_comments(sql)
+
     table_re = re.finditer(
         r'\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w\.\$#@]+)',
-        sql,
+        masked,
         flags=re.IGNORECASE,
     )
     for match in table_re:
@@ -124,7 +132,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
         if not name.upper().startswith("T_"):
             _add_issue(
                 issues,
-                "R2_PREFIX_TABLE",
+                "RULE_04_PREFIX_TABLE",
                 f"表名需以 T_ 开头：发现 {name}",
                 sql,
                 match.start(),
@@ -134,7 +142,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
         if name.upper().startswith("TMP_TMP_TMP"):
             _add_issue(
                 issues,
-                "R3_TMP_TRIPLE",
+                "RULE_14_TMP_TRIPLE",
                 f"中间表命名不得使用 TMP_TMP_TMP 前缀：发现 {name}",
                 sql,
                 match.start(),
@@ -144,7 +152,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
 
     view_re = re.finditer(
         r'\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+([`"\[\]\w\.\$#@]+)',
-        sql,
+        masked,
         flags=re.IGNORECASE,
     )
     for match in view_re:
@@ -152,7 +160,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
         if not name.upper().startswith("V_"):
             _add_issue(
                 issues,
-                "R2_PREFIX_VIEW",
+                "RULE_04_PREFIX_VIEW",
                 f"视图名需以 V_ 开头：发现 {name}",
                 sql,
                 match.start(),
@@ -162,7 +170,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
 
     proc_re = re.finditer(
         r'\bCREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+([`"\[\]\w\.\$#@]+)',
-        sql,
+        masked,
         flags=re.IGNORECASE,
     )
     for match in proc_re:
@@ -170,7 +178,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
         if not name.upper().startswith("P_"):
             _add_issue(
                 issues,
-                "R2_PREFIX_PROC",
+                "RULE_04_PREFIX_PROC",
                 f"存储过程名需以 P_ 开头：发现 {name}",
                 sql,
                 match.start(),
@@ -180,7 +188,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
 
     func_re = re.finditer(
         r'\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([`"\[\]\w\.\$#@]+)',
-        sql,
+        masked,
         flags=re.IGNORECASE,
     )
     for match in func_re:
@@ -188,7 +196,7 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
         if not name.upper().startswith("F_"):
             _add_issue(
                 issues,
-                "R2_PREFIX_FUNC",
+                "RULE_04_PREFIX_FUNC",
                 f"函数名需以 F_ 开头：发现 {name}",
                 sql,
                 match.start(),
@@ -199,9 +207,11 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
 
 def _check_delete_full_table(sql: str, issues: List[Dict]) -> None:
     """Rule 16: DELETE without WHERE must be replaced by TRUNCATE."""
+    masked = _mask_block_comments(sql)
+
     delete_re = re.finditer(
         r'\bDELETE\s+FROM\s+([`"\[\]\w\.\$#@]+)([^;]*)',
-        sql,
+        masked,
         flags=re.IGNORECASE | re.DOTALL,
     )
     for match in delete_re:
@@ -210,7 +220,7 @@ def _check_delete_full_table(sql: str, issues: List[Dict]) -> None:
             table_name = _last_identifier(match.group(1))
             _add_issue(
                 issues,
-                "R4_DELETE_NO_WHERE",
+                "RULE_16_DELETE_NO_WHERE",
                 f"检测到对表 {table_name} 的全表删除（DELETE 无 WHERE）。请使用 TRUNCATE。",
                 sql,
                 match.start(),
@@ -220,10 +230,11 @@ def _check_delete_full_table(sql: str, issues: List[Dict]) -> None:
 
 
 def _slice_from_clauses(sql: str) -> List[Tuple[int, int, str]]:
+    masked = _mask_block_comments(sql)
     slices: List[Tuple[int, int, str]] = []
-    for match in re.finditer(r"\bFROM\b", sql, flags=re.IGNORECASE):
+    for match in re.finditer(r"\bFROM\b", masked, flags=re.IGNORECASE):
         start = match.end()
-        remainder = sql[start:]
+        remainder = masked[start:]
         boundary = re.search(r"\bWHERE\b|\bGROUP\b|\bORDER\b|\bHAVING\b|\bLIMIT\b|;", remainder, flags=re.IGNORECASE)
         end = start + boundary.start() if boundary else len(sql)
         slices.append((start, end, sql[start:end]))
@@ -236,16 +247,18 @@ def _check_cartesian(sql: str, issues: List[Dict]) -> None:
         if "," in fragment and re.search(r"\bJOIN\b", fragment, flags=re.IGNORECASE) is None:
             _add_issue(
                 issues,
-                "R5_FROM_COMMA",
+                "RULE_21_FROM_COMMA",
                 "FROM 子句使用逗号进行隐式连接，容易产生笛卡尔积。请使用显式 JOIN ... ON。",
                 sql,
                 start,
                 evidence=fragment.strip(),
             )
 
+    masked = _mask_block_comments(sql)
+
     join_re = re.finditer(
         r"\bJOIN\b(?P<seg>.*?)(?=\bJOIN\b|\bWHERE\b|\bGROUP\b|\bORDER\b|\bHAVING\b|\bLIMIT\b|;|$)",
-        sql,
+        masked,
         flags=re.IGNORECASE | re.DOTALL,
     )
     for match in join_re:
@@ -253,7 +266,7 @@ def _check_cartesian(sql: str, issues: List[Dict]) -> None:
         if re.search(r"\bON\b|\bUSING\b|\bNATURAL\b|\bCROSS\b", segment, flags=re.IGNORECASE) is None:
             _add_issue(
                 issues,
-                "R5_JOIN_NO_ON",
+                "RULE_21_JOIN_NO_ON",
                 "出现 JOIN 但未检测到 ON/USING/NATURAL（可能导致笛卡尔积或语义不清）。",
                 sql,
                 match.start(),

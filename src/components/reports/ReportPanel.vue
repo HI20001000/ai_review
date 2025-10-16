@@ -456,7 +456,7 @@ watch(
 .reportEmpty {
     margin: 0;
     font-size: 13px;
-    color: #94a3b8;
+    color: var(--panel-muted);
 }
 
 .reportError {
@@ -466,7 +466,7 @@ watch(
 }
 
 .reportTreeWrapper {
-    border-top: 1px solid #2f2f2f;
+    border-top: 1px solid var(--panel-divider);
     padding-top: 8px;
 }
 
@@ -481,7 +481,7 @@ watch(
 
 .emptyProjects {
     margin: 0;
-    color: #94a3b8;
+    color: var(--panel-muted);
     font-size: 13px;
 }
 </style>
