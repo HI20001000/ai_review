@@ -114,25 +114,15 @@ const handleProjectGenerateClick = (event, project) => {
     props.onGenerateProject(project);
 };
 
-function isBatchRunning(projectId) {
+const projectBatchRunning = (projectId) => {
     const state = props.getProjectBatchState(projectId);
     return Boolean(state?.running);
-}
+};
 
 function batchProgress(projectId) {
     const state = props.getProjectBatchState(projectId);
     if (!state?.running) return "";
     return `${state.processed}/${state.total}`;
-}
-
-function handleGenerateProject(event, project) {
-    event?.stopPropagation?.();
-    props.onGenerateProject(project);
-}
-
-function isBatchRunning(projectId) {
-    const state = props.getProjectBatchState(projectId);
-    return Boolean(state?.running);
 }
 
 function batchProgress(projectId) {
@@ -184,10 +174,10 @@ watch(
                                 v-if="!entry.cache.error"
                                 type="button"
                                 class="reportBatchBtn"
-                                :disabled="entry.cache.loading || isBatchRunning(entry.project.id)"
+                                :disabled="entry.cache.loading || projectBatchRunning(entry.project.id)"
                                 @click="handleProjectGenerateClick($event, entry.project)"
                             >
-                                <span v-if="isBatchRunning(entry.project.id)">
+                                <span v-if="projectBatchRunning(entry.project.id)">
                                     批次生成中 {{ batchProgress(entry.project.id) }}
                                 </span>
                                 <span v-else>一鍵生成</span>
