@@ -162,24 +162,52 @@ export async function analyseSqlToReport(sqlText) {
     return await executeSqlAnalysis(sqlText);
 }
 
-export function buildSqlReportPayload({ analysis, content }) {
-    const resultText = typeof analysis?.result === "string" ? analysis.result : "";
-    const generatedAt = new Date().toISOString();
+export function buildSqlReportPayload({ analysis, content, dify }) {
+    const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
+    const difyReport = typeof dify?.report === "string" && dify.report.trim().length
+        ? dify.report
+        : rawReport;
+    const difyChunks = Array.isArray(dify?.chunks) && dify.chunks.length
+        ? dify.chunks
+        : null;
+    const annotatedChunks = difyChunks
+        ? difyChunks.map((chunk, index) => ({
+              ...chunk,
+              rawAnalysis: index === 0 ? rawReport : chunk.rawAnalysis
+          }))
+        : [
+              {
+                  index: 1,
+                  total: 1,
+                  answer: rawReport,
+                  raw: rawReport,
+                  rawAnalysis: rawReport
+              }
+          ];
+    const segments = dify?.segments && Array.isArray(dify.segments) && dify.segments.length
+        ? dify.segments
+        : [rawReport || content || ""];
+    let finalReport = difyReport;
+    if (finalReport && finalReport.trim()) {
+        try {
+            JSON.parse(finalReport);
+        } catch (_error) {
+            finalReport = rawReport;
+        }
+    } else {
+        finalReport = rawReport;
+    }
+    const generatedAt = dify?.generatedAt || new Date().toISOString();
     return {
-        report: resultText,
-        conversationId: "",
-        chunks: [
-            {
-                index: 1,
-                total: 1,
-                answer: resultText,
-                raw: analysis?.result ?? resultText
-            }
-        ],
-        segments: [content ?? ""],
+        report: finalReport,
+        conversationId: typeof dify?.conversationId === "string" ? dify.conversationId : "",
+        chunks: annotatedChunks,
+        segments,
         generatedAt,
         analysis,
-        source: "sql-rule-engine"
+        rawReport,
+        dify: dify || null,
+        source: dify ? "sql-rule-engine+dify" : "sql-rule-engine"
     };
 }
 

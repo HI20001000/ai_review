@@ -284,6 +284,10 @@ const activeReportDetails = computed(() => {
             (typeof issue?.修改建議 === "string" && issue.修改建議.trim()) ||
             (typeof issue?.modificationAdvice === "string" && issue.modificationAdvice.trim()) ||
             "";
+        const fixedCode =
+            (typeof issue?.fixed_code === "string" && issue.fixed_code.trim()) ||
+            (typeof issue?.fixedCode === "string" && issue.fixedCode.trim()) ||
+            "";
 
         let line = Number(issue?.line);
         if (!Number.isFinite(line)) line = null;
@@ -346,6 +350,7 @@ const activeReportDetails = computed(() => {
             snippet,
             evidence,
             suggestion,
+            fixedCode,
             codeLines
         };
     });
@@ -481,6 +486,10 @@ const reportIssuesViewMode = ref("code");
 const activeReportRawText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
+    const analysisText = report.state?.analysis?.result;
+    if (typeof analysisText === "string" && analysisText.trim()) {
+        return analysisText;
+    }
     const text = report.state?.report;
     return typeof text === "string" ? text : "";
 });
@@ -516,8 +525,13 @@ function setReportIssuesViewMode(mode) {
     reportIssuesViewMode.value = mode;
 }
 
-watch(activeReport, () => {
-    reportIssuesViewMode.value = "code";
+watch(activeReport, (report) => {
+    if (!report) {
+        reportIssuesViewMode.value = "code";
+        return;
+    }
+    const hasRaw = typeof report.state?.analysis?.result === "string" && report.state.analysis.result.trim().length > 0;
+    reportIssuesViewMode.value = hasRaw ? "raw" : "code";
 });
 
 watch(
@@ -636,15 +650,21 @@ function buildIssueFixHtml(issues) {
         return '<div class="reportIssueInlineRow reportIssueInlineRow--empty">暫無建議</div>';
     }
 
-    const rows = issues
-        .map((issue) => {
-            const suggestion = typeof issue?.suggestion === "string" ? issue.suggestion.trim() : "";
-            if (!suggestion) {
-                return "";
-            }
-            return `<div class="reportIssueInlineRow">${escapeHtml(suggestion)}</div>`;
-        })
-        .filter(Boolean);
+    const rows = [];
+
+    issues.forEach((issue) => {
+        const suggestion = typeof issue?.suggestion === "string" ? issue.suggestion.trim() : "";
+        const fixedCode = typeof issue?.fixedCode === "string" ? issue.fixedCode.trim() : "";
+
+        if (suggestion) {
+            rows.push(`<div class="reportIssueInlineRow">${escapeHtml(suggestion)}</div>`);
+        }
+        if (fixedCode) {
+            rows.push(
+                `<pre class="reportIssueInlineRow reportIssueInlineCode"><code>${escapeHtml(fixedCode)}</code></pre>`
+            );
+        }
+    });
 
     if (!rows.length) {
         return '<div class="reportIssueInlineRow reportIssueInlineRow--empty">暫無建議</div>';
@@ -3058,6 +3078,24 @@ body,
 .reportIssueInlineRow--empty {
     color: #cbd5f5;
     font-style: italic;
+}
+
+.reportIssueInlineCode {
+    width: 100%;
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: var(--code-font, "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    color: #e2e8f0;
+    background-clip: padding-box;
+}
+
+.reportIssueInlineCode code {
+    font-family: inherit;
 }
 
 .reportIssueInlineBadges {

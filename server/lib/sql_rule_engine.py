@@ -96,6 +96,7 @@ def _add_issue(
             "snippet": snippet,
             "evidence": evidence or snippet,
             "recommendation": "",
+            "fixed_code": "",
         }
     )
 
@@ -289,13 +290,29 @@ def main(sql_query: str) -> Dict[str, str]:
     _check_delete_full_table(sql, issues)
     _check_cartesian(sql, issues)
 
+    file_extension = ".sql"
+
     if not issues:
-        payload: Dict = {"summary": "代码正常", "issues": []}
+        payload: Dict = {
+            "summary": {
+                "message": "代码正常",
+                "file_extension": file_extension,
+                "total_issues": 0
+            },
+            "issues": []
+        }
     else:
         by_rule: Dict[str, int] = {}
         for issue in issues:
             by_rule[issue["rule_id"]] = by_rule.get(issue["rule_id"], 0) + 1
-        payload = {"summary": {"total_issues": len(issues), "by_rule": by_rule}, "issues": issues}
+        payload = {
+            "summary": {
+                "total_issues": len(issues),
+                "by_rule": by_rule,
+                "file_extension": file_extension
+            },
+            "issues": issues
+        }
 
     result = json.dumps(payload, ensure_ascii=False, indent=2)
     return {"result": result}

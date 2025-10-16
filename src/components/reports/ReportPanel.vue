@@ -287,13 +287,15 @@ watch(
     display: flex;
     flex-direction: column;
     gap: 16px;
-    background: #191919;
+    background: var(--panel-surface-alt);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
     padding: 16px;
     overflow-y: auto;
-    border-radius: 0;
     box-sizing: border-box;
     min-width: 260px;
     position: relative;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
 }
 
 .reportProjects--hoverEdge,
@@ -303,8 +305,10 @@ watch(
 
 .panelHeader {
     font-weight: 700;
-    color: #cbd5e1;
+    color: var(--panel-heading);
     font-size: 14px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
 .reportProjectList {
@@ -317,13 +321,19 @@ watch(
 }
 
 .reportProjectItem {
-    border: 1px solid #2f2f2f;
-    border-radius: 0;
-    background: #202020;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: var(--panel-surface);
     padding: 12px;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.reportProjectItem:hover {
+    border-color: var(--panel-border-strong);
+    transform: translateY(-1px);
 }
 
 .projectHeader {
@@ -341,14 +351,14 @@ watch(
     justify-content: center;
     border: none;
     background: transparent;
-    color: #94a3b8;
+    color: var(--panel-muted);
     cursor: pointer;
     padding: 0;
     transition: color 0.2s ease;
 }
 
 .projectToggle:hover {
-    color: #cbd5f5;
+    color: var(--panel-heading);
 }
 
 .projectToggleIcon {
@@ -369,7 +379,7 @@ watch(
     flex: 1 1 auto;
     min-width: 0;
     font-weight: 600;
-    color: #f3f4f6;
+    color: var(--tree-text);
     white-space: nowrap;
     text-overflow: ellipsis;
     overflow: hidden;
@@ -387,9 +397,9 @@ watch(
     padding: 4px 10px;
     font-size: 12px;
     border-radius: 6px;
-    border: 1px solid #334155;
-    background: #1f2937;
-    color: #cbd5f5;
+    border: 1px solid var(--panel-border);
+    background: var(--panel-surface-alt);
+    color: var(--panel-heading);
     cursor: pointer;
     transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
@@ -400,8 +410,8 @@ watch(
     line-height: 1;
     padding: 4px 8px;
     border-radius: 9999px;
-    border: 1px solid #4b5563;
-    background: #111827;
+    border: 1px solid var(--panel-border-strong);
+    background: rgba(148, 163, 184, 0.12);
     color: #fbbf24;
     white-space: nowrap;
 }
@@ -417,17 +427,17 @@ watch(
 }
 
 .reportBatchBtn:hover {
-    background: #2563eb;
-    border-color: #1d4ed8;
-    color: #fff;
+    background: var(--panel-accent-soft);
+    border-color: var(--panel-border-strong);
+    color: var(--panel-heading);
 }
 
 .reportBatchBtn:disabled {
     cursor: not-allowed;
     opacity: 0.6;
-    background: #1e293b;
-    color: #94a3b8;
-    border-color: #1e293b;
+    background: rgba(148, 163, 184, 0.08);
+    color: var(--panel-muted);
+    border-color: var(--panel-border);
 }
 
 .reportMeta {

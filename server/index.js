@@ -101,13 +101,32 @@ function toIsoString(value) {
     return null;
 }
 
+function extractAnalysisFromChunks(chunks) {
+    if (!Array.isArray(chunks)) return null;
+    for (const chunk of chunks) {
+        const raw = typeof chunk?.rawAnalysis === "string" ? chunk.rawAnalysis : null;
+        if (raw && raw.trim()) {
+            return { result: raw };
+        }
+        const nested = chunk?.raw?.analysisResult || chunk?.raw?.rawAnalysis;
+        if (typeof nested === "string" && nested.trim()) {
+            return { result: nested };
+        }
+    }
+    return null;
+}
+
 function mapReportRow(row) {
+    const chunks = safeParseArray(row.chunks_json);
+    const segments = safeParseArray(row.segments_json);
+    const analysis = extractAnalysisFromChunks(chunks);
     return {
         projectId: row.project_id,
         path: row.path,
         report: row.report || "",
-        chunks: safeParseArray(row.chunks_json),
-        segments: safeParseArray(row.segments_json),
+        chunks,
+        segments,
+        analysis,
         conversationId: row.conversation_id || "",
         userId: row.user_id || "",
         generatedAt: toIsoString(row.generated_at),
@@ -415,7 +434,27 @@ app.post("/api/reports/dify", async (req, res, next) => {
                 res.status(502).json({ message: error?.message || "SQL 靜態分析失敗" });
                 return;
             }
-            const reportPayload = buildSqlReportPayload({ analysis, content });
+
+            const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
+            let difyResult = null;
+            let difyError = null;
+            if (rawReport.trim()) {
+                try {
+                    difyResult = await requestDifyReport({
+                        projectName: projectName || projectId,
+                        filePath: `${path}.analysis.json`,
+                        content: rawReport,
+                        userId: resolvedUserId || undefined,
+                        segments: partitionContent(rawReport),
+                        files
+                    });
+                } catch (error) {
+                    difyError = error;
+                    console.error("[sql] Failed to enrich SQL analysis via Dify", error);
+                }
+            }
+
+            const reportPayload = buildSqlReportPayload({ analysis, content, dify: difyResult });
             await upsertReport({
                 projectId,
                 path,
@@ -431,7 +470,8 @@ app.post("/api/reports/dify", async (req, res, next) => {
                 projectId,
                 path,
                 ...reportPayload,
-                savedAt: savedAtIso
+                savedAt: savedAtIso,
+                difyError: difyError ? difyError.message || String(difyError) : undefined
             });
             return;
         }
