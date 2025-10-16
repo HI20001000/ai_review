@@ -109,10 +109,10 @@ function projectIssueCount(projectId) {
     return null;
 }
 
-function handleGenerateProject(event, project) {
+const handleProjectGenerateClick = (event, project) => {
     event?.stopPropagation?.();
     props.onGenerateProject(project);
-}
+};
 
 function isBatchRunning(projectId) {
     const state = props.getProjectBatchState(projectId);
@@ -185,7 +185,7 @@ watch(
                                 type="button"
                                 class="reportBatchBtn"
                                 :disabled="entry.cache.loading || isBatchRunning(entry.project.id)"
-                                @click="handleGenerateProject($event, entry.project)"
+                                @click="handleProjectGenerateClick($event, entry.project)"
                             >
                                 <span v-if="isBatchRunning(entry.project.id)">
                                     批次生成中 {{ batchProgress(entry.project.id) }}
