@@ -625,7 +625,7 @@ const hasReportIssueLines = computed(() => reportIssueLines.value.length > 0);
 
 const reportIssuesViewMode = ref("code");
 
-const activeReportRawText = computed(() => {
+const activeReportRawSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
     const enrichedText = typeof report.state?.report === "string" ? report.state.report : "";
@@ -642,6 +642,31 @@ const activeReportRawText = computed(() => {
     }
     return "";
 });
+
+function formatReportRawText(rawText) {
+    if (typeof rawText !== "string") return "";
+    let candidate = rawText.trim();
+    if (!candidate) return "";
+
+    let depth = 0;
+    while (depth < 2) {
+        try {
+            const parsed = JSON.parse(candidate);
+            if (typeof parsed === "string") {
+                candidate = parsed.trim();
+                depth += 1;
+                continue;
+            }
+            return JSON.stringify(parsed, null, 2);
+        } catch (error) {
+            break;
+        }
+    }
+
+    return candidate;
+}
+
+const activeReportRawText = computed(() => formatReportRawText(activeReportRawSourceText.value));
 
 const canShowCodeIssues = computed(() => {
     const report = activeReport.value;
