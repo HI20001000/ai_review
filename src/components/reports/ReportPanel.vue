@@ -1,12 +1,8 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import ReportTreeNode from "./ReportTreeNode.vue";
 
 const props = defineProps({
-    styleWidth: {
-        type: Object,
-        required: true
-    },
     entries: {
         type: Array,
         default: () => []
@@ -43,137 +39,180 @@ const props = defineProps({
         type: Function,
         required: true
     },
+    onGenerateProject: {
+        type: Function,
+        required: true
+    },
+    getProjectBatchState: {
+        type: Function,
+        required: true
+    },
+    getProjectIssueCount: {
+        type: Function,
+        default: null
+    },
     activeTarget: {
         type: Object,
         default: null
-    },
-    isResizing: {
-        type: Boolean,
-        default: false
     }
 });
 
-const emit = defineEmits(["resizeStart"]);
-
 const hasEntries = computed(() => (props.entries || []).length > 0);
 
-const isHoveringResizeEdge = ref(false);
+const collapsedProjects = ref({});
 
-const EDGE_THRESHOLD = 8;
+watch(
+    () => (props.entries || []).map((entry) => props.normaliseProjectId(entry?.project?.id)).filter(Boolean),
+    (ids) => {
+        const next = {};
+        ids.forEach((id) => {
+            if (!id) return;
+            const current = collapsedProjects.value[id];
+            next[id] = typeof current === "boolean" ? current : true;
+        });
+        collapsedProjects.value = next;
+    },
+    { immediate: true }
+);
 
-function updateResizeHoverState(event) {
-    const panel = event.currentTarget;
-    if (!panel) return false;
-    const rect = panel.getBoundingClientRect();
-    const offsetX = event.clientX - rect.left;
-    const hovering = rect.width - offsetX <= EDGE_THRESHOLD;
-    if (isHoveringResizeEdge.value !== hovering) {
-        isHoveringResizeEdge.value = hovering;
+function isProjectCollapsed(projectId) {
+    const key = props.normaliseProjectId(projectId);
+    if (!key) return false;
+    const map = collapsedProjects.value;
+    if (Object.prototype.hasOwnProperty.call(map, key)) {
+        return Boolean(map[key]);
     }
-    return hovering;
+    return true;
 }
 
-function handlePointerMove(event) {
-    updateResizeHoverState(event);
+function setProjectCollapsed(projectId, collapsed) {
+    const key = props.normaliseProjectId(projectId);
+    if (!key) return;
+    collapsedProjects.value = {
+        ...collapsedProjects.value,
+        [key]: Boolean(collapsed)
+    };
 }
 
-function handlePointerLeave() {
-    isHoveringResizeEdge.value = false;
+function toggleProjectCollapsed(projectId) {
+    setProjectCollapsed(projectId, !isProjectCollapsed(projectId));
 }
 
-function handlePointerDown(event) {
-    const hovering = updateResizeHoverState(event);
-    if (!hovering) return;
-    emit("resizeStart", event);
+function projectIssueCount(projectId) {
+    if (typeof props.getProjectIssueCount !== "function") {
+        return null;
+    }
+    const value = props.getProjectIssueCount(projectId);
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+    }
+    return null;
+}
+
+const handleProjectGenerateClick = (event, project) => {
+    event?.stopPropagation?.();
+    props.onGenerateProject(project);
+};
+
+function isBatchRunning(projectId) {
+    const state = props.getProjectBatchState(projectId);
+    return Boolean(state?.running);
+}
+
+function batchProgress(projectId) {
+    const state = props.getProjectBatchState(projectId);
+    if (!state?.running) return "";
+    return `${state.processed}/${state.total}`;
 }
 </script>
 
 <template>
-    <aside
-        class="reportProjects"
-        :class="{
-            'reportProjects--hoverEdge': isHoveringResizeEdge,
-            'reportProjects--resizing': isResizing
-        }"
-        :style="styleWidth"
-        @pointermove="handlePointerMove"
-        @pointerleave="handlePointerLeave"
-        @pointerdown="handlePointerDown"
-    >
-        <div class="panelHeader">代碼審查</div>
-        <template v-if="hasEntries">
-            <ul class="reportProjectList">
-                <li
-                    v-for="entry in entries"
-                    :key="entry.project.id"
-                    class="reportProjectItem"
-                >
-                    <div class="projectHeader">
-                        <span class="projName" :title="entry.project.name">{{ entry.project.name }}</span>
+    <template v-if="hasEntries">
+        <ul class="reportProjectList">
+            <li
+                v-for="entry in entries"
+                :key="entry.project.id"
+                :class="[
+                    'reportProjectItem',
+                    { 'reportProjectItem--collapsed': isProjectCollapsed(entry.project.id) }
+                ]"
+            >
+                <div class="projectHeader">
                         <button
-                            v-if="entry.cache.error"
                             type="button"
-                            class="reportRetryBtn"
-                            @click.stop="onReloadProject(entry.project.id)"
+                            class="projectToggle"
+                            :aria-expanded="!isProjectCollapsed(entry.project.id)"
+                            :title="isProjectCollapsed(entry.project.id) ? '展開專案' : '收合專案'"
+                            @click.stop="toggleProjectCollapsed(entry.project.id)"
                         >
-                            重新載入
+                            <span class="projectToggleIcon" :class="{ 'projectToggleIcon--collapsed': isProjectCollapsed(entry.project.id) }"></span>
                         </button>
-                        <span v-else-if="entry.cache.loading" class="reportMeta">載入中…</span>
+                        <span class="projName" :title="entry.project.name">{{ entry.project.name }}</span>
+                        <span
+                            v-if="projectIssueCount(entry.project.id) !== null"
+                            class="projectIssueBadge"
+                        >
+                            問題 {{ projectIssueCount(entry.project.id) }}
+                        </span>
+                        <div class="projectActions">
+                            <button
+                                v-if="!entry.cache.error"
+                                type="button"
+                                class="reportBatchBtn"
+                                :disabled="entry.cache.loading || isBatchRunning(entry.project.id)"
+                                @click="handleProjectGenerateClick($event, entry.project)"
+                            >
+                                <span v-if="isBatchRunning(entry.project.id)">
+                                    批次生成中 {{ batchProgress(entry.project.id) }}
+                                </span>
+                                <span v-else>一鍵生成</span>
+                            </button>
+                            <button
+                                v-else
+                                type="button"
+                                class="reportRetryBtn"
+                                @click.stop="onReloadProject(entry.project.id)"
+                            >
+                                重新載入
+                            </button>
+                            <span
+                                v-if="!entry.cache.error && entry.cache.loading"
+                                class="reportMeta"
+                            >
+                                載入中…
+                            </span>
+                        </div>
                     </div>
-                    <p v-if="entry.cache.error" class="reportError">無法載入：{{ entry.cache.error }}</p>
-                    <div v-else-if="entry.cache.loading" class="reportLoading">正在載入檔案清單…</div>
-                    <p v-else-if="!entry.cache.nodes.length" class="reportEmpty">此專案尚未索引任何檔案。</p>
-                    <div v-else class="reportTreeWrapper">
-                        <ul class="reportFileTree">
-                            <ReportTreeNode
-                                v-for="node in entry.cache.nodes"
-                                :key="node.path"
-                                :node="node"
-                                :project="entry.project"
-                                :project-id="normaliseProjectId(entry.project.id)"
-                                :is-expanded="isNodeExpanded"
-                                :toggle="toggleNode"
-                                :get-state="getReportState"
-                                :on-generate="onGenerate"
-                                :on-select="onSelect"
-                                :get-status-label="getStatusLabel"
-                                :active-target="activeTarget"
-                            />
-                        </ul>
+                    <div v-if="!isProjectCollapsed(entry.project.id)" class="reportProjectBody">
+                        <p v-if="entry.cache.error" class="reportError">無法載入：{{ entry.cache.error }}</p>
+                        <div v-else-if="entry.cache.loading" class="reportLoading">正在載入檔案清單…</div>
+                        <p v-else-if="!entry.cache.nodes.length" class="reportEmpty">此專案尚未索引任何檔案。</p>
+                        <div v-else class="reportTreeWrapper">
+                            <ul class="reportFileTree">
+                                <ReportTreeNode
+                                    v-for="node in entry.cache.nodes"
+                                    :key="node.path"
+                                    :node="node"
+                                    :project="entry.project"
+                                    :project-id="normaliseProjectId(entry.project.id)"
+                                    :is-expanded="isNodeExpanded"
+                                    :toggle="toggleNode"
+                                    :get-state="getReportState"
+                                    :on-generate="onGenerate"
+                                    :on-select="onSelect"
+                                    :get-status-label="getStatusLabel"
+                                    :active-target="activeTarget"
+                                />
+                            </ul>
+                        </div>
                     </div>
-                </li>
-            </ul>
-        </template>
-        <p v-else class="emptyProjects">尚未匯入任何專案。</p>
-    </aside>
+            </li>
+        </ul>
+    </template>
+    <p v-else class="reportEmpty">尚未載入任何報告專案。</p>
 </template>
 
 <style scoped>
-.reportProjects {
-    flex: 0 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    background: #191919;
-    padding: 16px;
-    overflow-y: auto;
-    border-radius: 0;
-    box-sizing: border-box;
-    min-width: 260px;
-    position: relative;
-}
-
-.reportProjects--hoverEdge,
-.reportProjects--resizing {
-    cursor: col-resize;
-}
-
-.panelHeader {
-    font-weight: 700;
-    color: #cbd5e1;
-    font-size: 14px;
-}
-
 .reportProjectList {
     list-style: none;
     margin: 0;
@@ -184,13 +223,19 @@ function handlePointerDown(event) {
 }
 
 .reportProjectItem {
-    border: 1px solid #2f2f2f;
-    border-radius: 0;
-    background: #202020;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    background: var(--panel-surface);
     padding: 12px;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.reportProjectItem:hover {
+    border-color: var(--panel-border-strong);
+    transform: translateY(-1px);
 }
 
 .projectHeader {
@@ -199,18 +244,105 @@ function handlePointerDown(event) {
     gap: 12px;
 }
 
+.projectToggle {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--panel-muted);
+    cursor: pointer;
+    padding: 0;
+    transition: color 0.2s ease;
+}
+
+.projectToggle:hover {
+    color: var(--panel-heading);
+}
+
+.projectToggleIcon {
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid currentColor;
+    transition: transform 0.2s ease;
+}
+
+.projectToggleIcon--collapsed {
+    transform: rotate(-90deg);
+}
+
 .projName {
     flex: 1 1 auto;
     min-width: 0;
     font-weight: 600;
-    color: #f3f4f6;
+    color: var(--tree-text);
     white-space: nowrap;
     text-overflow: ellipsis;
     overflow: hidden;
 }
 
+.projectActions {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.reportBatchBtn {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel-surface-alt);
+    color: var(--panel-heading);
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.projectIssueBadge {
+    flex: 0 0 auto;
+    font-size: 12px;
+    line-height: 1;
+    padding: 4px 8px;
+    border-radius: 9999px;
+    border: 1px solid var(--panel-border-strong);
+    background: rgba(148, 163, 184, 0.12);
+    color: #fbbf24;
+    white-space: nowrap;
+}
+
+.reportProjectItem--collapsed {
+    gap: 4px;
+}
+
+.reportProjectBody {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.reportBatchBtn:hover {
+    background: var(--panel-accent-soft);
+    border-color: var(--panel-border-strong);
+    color: var(--panel-heading);
+}
+
+.reportBatchBtn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    background: rgba(148, 163, 184, 0.08);
+    color: var(--panel-muted);
+    border-color: var(--panel-border);
+}
+
 .reportMeta {
-    margin-left: auto;
     font-size: 12px;
     color: #94a3b8;
 }
@@ -236,7 +368,7 @@ function handlePointerDown(event) {
 .reportEmpty {
     margin: 0;
     font-size: 13px;
-    color: #94a3b8;
+    color: var(--panel-muted);
 }
 
 .reportError {
@@ -246,7 +378,7 @@ function handlePointerDown(event) {
 }
 
 .reportTreeWrapper {
-    border-top: 1px solid #2f2f2f;
+    border-top: 1px solid var(--panel-divider);
     padding-top: 8px;
 }
 
@@ -257,11 +389,5 @@ function handlePointerDown(event) {
     display: flex;
     flex-direction: column;
     gap: 6px;
-}
-
-.emptyProjects {
-    margin: 0;
-    color: #94a3b8;
-    font-size: 13px;
 }
 </style>
