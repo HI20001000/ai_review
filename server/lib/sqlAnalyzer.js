@@ -243,13 +243,33 @@ export function buildSqlReportPayload({ analysis, content, dify }) {
         finalReport = rawReport;
     }
     const generatedAt = dify?.generatedAt || new Date().toISOString();
+
+    const originalResult = typeof analysis?.result === "string" ? analysis.result : rawReport;
+    const analysisPayload =
+        analysis && typeof analysis === "object" ? { ...analysis } : originalResult ? {} : null;
+
+    if (analysisPayload) {
+        if (originalResult && typeof analysisPayload.originalResult !== "string") {
+            analysisPayload.originalResult = originalResult;
+        }
+        if (rawReport && typeof analysisPayload.rawReport !== "string") {
+            analysisPayload.rawReport = rawReport;
+        }
+        if (finalReport && finalReport.trim()) {
+            analysisPayload.result = finalReport;
+        } else if (!analysisPayload.result && rawReport) {
+            analysisPayload.result = rawReport;
+        }
+        analysisPayload.enriched = Boolean(dify);
+    }
+
     return {
         report: finalReport,
         conversationId: typeof dify?.conversationId === "string" ? dify.conversationId : "",
         chunks: annotatedChunks,
         segments,
         generatedAt,
-        analysis,
+        analysis: analysisPayload,
         rawReport,
         dify: dify || null,
         source: dify ? "sql-rule-engine+dify" : "sql-rule-engine"

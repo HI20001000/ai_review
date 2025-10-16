@@ -506,12 +506,19 @@ const reportIssuesViewMode = ref("code");
 const activeReportRawText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
+    const enrichedText = typeof report.state?.report === "string" ? report.state.report : "";
+    if (enrichedText && enrichedText.trim()) {
+        return enrichedText;
+    }
     const analysisText = report.state?.analysis?.result;
     if (typeof analysisText === "string" && analysisText.trim()) {
         return analysisText;
     }
-    const text = report.state?.report;
-    return typeof text === "string" ? text : "";
+    const original = report.state?.analysis?.originalResult;
+    if (typeof original === "string" && original.trim()) {
+        return original;
+    }
+    return "";
 });
 
 const canShowCodeIssues = computed(() => {
@@ -545,14 +552,20 @@ function setReportIssuesViewMode(mode) {
     reportIssuesViewMode.value = mode;
 }
 
-watch(activeReport, (report) => {
-    if (!report) {
-        reportIssuesViewMode.value = "code";
-        return;
+watch(
+    activeReport,
+    (report) => {
+        if (!report) {
+            reportIssuesViewMode.value = "code";
+            return;
+        }
+        if (canShowCodeIssues.value) {
+            reportIssuesViewMode.value = "code";
+            return;
+        }
+        reportIssuesViewMode.value = activeReportRawText.value.trim() ? "raw" : "code";
     }
-    const hasRaw = typeof report.state?.analysis?.result === "string" && report.state.analysis.result.trim().length > 0;
-    reportIssuesViewMode.value = hasRaw ? "raw" : "code";
-});
+);
 
 watch(
     [canShowCodeIssues, canShowRawIssues],
