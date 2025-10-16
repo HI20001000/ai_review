@@ -163,6 +163,78 @@ async function executeSqlAnalysis(sqlText) {
     throw error;
 }
 
+function extractJsonFromText(value) {
+    if (value == null) {
+        return "";
+    }
+    if (typeof value === "object") {
+        try {
+            return JSON.stringify(value);
+        } catch (_error) {
+            return "";
+        }
+    }
+    if (typeof value !== "string") {
+        return "";
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+
+    const candidates = [];
+
+    const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenceMatch && fenceMatch[1]) {
+        candidates.push(fenceMatch[1].trim());
+    }
+
+    const braceStart = trimmed.indexOf("{");
+    const braceEnd = trimmed.lastIndexOf("}");
+    if (braceStart !== -1 && braceEnd !== -1 && braceEnd > braceStart) {
+        candidates.push(trimmed.slice(braceStart, braceEnd + 1));
+    }
+
+    candidates.push(trimmed);
+
+    for (const candidate of candidates) {
+        try {
+            const parsed = JSON.parse(candidate);
+            return JSON.stringify(parsed);
+        } catch (_error) {
+            continue;
+        }
+    }
+
+    return "";
+}
+
+function normaliseDifyOutput(dify, rawReport) {
+    if (!dify || typeof dify !== "object") {
+        return dify ?? null;
+    }
+
+    const resolvedReport = extractJsonFromText(dify.report ?? dify.answer ?? "");
+    const normalisedReport = resolvedReport || rawReport || "";
+
+    const normalisedChunks = Array.isArray(dify.chunks)
+        ? dify.chunks.map((chunk) => ({
+              ...chunk,
+              answer: extractJsonFromText(chunk?.answer) || chunk?.answer || "",
+              raw: chunk?.raw
+          }))
+        : dify.chunks;
+
+    return {
+        ...dify,
+        report: normalisedReport,
+        chunks: normalisedChunks,
+        originalReport: typeof dify.report === "string" ? dify.report : rawReport || "",
+        originalChunks: Array.isArray(dify.chunks) ? dify.chunks : undefined
+    };
+}
+
 export async function analyseSqlToReport(sqlText, options = {}) {
     const analysis = await executeSqlAnalysis(sqlText);
     const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
@@ -192,7 +264,7 @@ export async function analyseSqlToReport(sqlText, options = {}) {
     );
 
     try {
-        const dify = await requestDifyJsonEnrichment({
+        const difyRaw = await requestDifyJsonEnrichment({
             projectName: resolvedProjectName,
             filePath: analysisFilePath,
             content: trimmedReport,
@@ -200,6 +272,7 @@ export async function analyseSqlToReport(sqlText, options = {}) {
             segments,
             files
         });
+        const dify = normaliseDifyOutput(difyRaw, trimmedReport);
         return { analysis, dify, difyError: null };
     } catch (error) {
         console.error("[sql+dify] Failed to enrich SQL analysis via Dify", error);
