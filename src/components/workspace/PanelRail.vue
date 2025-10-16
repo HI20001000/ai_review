@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, useSlots } from "vue";
 import TreeNode from "./TreeNode.vue";
+import ReportPanel from "../reports/ReportPanel.vue";
 
 const props = defineProps({
     styleWidth: {
@@ -54,6 +55,10 @@ const props = defineProps({
     showContent: {
         type: Boolean,
         default: true
+    },
+    reportConfig: {
+        type: Object,
+        default: null
     }
 });
 
@@ -62,6 +67,7 @@ const emit = defineEmits(["resizeStart"]);
 const slots = useSlots();
 
 const isProjectsMode = computed(() => props.mode === "projects");
+const isReportsMode = computed(() => props.mode === "reports");
 const hasCustomContent = computed(() => !!slots.default);
 
 const hasProjects = computed(() => (props.projects || []).length > 0);
@@ -96,6 +102,26 @@ const shouldShowEmptyTree = computed(
 const isHoveringResizeEdge = ref(false);
 
 const EDGE_THRESHOLD = 8;
+
+const defaultReportPanelStyle = Object.freeze({ flex: "1 1 auto", width: "100%" });
+
+const reportPanelProps = computed(() => {
+    if (!isReportsMode.value) {
+        return null;
+    }
+    const config = props.reportConfig;
+    if (!config || typeof config !== "object") {
+        return null;
+    }
+    const { styleWidth, enableResizeEdge, ...rest } = config;
+    return {
+        styleWidth: styleWidth && typeof styleWidth === "object"
+            ? { ...defaultReportPanelStyle, ...styleWidth }
+            : defaultReportPanelStyle,
+        enableResizeEdge: typeof enableResizeEdge === "boolean" ? enableResizeEdge : false,
+        ...rest
+    };
+});
 
 function updateResizeHoverState(event) {
     const panel = event.currentTarget;
@@ -134,10 +160,7 @@ function handlePointerDown(event) {
         @pointerdown="handlePointerDown"
     >
         <template v-if="showContent">
-            <template v-if="!isProjectsMode && hasCustomContent">
-                <slot />
-            </template>
-            <template v-else>
+            <template v-if="isProjectsMode">
                 <div class="projectPanel">
                     <div class="panelHeader">Projects</div>
                     <template v-if="hasProjects">
@@ -192,6 +215,18 @@ function handlePointerDown(event) {
                     <p class="emptyTree">請先選擇左側的專案以載入檔案。</p>
                 </div>
             </template>
+            <template v-else-if="isReportsMode">
+                <div class="projectPanel projectPanel--reports">
+                    <div class="panelHeader">Reports</div>
+                    <div class="reportPanelWrapper">
+                        <ReportPanel v-if="reportPanelProps" v-bind="reportPanelProps" />
+                        <div v-else class="emptyTree">尚未載入任何報告專案。</div>
+                    </div>
+                </div>
+            </template>
+            <template v-else-if="hasCustomContent">
+                <slot />
+            </template>
         </template>
 
         <div v-else class="panelEmpty">
@@ -242,6 +277,19 @@ function handlePointerDown(event) {
     flex-direction: column;
     gap: 12px;
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.projectPanel--reports {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.reportPanelWrapper {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
 .projectList {

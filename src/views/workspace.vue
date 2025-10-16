@@ -8,7 +8,6 @@ import * as fileSystemService from "../scripts/services/fileSystemService.js";
 import { generateReportViaDify, fetchProjectReports } from "../scripts/services/reportService.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
-import ReportPanel from "../components/reports/ReportPanel.vue";
 
 const preview = usePreview();
 
@@ -143,6 +142,29 @@ const reportProjectEntries = computed(() => {
             }
         };
     });
+});
+
+const reportPanelConfig = computed(() => {
+    if (!isReportToolActive.value) {
+        return null;
+    }
+    return {
+        entries: reportProjectEntries.value,
+        normaliseProjectId,
+        isNodeExpanded: isReportNodeExpanded,
+        toggleNode: toggleReportNode,
+        getReportState: getReportStateForFile,
+        onGenerate: generateReportForFile,
+        onSelect: selectReport,
+        getStatusLabel,
+        onReloadProject: loadReportTreeForProject,
+        onGenerateProject: generateProjectReports,
+        getProjectBatchState,
+        getProjectIssueCount,
+        activeTarget: activeReportTarget.value,
+        isResizing: false,
+        enableResizeEdge: false
+    };
 });
 const readyReports = computed(() => {
     const list = [];
@@ -2085,29 +2107,9 @@ onBeforeUnmount(() => {
                 :is-loading-tree="isLoadingTree"
                 :open-node="openNode"
                 :select-tree-node="selectTreeNode"
+                :report-config="reportPanelConfig"
                 @resize-start="startPreviewResize"
-            >
-                <template v-if="isReportToolActive">
-                    <ReportPanel
-                        :style-width="{ flex: '1 1 auto', width: '100%' }"
-                        :entries="reportProjectEntries"
-                        :normalise-project-id="normaliseProjectId"
-                        :is-node-expanded="isReportNodeExpanded"
-                        :toggle-node="toggleReportNode"
-                        :get-report-state="getReportStateForFile"
-                        :on-generate="generateReportForFile"
-                        :on-select="selectReport"
-                        :get-status-label="getStatusLabel"
-                        :on-reload-project="loadReportTreeForProject"
-                        :on-generate-project="generateProjectReports"
-                        :get-project-batch-state="getProjectBatchState"
-                        :get-project-issue-count="getProjectIssueCount"
-                        :active-target="activeReportTarget"
-                        :is-resizing="false"
-                        :enable-resize-edge="false"
-                    />
-                </template>
-            </PanelRail>
+            />
 
             <section class="workSpace" :class="{ 'workSpace--reports': isReportToolActive }">
                 <template v-if="isReportToolActive">

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { getDifyConfigSummary, partitionContent, requestDifyReport } from "./difyClient.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -158,8 +159,48 @@ async function executeSqlAnalysis(sqlText) {
     throw error;
 }
 
-export async function analyseSqlToReport(sqlText) {
-    return await executeSqlAnalysis(sqlText);
+export async function analyseSqlToReport(sqlText, options = {}) {
+    const analysis = await executeSqlAnalysis(sqlText);
+    const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
+    const trimmedReport = rawReport.trim();
+
+    if (!trimmedReport) {
+        return { analysis, dify: null, difyError: null };
+    }
+
+    const {
+        projectId = "",
+        projectName = "",
+        path = "",
+        userId = "",
+        files = undefined
+    } = options || {};
+
+    const resolvedProjectName = projectName || projectId || "sql-report";
+    const resolvedUserId = typeof userId === "string" && userId.trim() ? userId.trim() : undefined;
+    const analysisFilePath = path ? `${path}.analysis.json` : "analysis.json";
+    const segments = partitionContent(trimmedReport);
+    const summary = getDifyConfigSummary();
+
+    console.log(
+        `[sql+dify] Enriching SQL analysis project=${projectId || resolvedProjectName} path=${path || analysisFilePath} ` +
+            `segments=${segments.length} maxSegmentChars=${summary.maxSegmentChars}`
+    );
+
+    try {
+        const dify = await requestDifyReport({
+            projectName: resolvedProjectName,
+            filePath: analysisFilePath,
+            content: trimmedReport,
+            userId: resolvedUserId,
+            segments,
+            files
+        });
+        return { analysis, dify, difyError: null };
+    } catch (error) {
+        console.error("[sql+dify] Failed to enrich SQL analysis via Dify", error);
+        return { analysis, dify: null, difyError: error };
+    }
 }
 
 export function buildSqlReportPayload({ analysis, content, dify }) {

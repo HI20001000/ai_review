@@ -426,35 +426,26 @@ app.post("/api/reports/dify", async (req, res, next) => {
         const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
         if (isSqlPath(path)) {
             console.log(`[sql] Running static SQL analysis project=${projectId} path=${path}`);
-            let analysis;
+            let sqlAnalysis;
             try {
-                analysis = await analyseSqlToReport(content);
+                sqlAnalysis = await analyseSqlToReport(content, {
+                    projectId,
+                    projectName,
+                    path,
+                    userId: resolvedUserId,
+                    files
+                });
             } catch (error) {
                 console.error("[sql] Failed to analyse SQL", error);
                 res.status(502).json({ message: error?.message || "SQL 靜態分析失敗" });
                 return;
             }
 
-            const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
-            let difyResult = null;
-            let difyError = null;
-            if (rawReport.trim()) {
-                try {
-                    difyResult = await requestDifyReport({
-                        projectName: projectName || projectId,
-                        filePath: `${path}.analysis.json`,
-                        content: rawReport,
-                        userId: resolvedUserId || undefined,
-                        segments: partitionContent(rawReport),
-                        files
-                    });
-                } catch (error) {
-                    difyError = error;
-                    console.error("[sql] Failed to enrich SQL analysis via Dify", error);
-                }
-            }
-
-            const reportPayload = buildSqlReportPayload({ analysis, content, dify: difyResult });
+            const reportPayload = buildSqlReportPayload({
+                analysis: sqlAnalysis.analysis,
+                content,
+                dify: sqlAnalysis.dify
+            });
             await upsertReport({
                 projectId,
                 path,
@@ -471,7 +462,9 @@ app.post("/api/reports/dify", async (req, res, next) => {
                 path,
                 ...reportPayload,
                 savedAt: savedAtIso,
-                difyError: difyError ? difyError.message || String(difyError) : undefined
+                difyError: sqlAnalysis.difyError
+                    ? sqlAnalysis.difyError.message || String(sqlAnalysis.difyError)
+                    : undefined
             });
             return;
         }
@@ -532,22 +525,37 @@ app.post("/api/reports/dify/snippet", async (req, res, next) => {
             return;
         }
 
+        const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+
         if (isSqlPath(path)) {
             console.log(`[sql] Running static SQL analysis for snippet project=${projectId} path=${path}`);
-            let analysis;
+            let sqlAnalysis;
             try {
-                analysis = await analyseSqlToReport(normalised.content);
+                sqlAnalysis = await analyseSqlToReport(normalised.content, {
+                    projectId,
+                    projectName,
+                    path,
+                    userId: resolvedUserId,
+                    files
+                });
             } catch (error) {
                 console.error("[sql] Failed to analyse SQL snippet", error);
                 res.status(502).json({ message: error?.message || "SQL 靜態分析失敗" });
                 return;
             }
-            const reportPayload = buildSqlReportPayload({ analysis, content: normalised.content });
+            const reportPayload = buildSqlReportPayload({
+                analysis: sqlAnalysis.analysis,
+                content: normalised.content,
+                dify: sqlAnalysis.dify
+            });
             res.json({
                 projectId,
                 path,
                 selection: normalised.meta || undefined,
-                ...reportPayload
+                ...reportPayload,
+                difyError: sqlAnalysis.difyError
+                    ? sqlAnalysis.difyError.message || String(sqlAnalysis.difyError)
+                    : undefined
             });
             return;
         }
