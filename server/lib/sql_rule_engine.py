@@ -89,7 +89,7 @@ def _add_issue(
             "column": col,
             "snippet": snippet,
             "evidence": evidence or snippet,
-            "修改建議": "",
+            "suggestions": "",
         }
     )
 
