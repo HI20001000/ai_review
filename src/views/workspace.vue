@@ -3646,6 +3646,7 @@ body,
 .codeScroll *::selection,
 .codeLineContent::selection,
 .codeLineContent *::selection {
+    background: rgba(59, 130, 246, 0.45);
     color: #f8fafc;
 }
 
