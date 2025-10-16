@@ -124,6 +124,31 @@ function batchProgress(projectId) {
     if (!state?.running) return "";
     return `${state.processed}/${state.total}`;
 }
+
+function handleGenerateProject(event, project) {
+    event?.stopPropagation?.();
+    props.onGenerateProject(project);
+}
+
+function isBatchRunning(projectId) {
+    const state = props.getProjectBatchState(projectId);
+    return Boolean(state?.running);
+}
+
+function batchProgress(projectId) {
+    const state = props.getProjectBatchState(projectId);
+    if (!state?.running) return "";
+    return `${state.processed}/${state.total}`;
+}
+
+watch(
+    () => props.enableResizeEdge,
+    (enabled) => {
+        if (!enabled) {
+            isHoveringResizeEdge.value = false;
+        }
+    }
+);
 </script>
 
 <template>
