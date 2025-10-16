@@ -20,7 +20,7 @@ const emit = defineEmits(["open", "select"]);
 
 const isDirectory = computed(() => props.node?.type === "dir");
 const isActive = computed(() => props.activePath === (props.node?.path || ""));
-const children = computed(() => (props.node?.children || []));
+const children = computed(() => props.node?.children || []);
 
 const isOpen = ref(false);
 
@@ -63,15 +63,25 @@ const fileTitle = computed(() => {
     return `Size: ${size} bytes\nType: ${mime}\nUpdated: ${timestamp}`;
 });
 
-function handleClick() {
+function toggleDirectory() {
+    if (!isDirectory.value) return;
+    isOpen.value = !isOpen.value;
+}
+
+function handleRowClick() {
     const node = props.node;
     if (!node) return;
     emit("select", node.path);
     if (node.type === "dir") {
-        isOpen.value = !isOpen.value;
+        toggleDirectory();
         return;
     }
     emit("open", node);
+}
+
+function handleCaretClick(event) {
+    event?.stopPropagation?.();
+    toggleDirectory();
 }
 
 function forwardOpen(childNode) {
@@ -84,13 +94,28 @@ function forwardSelect(path) {
 </script>
 
 <template>
-    <li>
-        <div class="treeRow" :class="{ active: isActive }" @click="handleClick" :title="fileTitle">
-            <span class="icon">{{ icon }}</span>
-            <span class="name">
-                {{ props.node?.name }}
-                <small v-if="bigFileLabel" class="sizeHint">({{ bigFileLabel }})</small>
-            </span>
+    <li :class="['workspaceTreeNode', `workspaceTreeNode--${props.node?.type || 'unknown'}`]">
+        <div
+            class="treeRow"
+            :class="{ 'treeRow--active': isActive }"
+            @click="handleRowClick"
+            :title="fileTitle"
+        >
+            <button
+                v-if="isDirectory"
+                type="button"
+                class="treeCaret"
+                @click="handleCaretClick"
+                :aria-expanded="isOpen"
+                :aria-label="isOpen ? '收合資料夾' : '展開資料夾'"
+            >
+                <span v-if="isOpen">▾</span>
+                <span v-else>▸</span>
+            </button>
+            <span v-else class="treeCaret treeCaret--placeholder"></span>
+            <span class="treeIcon">{{ icon }}</span>
+            <span class="treeLabel" :title="props.node?.path">{{ props.node?.name }}</span>
+            <span v-if="bigFileLabel" class="treeMetaBadge">{{ bigFileLabel }}</span>
         </div>
         <ul v-if="isDirectory && isOpen" class="treeChildren">
             <TreeNode
@@ -106,39 +131,90 @@ function forwardSelect(path) {
 </template>
 
 <style scoped>
+.workspaceTreeNode {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: var(--tree-text);
+}
+
 .treeRow {
     display: flex;
-    gap: 8px;
     align-items: center;
-    padding: 2px 0;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: 8px;
+    transition: background 0.2s ease, color 0.2s ease;
     cursor: pointer;
     user-select: none;
 }
 
-.treeRow.active {
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
+.treeRow:hover {
+    background: var(--tree-row-hover);
 }
 
-.icon {
-    width: 20px;
-    text-align: center;
+.treeRow--active {
+    background: var(--tree-row-active);
 }
 
-.name {
+.treeCaret {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: var(--tree-icon);
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    justify-content: center;
+    font-size: 13px;
+    cursor: pointer;
 }
 
-.sizeHint {
+.treeCaret--placeholder {
+    cursor: default;
+}
+
+.treeIcon {
+    width: 20px;
+    text-align: center;
+    font-size: 16px;
+    color: var(--tree-icon);
+}
+
+.treeLabel {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--tree-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.treeMetaBadge {
+    flex: 0 0 auto;
+    padding: 2px 8px;
+    border-radius: 999px;
     font-size: 11px;
-    opacity: 0.65;
+    font-weight: 600;
+    background: var(--panel-accent-soft);
+    color: var(--panel-heading);
 }
 
 .treeChildren {
     list-style: none;
+    margin: 4px 0 0 22px;
+    padding: 0 0 0 16px;
+    border-left: 1px dashed var(--tree-connector);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.treeChildren:empty {
+    display: none;
     margin: 0;
-    padding-left: 16px;
+    padding: 0;
+    border-left: none;
 }
 </style>

@@ -1,5 +1,83 @@
 # Dify 驅動的代碼審查報告模塊設計
 
+## 快速開始：設定 Dify 連線資訊
+
+在啟用 Dify 報告功能前，請於專案根目錄建立或更新 `.env` 檔案，並新增以下環境變數：
+
+```
+DIFY_API_BASE_URL=https://your-dify-host/v1
+DIFY_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
+DIFY_CHAT_ENDPOINT=/chat-messages
+DIFY_RESPONSE_MODE=blocking
+DIFY_TOKEN_LIMIT=32000
+```
+
+* `DIFY_API_BASE_URL`：Dify 服務的 API 位址，通常以 `/v1` 結尾。
+* `DIFY_API_KEY`：在 Dify 後台建立的 API Token，用於驗證請求。
+* `DIFY_CHAT_ENDPOINT`：要呼叫的工作流端點，預設為 `/chat-messages`。
+* `DIFY_RESPONSE_MODE`：Dify 回傳模式，可設定為 `blocking`（預設）或 `streaming`。
+* `DIFY_TOKEN_LIMIT`：模型可處理的 Token 上限，預設 32000，可依實際方案調整。
+
+### 設定 Dify 主機、Port 與路徑的範例
+
+`DIFY_API_BASE_URL` 應填入完整的協定、主機名稱（或 IP）、Port 以及 API 前綴路徑。例如自架 Dify 服務並透過 5001 Port 提供 `/v1` API，可在 `.env` 中寫成：
+
+```ini
+DIFY_API_BASE_URL=http://10.0.10.38:5001/v1
+```
+
+如果您的 Workflow 不是使用預設的 `/chat-messages` 路徑，請同步調整 `DIFY_CHAT_ENDPOINT`，例如：
+
+```ini
+DIFY_CHAT_ENDPOINT=/workflow/run
+```
+
+修改後重新啟動後端伺服器或執行 `npm run server`，即可使新的路徑與 Port 設定生效。伺服器啟動時會在日誌輸出 `[env]` 及 `[dify]` 前綴的訊息，顯示使用的 `.env` 來源、目前採用的 `baseUrl`、端點、response mode 與是否偵測到 API Key，方便確認設定是否正確。
+
+從這個版本起，後端會把每次生成的審查結果寫入 MySQL `reports` 表（參考 `server/sql/schema.sql`）。為了相容於使用 `utf8mb4` 編碼、索引長度限制為 3072 bytes 的部署環境，表結構採用 `project_id + path_hash` 作為唯一鍵，並將實際儲存的 `path` 長度限制在 512 個字元。當再次請求相同檔案時，新的結果會覆寫同一筆紀錄，方便後續擴充歷史查詢或導出功能。
+
+後端服務與 `npm run db:init` 等指令會透過 `server/lib/env.js` 自動載入 `.env`，並在成功讀取時顯示 `[env] Loaded environment variables from ...`。重新啟動伺服器後，可從啟動日誌中的 `[env]`、`[dify]` 訊息確認設定是否生效。
+
+## SQL 靜態分析器
+
+當請求的檔案副檔名為 `.sql` 時，後端會改用專屬的靜態規則引擎（`server/lib/sql_rule_engine.py`）產生報告，不會呼叫 Dify。伺服器會將檔案內容透過標準輸入傳給該 Python 腳本，然後直接使用回傳的 JSON 結果填入報告。
+
+預設會依序嘗試以下命令尋找 Python 直譯器：
+
+1. `.env` 或系統環境中的 `SQL_ANALYZER_PYTHON`、`PYTHON_PATH`、`PYTHON`
+2. `python3`
+3. `python`
+4. `py -3`
+5. `py`
+
+若伺服器日誌仍出現 `Python was not found` 相關訊息，可在 `.env` 明確指定直譯器路徑，例如：
+
+```ini
+SQL_ANALYZER_PYTHON=C:\\Python312\\python.exe
+```
+
+重新啟動 `npm run server` 後，啟動日誌會在第一次執行 SQL 分析時輸出 `[sql]` 前綴的訊息。若 Python 找不到或腳本回傳錯誤，API 會以 502 回應並將實際錯誤訊息包含在 body 中，方便排查。
+
+## 區塊審查（Snippet Review）
+
+除了整個檔案的報告外，工作區左側工具欄新增了「區塊審查」圖示，可在同一個兩欄版面中保留檔案樹，並於主視窗選取特定行段後一鍵送交 Dify。瀏覽器會監聽文字預覽區的選取範圍，自動記錄起迄行數與行數統計，並於成功回傳後在右側面板顯示最新的片段報告與分段輸出。
+
+前端透過 `POST /api/reports/dify/snippet` 呼叫後端，payload 需包含：
+
+```json
+{
+  "projectId": "demo",
+  "path": "src/components/Button.vue",
+  "selection": {
+    "startLine": 12,
+    "endLine": 42,
+    "content": "...實際選取的程式碼..."
+  }
+}
+```
+
+後端會重新切段（沿用 `partitionContent` 邏輯）並將選取行範圍附加在送往 Dify 的 `inputs` 與提示語中；此請求僅回傳結果，不會寫入 MySQL `reports` 表，方便針對大型檔案進行局部分析或迭代嘗試。若選取內容為空或 `.env` 未設定完整的 Dify 參數，API 會回傳 400/502 錯誤供前端顯示提示。
+
 ## 目標
 
 * 允許使用者針對當前項目或指定提交請求代碼審查報告。
