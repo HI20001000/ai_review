@@ -124,6 +124,21 @@ function batchProgress(projectId) {
     if (!state?.running) return "";
     return `${state.processed}/${state.total}`;
 }
+
+function batchProgress(projectId) {
+    const state = props.getProjectBatchState(projectId);
+    if (!state?.running) return "";
+    return `${state.processed}/${state.total}`;
+}
+
+watch(
+    () => props.enableResizeEdge,
+    (enabled) => {
+        if (!enabled) {
+            isHoveringResizeEdge.value = false;
+        }
+    }
+);
 </script>
 
 <template>
