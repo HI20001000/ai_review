@@ -1348,11 +1348,13 @@ function handleSelectProject(project) {
 }
 
 function toggleProjectTool() {
-    activeRailTool.value = isProjectToolActive.value ? null : "projects";
+    if (isProjectToolActive.value) return;
+    activeRailTool.value = "projects";
 }
 
 function toggleReportTool() {
-    activeRailTool.value = isReportToolActive.value ? null : "reports";
+    if (isReportToolActive.value) return;
+    activeRailTool.value = "reports";
 }
 
 function normaliseProjectId(projectId) {
@@ -2079,12 +2081,9 @@ function closeChatWindow() {
 }
 
 function toggleChatWindow() {
-    if (isChatWindowOpen.value) {
-        closeChatWindow();
-    } else {
-        if (!isChatToggleDisabled.value) {
-            openChatWindow();
-        }
+    if (isChatWindowOpen.value) return;
+    if (!isChatToggleDisabled.value) {
+        openChatWindow();
     }
 }
 
