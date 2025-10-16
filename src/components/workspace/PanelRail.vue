@@ -1,11 +1,15 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, useSlots } from "vue";
 import TreeNode from "./TreeNode.vue";
 
 const props = defineProps({
     styleWidth: {
         type: Object,
         required: true
+    },
+    mode: {
+        type: String,
+        default: "projects"
     },
     projects: {
         type: Array,
@@ -55,12 +59,39 @@ const props = defineProps({
 
 const emit = defineEmits(["resizeStart"]);
 
+const slots = useSlots();
+
+const isProjectsMode = computed(() => props.mode === "projects");
+const hasCustomContent = computed(() => !!slots.default);
+
 const hasProjects = computed(() => (props.projects || []).length > 0);
-const hasSelectedProject = computed(() => props.selectedProjectId !== null && props.selectedProjectId !== undefined);
+const hasSelectedProject = computed(
+    () => props.selectedProjectId !== null && props.selectedProjectId !== undefined
+);
 const hasTreeNodes = computed(() => Array.isArray(props.tree) && props.tree.length > 0);
-const shouldShowTreeList = computed(() => hasSelectedProject.value && !props.isTreeCollapsed && hasTreeNodes.value && !props.isLoadingTree);
-const shouldShowTreeLoading = computed(() => hasSelectedProject.value && !props.isTreeCollapsed && props.isLoadingTree);
-const shouldShowEmptyTree = computed(() => hasSelectedProject.value && !props.isTreeCollapsed && !props.isLoadingTree && !hasTreeNodes.value);
+const shouldShowTreeList = computed(
+    () =>
+        isProjectsMode.value &&
+        hasSelectedProject.value &&
+        !props.isTreeCollapsed &&
+        hasTreeNodes.value &&
+        !props.isLoadingTree
+);
+const shouldShowTreeLoading = computed(
+    () =>
+        isProjectsMode.value &&
+        hasSelectedProject.value &&
+        !props.isTreeCollapsed &&
+        props.isLoadingTree
+);
+const shouldShowEmptyTree = computed(
+    () =>
+        isProjectsMode.value &&
+        hasSelectedProject.value &&
+        !props.isTreeCollapsed &&
+        !props.isLoadingTree &&
+        !hasTreeNodes.value
+);
 
 const isHoveringResizeEdge = ref(false);
 
@@ -103,59 +134,64 @@ function handlePointerDown(event) {
         @pointerdown="handlePointerDown"
     >
         <template v-if="showContent">
-            <div class="projectPanel">
-                <div class="panelHeader">Projects</div>
-                <template v-if="hasProjects">
-                    <ul class="projectList">
-                        <li
-                            v-for="p in projects"
-                            :key="p.id"
-                            :class="['projectItem', { active: p.id === selectedProjectId }]"
-                        >
-                            <div class="projectHeader" @click="onSelectProject(p)">
-                                <span class="projName">{{ p.name }}</span>
-                                <span class="rightSide">
-                                    <span class="badge" :title="p.mode">{{ p.mode }}</span>
-                                    <button
-                                        class="delBtn"
-                                        title="Delete project (DB only)"
-                                        @click.stop="onDeleteProject($event, p)"
-                                    >
-                                        ❌
-                                    </button>
-                                </span>
-                            </div>
-                        </li>
+            <template v-if="!isProjectsMode && hasCustomContent">
+                <slot />
+            </template>
+            <template v-else>
+                <div class="projectPanel">
+                    <div class="panelHeader">Projects</div>
+                    <template v-if="hasProjects">
+                        <ul class="projectList">
+                            <li
+                                v-for="p in projects"
+                                :key="p.id"
+                                :class="['projectItem', { active: p.id === selectedProjectId }]"
+                            >
+                                <div class="projectHeader" @click="onSelectProject(p)">
+                                    <span class="projName">{{ p.name }}</span>
+                                    <span class="rightSide">
+                                        <span class="badge" :title="p.mode">{{ p.mode }}</span>
+                                        <button
+                                            class="delBtn"
+                                            title="Delete project (DB only)"
+                                            @click.stop="onDeleteProject($event, p)"
+                                        >
+                                            ❌
+                                        </button>
+                                    </span>
+                                </div>
+                            </li>
+                        </ul>
+                    </template>
+                    <p v-else class="emptyProjects">尚未匯入任何專案。</p>
+                </div>
+
+                <div
+                    v-if="hasSelectedProject"
+                    class="treeArea"
+                    :class="{ collapsed: isTreeCollapsed }"
+                >
+                    <div class="panelHeader">Project Files</div>
+                    <div v-if="isTreeCollapsed" class="collapsedNotice">檔案樹已折疊，點擊專案可再次展開。</div>
+                    <div v-else-if="shouldShowTreeLoading" class="loading">Loading...</div>
+                    <ul v-else-if="shouldShowTreeList" class="treeRoot">
+                        <TreeNode
+                            v-for="n in tree"
+                            :key="n.path"
+                            :node="n"
+                            :active-path="activeTreePath"
+                            @open="openNode"
+                            @select="selectTreeNode"
+                        />
                     </ul>
-                </template>
-                <p v-else class="emptyProjects">尚未匯入任何專案。</p>
-            </div>
+                    <p v-else-if="shouldShowEmptyTree" class="emptyTree">尚未載入任何檔案。</p>
+                </div>
 
-            <div
-                v-if="hasSelectedProject"
-                class="treeArea"
-                :class="{ collapsed: isTreeCollapsed }"
-            >
-                <div class="panelHeader">Project Files</div>
-                <div v-if="isTreeCollapsed" class="collapsedNotice">檔案樹已折疊，點擊專案可再次展開。</div>
-                <div v-else-if="shouldShowTreeLoading" class="loading">Loading...</div>
-                <ul v-else-if="shouldShowTreeList" class="treeRoot">
-                    <TreeNode
-                        v-for="n in tree"
-                        :key="n.path"
-                        :node="n"
-                        :active-path="activeTreePath"
-                        @open="openNode"
-                        @select="selectTreeNode"
-                    />
-                </ul>
-                <p v-else-if="shouldShowEmptyTree" class="emptyTree">尚未載入任何檔案。</p>
-            </div>
-
-            <div v-else class="treePlaceholder">
-                <div class="panelHeader">Project Files</div>
-                <p class="emptyTree">請先選擇左側的專案以載入檔案。</p>
-            </div>
+                <div v-else class="treePlaceholder">
+                    <div class="panelHeader">Project Files</div>
+                    <p class="emptyTree">請先選擇左側的專案以載入檔案。</p>
+                </div>
+            </template>
         </template>
 
         <div v-else class="panelEmpty">
@@ -170,14 +206,17 @@ function handlePointerDown(event) {
     flex: 0 0 320px;
     display: flex;
     flex-direction: column;
-    gap: 0;
+    gap: 16px;
+    padding: 16px;
     min-height: 0;
-    background: #202020;
-    border: 1px solid #323232;
-    border-radius: 0;
+    height: 100%;
+    background: var(--panel-surface-alt);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
     box-sizing: border-box;
     overflow: hidden;
     position: relative;
+    box-shadow: 0 20px 35px rgba(15, 23, 42, 0.25);
 }
 
 .panelRail--resizeEdge {
@@ -186,19 +225,23 @@ function handlePointerDown(event) {
 
 .panelHeader {
     font-weight: 700;
-    color: #cbd5e1;
+    color: var(--panel-heading);
     margin-bottom: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 12px;
 }
 
 .projectPanel {
     flex: 0 0 auto;
-    background: #191919;
-    border: 1px solid #323232;
-    border-radius: 0;
+    background: var(--panel-surface);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
     padding: 16px;
     display: flex;
     flex-direction: column;
     gap: 12px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
 .projectList {
@@ -210,23 +253,29 @@ function handlePointerDown(event) {
     gap: 10px;
     max-height: 220px;
     overflow: auto;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 .projectItem {
-    background: #202020;
-    border: 1px solid #303134;
-    border-radius: 0;
+    background: var(--panel-surface-alt);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
     padding: 10px 12px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 12px;
-    transition: border-color 0.2s ease, background-color 0.2s ease;
+    transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+}
+
+.projectItem:hover {
+    border-color: var(--panel-border-strong);
+    transform: translateY(-1px);
 }
 
 .projectItem.active {
-    border-color: #2b4b63;
-    background: #1f2d3c;
+    border-color: var(--panel-border-strong);
+    background: rgba(148, 163, 184, 0.18);
 }
 
 .projectHeader {
@@ -235,7 +284,7 @@ function handlePointerDown(event) {
     justify-content: space-between;
     gap: 12px;
     width: 100%;
-    color: #e5e7eb;
+    color: var(--tree-text);
     cursor: pointer;
 }
 
@@ -252,51 +301,55 @@ function handlePointerDown(event) {
 }
 
 .badge {
-    font-size: 12px;
-    opacity: 0.6;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--panel-muted);
 }
 
 .delBtn {
-    background: transparent;
-    border: none;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.3);
     color: #fca5a5;
-    font-size: 14px;
+    font-size: 12px;
     line-height: 1;
     padding: 4px 6px;
-    border-radius: 0;
+    border-radius: 6px;
     cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
 }
 
 .delBtn:hover {
-    background: #3a2a2a;
-    color: #fecaca;
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.45);
 }
 
 .emptyProjects {
     margin: 0;
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.7);
+    font-size: 13px;
+    color: var(--panel-muted);
 }
 
 .treeArea,
 .treePlaceholder {
     flex: 1 1 auto;
     min-width: 0;
-    background: #191919;
-    border: 1px solid #323232;
-    border-radius: 0;
+    background: var(--panel-surface);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
     padding: 16px;
     display: flex;
     flex-direction: column;
     min-height: 0;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
 }
 
 .panelEmpty {
     flex: 1 1 auto;
     min-width: 0;
-    background: #252526;
-    border: 1px solid #323232;
-    border-radius: 0;
+    background: var(--panel-surface);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
     padding: 16px;
     display: flex;
     flex-direction: column;
@@ -304,6 +357,7 @@ function handlePointerDown(event) {
     align-items: center;
     gap: 8px;
     text-align: center;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
 }
 
 .treeArea.collapsed {
@@ -318,16 +372,17 @@ function handlePointerDown(event) {
 .treeArea .loading {
     padding: 10px;
     opacity: 0.8;
+    color: var(--panel-muted);
 }
 
 .emptyTree {
     margin: 0;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--panel-muted);
 }
 
 .collapsedNotice {
     margin: 0;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--panel-muted);
     line-height: 1.4;
 }
 
@@ -336,30 +391,28 @@ function handlePointerDown(event) {
     margin: 0;
     padding: 0 8px 8px 0;
     overflow: auto;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
-:deep(.treeChildren) {
-    list-style: none;
-    margin: 0;
-    padding-left: 16px;
+.treeArea .treeRoot::-webkit-scrollbar,
+.projectList::-webkit-scrollbar {
+    width: 8px;
 }
 
-:deep(.treeRow) {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    padding: 2px 0;
-    cursor: pointer;
+.treeArea .treeRoot::-webkit-scrollbar-track,
+.projectList::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
 }
 
-:deep(.treeRow.active) {
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 0;
+.treeArea .treeRoot::-webkit-scrollbar-thumb,
+.projectList::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 999px;
 }
 
-:deep(.treeRow .icon) {
-    width: 20px;
-    text-align: center;
+.treeArea .treeRoot::-webkit-scrollbar-thumb:hover,
+.projectList::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.65);
 }
 
 @media (max-width: 900px) {
