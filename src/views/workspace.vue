@@ -670,6 +670,7 @@ function formatReportRawText(rawText) {
 const activeReportRawText = computed(() => formatReportRawText(activeReportRawSourceText.value));
 const activeReportRawValue = computed(() => parseReportRawValue(activeReportRawSourceText.value));
 const canExportActiveReportRaw = computed(() => activeReportRawValue.value.success);
+const isExportingActiveReportRawExcel = ref(false);
 
 const canShowCodeIssues = computed(() => {
     const report = activeReport.value;
