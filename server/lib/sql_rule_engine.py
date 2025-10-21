@@ -732,7 +732,8 @@ def _read_sql_from_stdin_or_file() -> str:
 
 def _emit_json(payload: Dict) -> None:
     data = json.dumps(payload, ensure_ascii=False)
-    sys.stdout.buffer.write(data.encode("utf-8"))
+    encoded = data.encode("utf-8", errors="surrogateescape")
+    sys.stdout.buffer.write(encoded)
     sys.stdout.buffer.write(b"\n")
     sys.stdout.buffer.flush()
 
