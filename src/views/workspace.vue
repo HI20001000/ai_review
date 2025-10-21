@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, watch, onMounted, onBeforeUnmount, computed, nextTick } from "vue";
+import JSZip from "jszip";
 import { usePreview } from "../scripts/composables/usePreview.js";
 import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
@@ -124,6 +125,9 @@ const reportBatchStates = reactive({});
 const activeReportTarget = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
+const shouldPrepareReportTrees = computed(
+    () => isProjectToolActive.value || isReportToolActive.value
+);
 const panelMode = computed(() => (isReportToolActive.value ? "reports" : "projects"));
 const reportProjectEntries = computed(() => {
     const list = Array.isArray(projects.value) ? projects.value : [];
@@ -144,24 +148,42 @@ const reportProjectEntries = computed(() => {
     });
 });
 
+const activePreviewTarget = computed(() => {
+    const projectId = normaliseProjectId(selectedProjectId.value);
+    const path = activeTreePath.value || "";
+    if (!projectId || !path) return null;
+    return { projectId, path };
+});
+
 const reportPanelConfig = computed(() => {
-    if (!isReportToolActive.value) {
-        return null;
-    }
+    const viewMode = isReportToolActive.value ? "reports" : "projects";
+    const showProjectActions = isReportToolActive.value;
+    const showIssueBadge = isReportToolActive.value;
+    const showFileActions = isReportToolActive.value;
+    const allowSelectWithoutReport = !isReportToolActive.value;
+    const projectIssueGetter = showIssueBadge ? getProjectIssueCount : null;
+
     return {
+        panelTitle: viewMode === "reports" ? "代碼審查" : "Project Files",
+        showProjectActions,
+        showIssueBadge,
+        showFileActions,
+        allowSelectWithoutReport,
         entries: reportProjectEntries.value,
         normaliseProjectId,
         isNodeExpanded: isReportNodeExpanded,
         toggleNode: toggleReportNode,
         getReportState: getReportStateForFile,
         onGenerate: generateReportForFile,
-        onSelect: selectReport,
+        onSelect: viewMode === "reports" ? selectReport : previewReportFile,
         getStatusLabel,
         onReloadProject: loadReportTreeForProject,
         onGenerateProject: generateProjectReports,
         getProjectBatchState,
-        getProjectIssueCount,
-        activeTarget: activeReportTarget.value
+        getProjectIssueCount: projectIssueGetter,
+        activeTarget: isReportToolActive.value
+            ? activeReportTarget.value
+            : activePreviewTarget.value
     };
 });
 const readyReports = computed(() => {
@@ -667,6 +689,9 @@ function formatReportRawText(rawText) {
 }
 
 const activeReportRawText = computed(() => formatReportRawText(activeReportRawSourceText.value));
+const activeReportRawValue = computed(() => parseReportRawValue(activeReportRawSourceText.value));
+const canExportActiveReportRaw = computed(() => activeReportRawValue.value.success);
+const isExportingActiveReportRawExcel = ref(false);
 
 const canShowCodeIssues = computed(() => {
     const report = activeReport.value;
@@ -725,6 +750,705 @@ watch(
     },
     { immediate: true }
 );
+
+async function exportActiveReportRawToExcel() {
+    if (isExportingActiveReportRawExcel.value) return;
+    const raw = activeReportRawValue.value;
+    if (!raw.success) {
+        alert("原始資料不是有效的 JSON 格式，無法匯出 Excel。");
+        return;
+    }
+
+    try {
+        isExportingActiveReportRawExcel.value = true;
+        const worksheet = buildWorksheetFromValue(raw.value);
+        const blob = await createExcelBlobFromWorksheet(worksheet);
+        const fileName = buildActiveReportExcelFileName();
+        triggerBlobDownload(blob, fileName);
+    } catch (error) {
+        console.error("[reports] Failed to export raw JSON to Excel", error);
+        const message = error?.message || String(error);
+        alert(`匯出 Excel 失敗：${message}`);
+    } finally {
+        isExportingActiveReportRawExcel.value = false;
+    }
+}
+
+function parseReportRawValue(rawText) {
+    if (typeof rawText !== "string") {
+        return { success: false, value: null };
+    }
+    let candidate = rawText.trim();
+    if (!candidate) {
+        return { success: false, value: null };
+    }
+
+    const maxDepth = 3;
+    for (let depth = 0; depth < maxDepth; depth += 1) {
+        try {
+            const parsed = JSON.parse(candidate);
+            if (typeof parsed === "string") {
+                const trimmed = parsed.trim();
+                if (trimmed && trimmed !== candidate && /^[\[{]/.test(trimmed)) {
+                    candidate = trimmed;
+                    continue;
+                }
+                return { success: true, value: parsed };
+            }
+            return { success: true, value: parsed };
+        } catch (error) {
+            break;
+        }
+    }
+
+    return { success: false, value: null };
+}
+
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function buildWorksheetFromValue(value) {
+    const hierarchical = buildHierarchicalWorksheet(value);
+    if (hierarchical) {
+        return hierarchical;
+    }
+
+    const categorized = buildCategorizedWorksheet(value);
+    if (categorized) {
+        return categorized;
+    }
+
+    const rows = buildGenericWorksheetRows(value);
+    return { rows, merges: [] };
+}
+
+function buildHierarchicalWorksheet(value) {
+    if (!isPlainObject(value) && !Array.isArray(value)) {
+        return null;
+    }
+
+    const rootChildren = createTreeChildren(value);
+    if (rootChildren.length === 0) {
+        return null;
+    }
+
+    const root = { label: null, value: undefined, children: rootChildren };
+    assignTreeDepth(root, -1);
+    computeTreeRowSpan(root);
+    assignTreeStartRow(root, 1);
+
+    const leafRecords = [];
+    collectTreeLeafRows(root, [], leafRecords);
+    if (leafRecords.length === 0) {
+        return null;
+    }
+
+    const maxLabelCount = leafRecords.reduce(
+        (max, record) => Math.max(max, record.labels.length),
+        0
+    );
+    const totalColumns = maxLabelCount + 1;
+
+    const rows = leafRecords.map((record) => {
+        const cells = new Array(totalColumns);
+        for (let index = 0; index < totalColumns; index += 1) {
+            cells[index] = createSheetCell(null);
+        }
+
+        record.labels.forEach((label, index) => {
+            cells[index] = createSheetCell(label, { forceString: true });
+        });
+
+        const valueColumnIndex = record.labels.length;
+        cells[valueColumnIndex] = createSheetCell(record.value);
+
+        return cells;
+    });
+
+    const merges = [];
+    collectTreeMerges(root, merges);
+
+    return { rows, merges };
+}
+
+function createTreeChildren(value) {
+    if (isPlainObject(value)) {
+        const entries = Object.entries(value);
+        if (entries.length === 0) {
+            return [];
+        }
+        return entries.map(([key, childValue]) => createTreeNode(key, childValue));
+    }
+
+    if (Array.isArray(value)) {
+        if (value.length === 0) {
+            return [];
+        }
+        return value.map((item, index) => createTreeNode(deduceArrayItemLabel(item, index), item));
+    }
+
+    return [];
+}
+
+function createTreeNode(label, value) {
+    if (isPlainObject(value)) {
+        const children = createTreeChildren(value);
+        if (children.length === 0) {
+            return { label, value: "", children: [] };
+        }
+        return { label, value: undefined, children };
+    }
+
+    if (Array.isArray(value)) {
+        const children = createTreeChildren(value);
+        if (children.length === 0) {
+            return { label, value: "", children: [] };
+        }
+        return { label, value: undefined, children };
+    }
+
+    return { label, value, children: [] };
+}
+
+function deduceArrayItemLabel(item, index) {
+    if (isPlainObject(item)) {
+        const candidateKeys = ["name", "label", "key", "id", "title"];
+        for (const key of candidateKeys) {
+            const value = item[key];
+            if (typeof value === "string" && value.trim()) {
+                return value;
+            }
+            if (typeof value === "number" && Number.isFinite(value)) {
+                return String(value);
+            }
+        }
+    }
+
+    return `[${index}]`;
+}
+
+function assignTreeDepth(node, depth) {
+    node.depth = depth;
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    const nextDepth = depth + 1;
+    node.children.forEach((child) => assignTreeDepth(child, nextDepth));
+}
+
+function computeTreeRowSpan(node) {
+    if (!node.children || node.children.length === 0) {
+        node.rowSpan = 1;
+        return 1;
+    }
+
+    let total = 0;
+    node.children.forEach((child) => {
+        total += computeTreeRowSpan(child);
+    });
+
+    node.rowSpan = Math.max(total, 1);
+    return node.rowSpan;
+}
+
+function assignTreeStartRow(node, startRow) {
+    node.startRow = startRow;
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    let cursor = startRow;
+    node.children.forEach((child) => {
+        assignTreeStartRow(child, cursor);
+        cursor += child.rowSpan;
+    });
+}
+
+function collectTreeLeafRows(node, path, rows) {
+    const nextPath = node.label !== null && node.label !== undefined ? [...path, node] : path;
+
+    if (!node.children || node.children.length === 0) {
+        const labels = nextPath
+            .filter((entry) => entry.label !== null && entry.label !== undefined)
+            .map((entry) => entry.label);
+        rows.push({ labels, value: node.value });
+        return;
+    }
+
+    node.children.forEach((child) => {
+        collectTreeLeafRows(child, nextPath, rows);
+    });
+}
+
+function collectTreeMerges(node, merges) {
+    if (node.label !== null && node.label !== undefined && node.rowSpan > 1 && node.depth >= 0) {
+        merges.push({
+            startRow: node.startRow,
+            endRow: node.startRow + node.rowSpan - 1,
+            startColumn: node.depth,
+            endColumn: node.depth
+        });
+    }
+
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    node.children.forEach((child) => collectTreeMerges(child, merges));
+}
+
+function buildCategorizedWorksheet(value) {
+    const fromMap = buildCategorizedWorksheetFromMap(value);
+    if (fromMap) {
+        return fromMap;
+    }
+
+    const fromArray = buildCategorizedWorksheetFromArray(value);
+    if (fromArray) {
+        return fromArray;
+    }
+
+    return null;
+}
+
+function buildCategorizedWorksheetFromMap(value) {
+    if (!isPlainObject(value)) {
+        return null;
+    }
+
+    const categoryEntries = Object.entries(value);
+    if (categoryEntries.length === 0) {
+        return null;
+    }
+
+    const normalized = categoryEntries.map(([categoryName, entries]) => ({
+        categoryName,
+        entries: Array.isArray(entries) ? entries.filter((item) => isPlainObject(item)) : []
+    }));
+
+    if (normalized.every(({ entries }) => entries.length === 0)) {
+        return null;
+    }
+
+    const columnKeys = [];
+    const seen = new Set();
+    for (const { entries } of normalized) {
+        for (const item of entries) {
+            for (const key of Object.keys(item)) {
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    columnKeys.push(key);
+                }
+            }
+        }
+    }
+
+    if (columnKeys.length === 0) {
+        return null;
+    }
+
+    const rows = [
+        [createSheetCell("分類", { forceString: true }), ...columnKeys.map((key) => createSheetCell(key, { forceString: true }))]
+    ];
+    const merges = [];
+    let rowCursor = 2;
+
+    for (const { categoryName, entries } of normalized) {
+        const safeEntries = entries.length > 0 ? entries : [{}];
+        const rowCount = safeEntries.length;
+
+        safeEntries.forEach((item, index) => {
+            const firstCell = index === 0 ? createSheetCell(categoryName, { forceString: true }) : createSheetCell(null);
+            const rowCells = [firstCell];
+            for (const key of columnKeys) {
+                rowCells.push(createSheetCell(item[key]));
+            }
+            rows.push(rowCells);
+        });
+
+        if (rowCount > 1) {
+            merges.push({ startRow: rowCursor, endRow: rowCursor + rowCount - 1, startColumn: 0, endColumn: 0 });
+        }
+        rowCursor += rowCount;
+    }
+
+    return { rows, merges };
+}
+
+function buildCategorizedWorksheetFromArray(value) {
+    if (!Array.isArray(value) || value.length === 0) {
+        return null;
+    }
+
+    const items = value.filter((item) => isPlainObject(item));
+    if (items.length === 0) {
+        return null;
+    }
+
+    const categoryKey = findCategoryKey(items);
+    if (!categoryKey) {
+        return null;
+    }
+
+    const columnKeys = [];
+    const seen = new Set();
+    for (const item of items) {
+        for (const key of Object.keys(item)) {
+            if (key === categoryKey) continue;
+            if (!seen.has(key)) {
+                seen.add(key);
+                columnKeys.push(key);
+            }
+        }
+    }
+
+    if (columnKeys.length === 0) {
+        return null;
+    }
+
+    const groups = [];
+    const groupMap = new Map();
+    for (const item of items) {
+        const label = formatCategoryLabel(item[categoryKey]);
+        if (!groupMap.has(label)) {
+            const container = { label, rows: [] };
+            groupMap.set(label, container);
+            groups.push(container);
+        }
+        groupMap.get(label).rows.push(item);
+    }
+
+    const rows = [
+        [createSheetCell("分類", { forceString: true }), ...columnKeys.map((key) => createSheetCell(key, { forceString: true }))]
+    ];
+    const merges = [];
+    let rowCursor = 2;
+
+    for (const { label, rows: groupRows } of groups) {
+        const rowCount = groupRows.length;
+        groupRows.forEach((item, index) => {
+            const firstCell = index === 0 ? createSheetCell(label, { forceString: true }) : createSheetCell(null);
+            const rowCells = [firstCell];
+            for (const key of columnKeys) {
+                rowCells.push(createSheetCell(item[key]));
+            }
+            rows.push(rowCells);
+        });
+
+        if (rowCount > 1) {
+            merges.push({ startRow: rowCursor, endRow: rowCursor + rowCount - 1, startColumn: 0, endColumn: 0 });
+        }
+        rowCursor += rowCount;
+    }
+
+    return { rows, merges };
+}
+
+function findCategoryKey(items) {
+    const keyInfo = new Map();
+    const priorityPattern = /(category|分類|分類別|類別|類型|类型|group|分組|分组|module|模組|模块|section|type)/iu;
+
+    for (const item of items) {
+        for (const key of Object.keys(item)) {
+            const value = item[key];
+            if (value === undefined) {
+                continue;
+            }
+            let info = keyInfo.get(key);
+            if (!info) {
+                info = {
+                    values: new Set(),
+                    total: 0,
+                    stringLike: 0,
+                    priority: priorityPattern.test(key) ? 1 : 0
+                };
+                keyInfo.set(key, info);
+            }
+            info.total += 1;
+            if (typeof value === "string" || typeof value === "number") {
+                info.stringLike += 1;
+                info.values.add(String(value));
+            } else if (value === null) {
+                info.stringLike += 1;
+                info.values.add("");
+            } else {
+                info.priority = -Infinity;
+            }
+        }
+    }
+
+    const candidates = [];
+    keyInfo.forEach((info, key) => {
+        if (info.priority === -Infinity) return;
+        if (info.stringLike === 0) return;
+        if (info.values.size === info.total) return;
+        candidates.push({ key, priority: info.priority, diversity: info.values.size });
+    });
+
+    if (candidates.length === 0) {
+        return null;
+    }
+
+    candidates.sort((a, b) => {
+        if (b.priority !== a.priority) {
+            return b.priority - a.priority;
+        }
+        return a.diversity - b.diversity;
+    });
+
+    return candidates[0].key;
+}
+
+function formatCategoryLabel(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    return String(value);
+}
+
+function buildGenericWorksheetRows(value) {
+    if (Array.isArray(value)) {
+        const rows = [];
+        const allPlainObjects = value.every((item) => isPlainObject(item));
+        if (allPlainObjects && value.length > 0) {
+            const keySet = new Set();
+            for (const item of value) {
+                for (const key of Object.keys(item)) {
+                    keySet.add(key);
+                }
+            }
+            const headers = keySet.size > 0 ? Array.from(keySet) : [];
+            if (headers.length > 0) {
+                rows.push(headers.map((key) => createSheetCell(key, { forceString: true })));
+                for (const item of value) {
+                    rows.push(headers.map((key) => createSheetCell(item[key])));
+                }
+                return rows;
+            }
+        }
+
+        const header = [createSheetCell("index", { forceString: true }), createSheetCell("value", { forceString: true })];
+        rows.push(header);
+        if (value.length > 0) {
+            value.forEach((item, index) => {
+                rows.push([createSheetCell(index), createSheetCell(item)]);
+            });
+        }
+        return rows;
+    }
+
+    if (isPlainObject(value)) {
+        const rows = [
+            [createSheetCell("key", { forceString: true }), createSheetCell("value", { forceString: true })]
+        ];
+        const entries = Object.entries(value);
+        if (entries.length > 0) {
+            for (const [key, entryValue] of entries) {
+                rows.push([createSheetCell(key, { forceString: true }), createSheetCell(entryValue)]);
+            }
+        }
+        return rows;
+    }
+
+    return [
+        [createSheetCell("value", { forceString: true })],
+        [createSheetCell(value)]
+    ];
+}
+
+function createSheetCell(value, { forceString = false } = {}) {
+    if (forceString) {
+        return { type: "string", text: value === null || value === undefined ? "" : String(value) };
+    }
+    if (value === null || value === undefined) {
+        return { type: "empty", text: "" };
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return { type: "number", text: String(value) };
+    }
+    if (typeof value === "boolean") {
+        return { type: "boolean", text: value ? "1" : "0" };
+    }
+    if (value instanceof Date) {
+        return { type: "string", text: value.toISOString() };
+    }
+    if (typeof value === "string") {
+        return { type: "string", text: value };
+    }
+    try {
+        return { type: "string", text: JSON.stringify(value) };
+    } catch (error) {
+        return { type: "string", text: String(value) };
+    }
+}
+
+async function createExcelBlobFromWorksheet(worksheet) {
+    const sheetXml = buildSheetXml(worksheet.rows, worksheet.merges);
+
+    const zip = new JSZip();
+    zip.file("[Content_Types].xml", CONTENT_TYPES_XML);
+    zip.folder("_rels").file(".rels", ROOT_RELS_XML);
+    const xlFolder = zip.folder("xl");
+    xlFolder.file("workbook.xml", WORKBOOK_XML);
+    xlFolder.file("styles.xml", STYLES_XML);
+    xlFolder.folder("_rels").file("workbook.xml.rels", WORKBOOK_RELS_XML);
+    xlFolder.folder("worksheets").file("sheet1.xml", sheetXml);
+
+    return zip.generateAsync({ type: "blob" });
+}
+
+function buildSheetXml(rows, merges = []) {
+    const rowXml = [];
+    let maxColumnCount = 0;
+
+    rows.forEach((cells, rowIndex) => {
+        if (!Array.isArray(cells) || cells.length === 0) {
+            return;
+        }
+        const cellXml = cells
+            .map((cell, cellIndex) => {
+                if (!cell) return "";
+                const column = columnLetter(cellIndex);
+                const cellRef = `${column}${rowIndex + 1}`;
+                switch (cell.type) {
+                    case "number":
+                        return `<c r="${cellRef}"><v>${cell.text}</v></c>`;
+                    case "boolean":
+                        return `<c r="${cellRef}" t="b"><v>${cell.text}</v></c>`;
+                    case "string": {
+                        const needsPreserve = /(^\s)|([\s]$)|([\r\n])/u.test(cell.text);
+                        const preserveAttr = needsPreserve ? ' xml:space="preserve"' : "";
+                        return `<c r="${cellRef}" t="inlineStr"><is><t${preserveAttr}>${escapeXml(
+                            cell.text
+                        )}</t></is></c>`;
+                    }
+                    default:
+                        return `<c r="${cellRef}"/>`;
+                }
+            })
+            .join("");
+
+        rowXml.push(`<row r="${rowIndex + 1}">${cellXml}</row>`);
+        if (cells.length > maxColumnCount) {
+            maxColumnCount = cells.length;
+        }
+    });
+
+    const dimension =
+        rows.length > 0 && maxColumnCount > 0
+            ? `<dimension ref="A1:${columnLetter(maxColumnCount - 1)}${rows.length}"/>`
+            : "";
+
+    const mergeXml =
+        Array.isArray(merges) && merges.length > 0
+            ? `<mergeCells count="${merges.length}">${merges
+                  .map(({ startRow, endRow, startColumn, endColumn }) => {
+                      const startCell = `${columnLetter(startColumn)}${startRow}`;
+                      const endCell = `${columnLetter(endColumn ?? startColumn)}${endRow ?? startRow}`;
+                      return `<mergeCell ref="${startCell}:${endCell}"/>`;
+                  })
+                  .join("")}</mergeCells>`
+            : "";
+
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${dimension}<sheetData>${rowXml.join(
+        ""
+    )}</sheetData>${mergeXml}</worksheet>`;
+}
+
+function columnLetter(index) {
+    let result = "";
+    let current = index;
+    while (current >= 0) {
+        result = String.fromCharCode((current % 26) + 65) + result;
+        current = Math.floor(current / 26) - 1;
+    }
+    return result || "A";
+}
+
+function escapeXml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
+
+function triggerBlobDownload(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+function buildActiveReportExcelFileName() {
+    const report = activeReport.value;
+    const parts = [];
+    if (report?.project?.name) {
+        parts.push(report.project.name);
+    }
+    if (report?.path) {
+        const segments = report.path.split(/[/\\]+/);
+        const last = segments[segments.length - 1];
+        if (last) {
+            parts.push(last);
+        }
+    }
+    const base = parts.join("_") || "report";
+    const safe = base.replace(/[\\/:*?"<>|]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+    const finalName = safe || "report";
+    return `${finalName}_raw.xlsx`;
+}
+
+const CONTENT_TYPES_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+    '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+    "</Types>";
+
+const ROOT_RELS_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+    "</Relationships>";
+
+const WORKBOOK_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    '<sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets>' +
+    "</workbook>";
+
+const WORKBOOK_RELS_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+    "</Relationships>";
+
+const STYLES_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<fonts count="1"><font/></fonts>' +
+    '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>' +
+    '<borders count="1"><border/></borders>' +
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+    '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>' +
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+    '<dxfs count="0"/>' +
+    '<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>' +
+    "</styleSheet>";
+
 const middlePaneStyle = computed(() => {
     const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
     const width = hasActiveTool ? middlePaneWidth.value : 0;
@@ -1549,6 +2273,23 @@ function collectFileNodes(nodes, bucket = []) {
     return bucket;
 }
 
+function findTreeNodeByPath(nodes, targetPath) {
+    if (!targetPath) return null;
+    for (const node of nodes || []) {
+        if (!node) continue;
+        if (node.path === targetPath) {
+            return node;
+        }
+        if (node.children && node.children.length) {
+            const found = findTreeNodeByPath(node.children, targetPath);
+            if (found) {
+                return found;
+            }
+        }
+    }
+    return null;
+}
+
 function ensureStatesForProject(projectId, nodes) {
     const fileNodes = collectFileNodes(nodes);
     const validPaths = new Set();
@@ -1661,6 +2402,52 @@ function selectReport(projectId, path) {
         projectId: normaliseProjectId(projectId),
         path
     };
+}
+
+async function previewReportFile(projectId, path) {
+    const projectKey = normaliseProjectId(projectId);
+    if (!projectKey || !path) return;
+
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const project = projectList.find(
+        (item) => normaliseProjectId(item.id) === projectKey
+    );
+    if (!project) return;
+
+    if (isTreeCollapsed.value) {
+        isTreeCollapsed.value = false;
+    }
+
+    if (selectedProjectId.value !== project.id) {
+        await openProject(project);
+    } else if (!Array.isArray(tree.value) || tree.value.length === 0) {
+        await openProject(project);
+    }
+
+    const entry = ensureReportTreeEntry(project.id);
+    if (entry && !entry.nodes.length && !entry.loading) {
+        loadReportTreeForProject(project.id);
+    }
+
+    const searchNodes = (entry && entry.nodes && entry.nodes.length)
+        ? entry.nodes
+        : tree.value;
+    let targetNode = findTreeNodeByPath(searchNodes, path);
+    if (!targetNode) {
+        const name = path.split("/").pop() || path;
+        targetNode = { type: "file", path, name, mime: "" };
+    }
+
+    treeStore.selectTreeNode(path);
+    try {
+        await treeStore.openNode(targetNode);
+    } catch (error) {
+        console.error("[Workspace] Failed to preview file from report tree", {
+            projectId: project.id,
+            path,
+            error
+        });
+    }
 }
 
 async function generateReportForFile(project, node, options = {}) {
@@ -1843,11 +2630,11 @@ watch(
 
         projectList.forEach((project) => {
             const entry = ensureReportTreeEntry(project.id);
-            if (isReportToolActive.value && entry && !entry.nodes.length && !entry.loading) {
+            if (shouldPrepareReportTrees.value && entry && !entry.nodes.length && !entry.loading) {
                 loadReportTreeForProject(project.id);
             }
             if (
-                isReportToolActive.value &&
+                shouldPrepareReportTrees.value &&
                 entry &&
                 !entry.hydratedReports &&
                 !entry.hydratingReports
@@ -1884,7 +2671,7 @@ watch(
 );
 
 watch(
-    isReportToolActive,
+    shouldPrepareReportTrees,
     (active) => {
         if (!active) return;
         const list = Array.isArray(projects.value) ? projects.value : [];
@@ -2522,7 +3309,21 @@ onBeforeUnmount(() => {
                                                 </template>
                                                 <template v-else-if="reportIssuesViewMode === 'raw'">
                                                     <div v-if="activeReportRawText.trim().length" class="reportRow">
+                                                        <div v-if="canExportActiveReportRaw" class="reportRowActions">
+                                                            <button
+                                                                type="button"
+                                                                class="reportRowActionButton"
+                                                                :disabled="isExportingActiveReportRawExcel"
+                                                                @click="exportActiveReportRawToExcel"
+                                                            >
+                                                                <span v-if="isExportingActiveReportRawExcel">匯出中…</span>
+                                                                <span v-else>匯出 Excel</span>
+                                                            </button>
+                                                        </div>
                                                         <pre class="reportRowContent codeScroll themed-scrollbar">{{ activeReportRawText }}</pre>
+                                                        <p v-if="!canExportActiveReportRaw" class="reportRowNotice">
+                                                            原始資料不是有效的 JSON 格式，因此無法匯出 Excel。
+                                                        </p>
                                                     </div>
                                                     <p v-else class="reportIssuesEmpty">尚未取得原始報告內容。</p>
                                                 </template>
@@ -3149,6 +3950,35 @@ body,
     flex-direction: column;
 }
 
+.reportRowActions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 12px 16px 0;
+    gap: 8px;
+}
+
+.reportRowActionButton {
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.14);
+    color: #e2e8f0;
+    font-size: 12px;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.reportRowActionButton:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.5);
+    color: #f8fafc;
+}
+
+.reportRowActionButton:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .reportRowContent {
     flex: 1 1 auto;
     margin: 0;
@@ -3160,6 +3990,13 @@ body,
     background: transparent;
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+.reportRowNotice {
+    margin: 0;
+    padding: 0 16px 12px;
+    font-size: 12px;
+    color: #94a3b8;
 }
 
 .reportIssuesBox .codeEditor {

@@ -6,10 +6,28 @@ import json
 import os
 import re
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Tuple
 
 CJK_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]")
 BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+IDENTIFIER_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+TABLE_RE = re.compile(
+    r'\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w\.\$#@]+)',
+    flags=re.IGNORECASE,
+)
+VIEW_RE = re.compile(
+    r'\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+([`"\[\]\w\.\$#@]+)',
+    flags=re.IGNORECASE,
+)
+PROC_RE = re.compile(
+    r'\bCREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+([`"\[\]\w\.\$#@]+)',
+    flags=re.IGNORECASE,
+)
+FUNC_RE = re.compile(
+    r'\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([`"\[\]\w\.\$#@]+)',
+    flags=re.IGNORECASE,
+)
 
 
 # ---------- position helpers ----------
@@ -71,6 +89,125 @@ def _last_identifier(name_token: str) -> str:
         token = token[1:-1]
     token = token.strip('`"')
     return token
+
+
+def _find_next_create(masked_sql: str, start_idx: int) -> int:
+    match = re.search(r"\bCREATE\b", masked_sql[start_idx + 1 :], flags=re.IGNORECASE)
+    if match is None:
+        return len(masked_sql)
+    return start_idx + 1 + match.start()
+
+
+def _extract_statement(sql: str, masked_sql: str, start_idx: int) -> str:
+    end_idx = _find_next_create(masked_sql, start_idx)
+    return sql[start_idx:end_idx]
+
+
+def _find_matching_paren(masked_sql: str, start_idx: int) -> int:
+    depth = 0
+    for idx in range(start_idx, len(masked_sql)):
+        ch = masked_sql[idx]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return idx
+    return -1
+
+
+def _split_columns(sql: str, masked_sql: str, start_idx: int, end_idx: int) -> List[Tuple[str, int]]:
+    segments: List[Tuple[str, int]] = []
+    depth = 0
+    segment_start = start_idx
+    for idx in range(start_idx, end_idx):
+        ch = masked_sql[idx]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth > 0:
+                depth -= 1
+        elif ch == "," and depth == 0:
+            segment = sql[segment_start:idx]
+            segments.append((segment, segment_start))
+            segment_start = idx + 1
+    if segment_start < end_idx:
+        segments.append((sql[segment_start:end_idx], segment_start))
+    return segments
+
+
+def _find_statement_terminator(masked_sql: str, start_idx: int) -> int:
+    for idx in range(start_idx, len(masked_sql)):
+        if masked_sql[idx] == ";":
+            return idx + 1
+    return len(masked_sql)
+
+
+def _iter_dml_segments(statement: str) -> List[Tuple[int, int]]:
+    masked = _mask_comments_and_strings(statement)
+    segments: List[Tuple[int, int]] = []
+    for match in re.finditer(r"\b(INSERT|UPDATE|DELETE)\b", masked, flags=re.IGNORECASE):
+        start = match.start()
+        end = _find_statement_terminator(masked, start)
+        segments.append((start, end))
+    return segments
+
+
+def _has_adjacent_comment(statement: str, start_idx: int, end_idx: int) -> bool:
+    segment = statement[start_idx:end_idx]
+    if re.search(r"--|/\*", segment):
+        return True
+
+    prefix = statement[:start_idx]
+    stripped_prefix = prefix.rstrip()
+    if stripped_prefix:
+        last_line_start = stripped_prefix.rfind("\n") + 1
+        last_line = stripped_prefix[last_line_start:]
+        if "--" in last_line:
+            return True
+        if re.search(r"/\*.*\*/\s*$", stripped_prefix, flags=re.DOTALL):
+            return True
+
+    suffix = statement[end_idx:]
+    if re.match(r"\s*(--|/\*)", suffix):
+        return True
+
+    return False
+
+
+def _enforce_identifier_format(
+    issues: List[Dict],
+    name: str,
+    sql: str,
+    idx: int,
+    obj_desc: str,
+) -> None:
+    clean = name.strip()
+    if not clean:
+        return
+
+    if not IDENTIFIER_RE.fullmatch(clean):
+        _add_issue(
+            issues,
+            "RULE_01_IDENTIFIER_FORMAT",
+            f"{obj_desc} {clean} 不符合命名规范（需使用大写英文、数字、下划线且以字母开头）。",
+            sql,
+            idx,
+            evidence=clean,
+            obj_name=clean,
+        )
+
+    parts = [segment for segment in clean.split("_") if segment]
+    if len(parts) > 3:
+        _add_issue(
+            issues,
+            "RULE_03_IDENTIFIER_WORD_LIMIT",
+            f"{obj_desc} {clean} 超过 3 个单词（以下划线分隔）。",
+            sql,
+            idx,
+            evidence=clean,
+            obj_name=clean,
+        )
 
 
 def _add_issue(
@@ -151,16 +288,12 @@ def _check_cjk(sql: str, issues: List[Dict]) -> None:
 
 def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
     """Rule 4 & Rule 14: enforce object prefixes and block TMP_TMP_TMP tables."""
-    masked = _mask_block_comments(sql)
+    masked = _mask_comments_and_strings(sql)
 
-    table_re = re.finditer(
-        r'\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[\]\w\.\$#@]+)',
-        masked,
-        flags=re.IGNORECASE,
-    )
-    for match in table_re:
+    for match in TABLE_RE.finditer(masked):
         raw = match.group(1)
         name = _last_identifier(raw)
+        _enforce_identifier_format(issues, name, sql, match.start(1), "表名")
         if not name.upper().startswith("T_"):
             _add_issue(
                 issues,
@@ -182,13 +315,9 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
                 obj_name=name,
             )
 
-    view_re = re.finditer(
-        r'\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+([`"\[\]\w\.\$#@]+)',
-        masked,
-        flags=re.IGNORECASE,
-    )
-    for match in view_re:
+    for match in VIEW_RE.finditer(masked):
         name = _last_identifier(match.group(1))
+        _enforce_identifier_format(issues, name, sql, match.start(1), "视图名")
         if not name.upper().startswith("V_"):
             _add_issue(
                 issues,
@@ -200,13 +329,9 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
                 obj_name=name,
             )
 
-    proc_re = re.finditer(
-        r'\bCREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\s+([`"\[\]\w\.\$#@]+)',
-        masked,
-        flags=re.IGNORECASE,
-    )
-    for match in proc_re:
+    for match in PROC_RE.finditer(masked):
         name = _last_identifier(match.group(1))
+        _enforce_identifier_format(issues, name, sql, match.start(1), "存储过程名")
         if not name.upper().startswith("P_"):
             _add_issue(
                 issues,
@@ -218,13 +343,9 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
                 obj_name=name,
             )
 
-    func_re = re.finditer(
-        r'\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([`"\[\]\w\.\$#@]+)',
-        masked,
-        flags=re.IGNORECASE,
-    )
-    for match in func_re:
+    for match in FUNC_RE.finditer(masked):
         name = _last_identifier(match.group(1))
+        _enforce_identifier_format(issues, name, sql, match.start(1), "函数名")
         if not name.upper().startswith("F_"):
             _add_issue(
                 issues,
@@ -234,6 +355,79 @@ def _check_naming_prefixes(sql: str, issues: List[Dict]) -> None:
                 match.start(),
                 evidence=match.group(0),
                 obj_name=name,
+            )
+
+
+def _check_table_definitions(sql: str, issues: List[Dict]) -> None:
+    masked = _mask_comments_and_strings(sql)
+
+    for match in TABLE_RE.finditer(masked):
+        table_name = _last_identifier(match.group(1))
+        statement = _extract_statement(sql, masked, match.start())
+        statement_upper = statement.upper()
+        if "COMMENT" not in statement_upper:
+            evidence_line = statement.strip().splitlines()[0] if statement.strip() else table_name
+            _add_issue(
+                issues,
+                "RULE_05_TABLE_COMMENT",
+                f"表 {table_name} 缺少注释（COMMENT）。",
+                sql,
+                match.start(),
+                evidence=evidence_line,
+                obj_name=table_name,
+            )
+
+        name_end = match.end()
+        paren_start = masked.find("(", name_end)
+        if paren_start == -1:
+            continue
+        paren_end = _find_matching_paren(masked, paren_start)
+        if paren_end == -1:
+            continue
+
+        has_dt_date = False
+        column_segments = _split_columns(sql, masked, paren_start + 1, paren_end)
+        for segment, seg_start in column_segments:
+            raw_segment = segment.strip()
+            if not raw_segment:
+                continue
+            keyword = raw_segment.split(None, 1)[0].upper()
+            if keyword in {"CONSTRAINT", "PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "KEY"}:
+                continue
+
+            leading = len(segment) - len(segment.lstrip())
+            trimmed = segment.lstrip()
+            name_match = re.match(r'[`"\[\]\w#@\$]+', trimmed)
+            if not name_match:
+                continue
+            raw_name = name_match.group(0)
+            column_name = _last_identifier(raw_name)
+            name_idx = seg_start + leading + name_match.start()
+            _enforce_identifier_format(issues, column_name, sql, name_idx, f"表 {table_name} 的字段")
+
+            if column_name.upper() == "DT_DATE":
+                has_dt_date = True
+
+            if "COMMENT" not in raw_segment.upper():
+                _add_issue(
+                    issues,
+                    "RULE_05_COLUMN_COMMENT",
+                    f"表 {table_name} 字段 {column_name} 缺少注释。",
+                    sql,
+                    name_idx,
+                    evidence=raw_segment.strip(),
+                    obj_name=f"{table_name}.{column_name}",
+                )
+
+        if table_name.upper().endswith("_HIS") and not has_dt_date:
+            _add_issue(
+                issues,
+                "RULE_15_HISTORY_DT_DATE",
+                f"历史表 {table_name} 需包含字段 DT_DATE。",
+                sql,
+                match.start(1),
+                evidence=table_name,
+                obj_name=table_name,
             )
 
 
@@ -307,6 +501,191 @@ def _check_cartesian(sql: str, issues: List[Dict]) -> None:
             )
 
 
+def _check_uppercase(sql: str, issues: List[Dict]) -> None:
+    masked = _mask_comments_and_strings(sql)
+    match = re.search(r"[a-z]", masked)
+    if match:
+        _add_issue(
+            issues,
+            "RULE_06_UPPERCASE",
+            "脚本需使用大写字母，检测到小写字符。",
+            sql,
+            match.start(),
+            evidence=_line_snippet(sql, match.start()),
+            severity="WARNING",
+        )
+
+
+def _max_function_call_depth(masked_sql: str) -> int:
+    positions: Set[int] = set()
+    for match in re.finditer(r"\b[A-Z_][A-Z0-9_]*\s*\(", masked_sql, flags=re.IGNORECASE):
+        positions.add(match.end() - 1)
+
+    stack: List[bool] = []
+    current_depth = 0
+    max_depth = 0
+
+    for idx, ch in enumerate(masked_sql):
+        if ch == "(":
+            is_func = idx in positions
+            stack.append(is_func)
+            if is_func:
+                current_depth += 1
+                if current_depth > max_depth:
+                    max_depth = current_depth
+        elif ch == ")":
+            if stack:
+                is_func = stack.pop()
+                if is_func and current_depth > 0:
+                    current_depth -= 1
+    return max_depth
+
+
+def _check_view_nesting(sql: str, issues: List[Dict]) -> None:
+    masked = _mask_comments_and_strings(sql)
+    for match in VIEW_RE.finditer(masked):
+        view_name = _last_identifier(match.group(1))
+        statement = _extract_statement(sql, masked, match.start())
+        upper_stmt = statement.upper()
+        body_start = upper_stmt.find(" AS ")
+        body = statement[body_start + 4 :] if body_start != -1 else statement
+        body_masked = _mask_comments_and_strings(body)
+        select_count = len(re.findall(r"\bSELECT\b", body_masked, flags=re.IGNORECASE))
+        if select_count > 3:
+            _add_issue(
+                issues,
+                "RULE_10_VIEW_NESTING",
+                f"视图 {view_name} 的嵌套层级疑似超过 3 层（检测到 {select_count} 个 SELECT）。",
+                sql,
+                match.start(1),
+                evidence=view_name,
+                obj_name=view_name,
+            )
+
+
+def _check_function_rules(sql: str, issues: List[Dict]) -> None:
+    masked = _mask_comments_and_strings(sql)
+    for match in FUNC_RE.finditer(masked):
+        func_name = _last_identifier(match.group(1))
+        stmt_start = match.start()
+        statement = _extract_statement(sql, masked, stmt_start)
+        masked_statement = _mask_comments_and_strings(statement)
+        depth = _max_function_call_depth(masked_statement)
+        if depth > 3:
+            _add_issue(
+                issues,
+                "RULE_11_FUNCTION_NESTING",
+                f"函数 {func_name} 嵌套调用深度 {depth} 超出 3 层限制。",
+                sql,
+                stmt_start,
+                evidence=func_name,
+                obj_name=func_name,
+            )
+        elif depth > 2:
+            _add_issue(
+                issues,
+                "RULE_11_FUNCTION_NESTING_WARN",
+                f"函数 {func_name} 嵌套调用深度 {depth}，建议不超过 2 层。",
+                sql,
+                stmt_start,
+                evidence=func_name,
+                severity="WARNING",
+                obj_name=func_name,
+            )
+
+        line_count = statement.count("\n") + 1
+        if line_count > 200:
+            _add_issue(
+                issues,
+                "RULE_12_FUNCTION_LENGTH",
+                f"函数 {func_name} 行数为 {line_count}，超过 200 行。",
+                sql,
+                stmt_start,
+                evidence=func_name,
+                obj_name=func_name,
+            )
+
+
+def _check_procedure_rules(sql: str, issues: List[Dict]) -> None:
+    masked = _mask_comments_and_strings(sql)
+    for match in PROC_RE.finditer(masked):
+        proc_name = _last_identifier(match.group(1))
+        stmt_start = match.start()
+        statement = _extract_statement(sql, masked, stmt_start)
+
+        for eq_match in re.finditer(r"(?<![\s<>=!])=(?!=)", statement):
+            _add_issue(
+                issues,
+                "RULE_14_EQUAL_SPACING_LEFT",
+                "存储过程内等号两侧需留空格。",
+                sql,
+                stmt_start + eq_match.start(),
+                evidence=_line_snippet(sql, stmt_start + eq_match.start()),
+                obj_name=proc_name,
+                severity="WARNING",
+            )
+
+        for eq_match in re.finditer(r"=(?!=)(?![\s=])", statement):
+            _add_issue(
+                issues,
+                "RULE_14_EQUAL_SPACING_RIGHT",
+                "存储过程内等号两侧需留空格。",
+                sql,
+                stmt_start + eq_match.start(),
+                evidence=_line_snippet(sql, stmt_start + eq_match.start()),
+                obj_name=proc_name,
+                severity="WARNING",
+            )
+
+        if re.search(r"\bTRUNCATE\b", statement, flags=re.IGNORECASE):
+            _add_issue(
+                issues,
+                "RULE_20_PROCEDURE_TRUNCATE",
+                f"存储过程 {proc_name} 中禁止使用 TRUNCATE。",
+                sql,
+                stmt_start,
+                evidence=proc_name,
+                obj_name=proc_name,
+            )
+
+
+def _check_procedure_comments(sql: str, issues: List[Dict]) -> None:
+    masked = _mask_comments_and_strings(sql)
+    for pattern, label, rule_id in (
+        (PROC_RE, "存储过程", "RULE_05_PROC_COMMENT"),
+        (FUNC_RE, "函数", "RULE_05_FUNC_COMMENT"),
+    ):
+        for match in pattern.finditer(masked):
+            obj_name = _last_identifier(match.group(1))
+            stmt_start = match.start()
+            statement = _extract_statement(sql, masked, stmt_start)
+            for seg_start, seg_end in _iter_dml_segments(statement):
+                if not _has_adjacent_comment(statement, seg_start, seg_end):
+                    snippet = statement[seg_start:seg_end].strip()
+                    _add_issue(
+                        issues,
+                        rule_id,
+                        f"{label} {obj_name} 包含 DML 语句但缺少注释。",
+                        sql,
+                        stmt_start + seg_start,
+                        evidence=snippet,
+                        obj_name=obj_name,
+                    )
+
+
+def _check_no_trigger(sql: str, issues: List[Dict]) -> None:
+    masked = _mask_comments_and_strings(sql)
+    for match in re.finditer(r"\bCREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\b", masked, flags=re.IGNORECASE):
+        _add_issue(
+            issues,
+            "RULE_13_NO_TRIGGER",
+            "不允许创建触发器。",
+            sql,
+            match.start(),
+            evidence=_line_snippet(sql, match.start()),
+        )
+
+
 # ---------- main ----------
 def main(sql_query: str) -> Dict[str, str]:
     if not isinstance(sql_query, str):
@@ -318,8 +697,15 @@ def main(sql_query: str) -> Dict[str, str]:
 
     _check_cjk(sql, issues)
     _check_naming_prefixes(sql, issues)
+    _check_table_definitions(sql, issues)
     _check_delete_full_table(sql, issues)
     _check_cartesian(sql, issues)
+    _check_uppercase(sql, issues)
+    _check_view_nesting(sql, issues)
+    _check_function_rules(sql, issues)
+    _check_procedure_rules(sql, issues)
+    _check_procedure_comments(sql, issues)
+    _check_no_trigger(sql, issues)
 
     file_extension = ".sql"
 
@@ -387,7 +773,8 @@ def _read_sql_from_stdin_or_file() -> str:
 
 def _emit_json(payload: Dict) -> None:
     data = json.dumps(payload, ensure_ascii=False)
-    sys.stdout.buffer.write(data.encode("utf-8"))
+    encoded = data.encode("utf-8", errors="surrogateescape")
+    sys.stdout.buffer.write(encoded)
     sys.stdout.buffer.write(b"\n")
     sys.stdout.buffer.flush()
 
