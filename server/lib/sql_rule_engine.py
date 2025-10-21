@@ -705,6 +705,16 @@ def main(sql_query: str) -> Dict[str, str]:
             "issues": issues,
         }
 
+    summary_block = payload.get("summary")
+    if isinstance(summary_block, dict):
+        summary_block.setdefault("analysis_source", "static_analyzer")
+
+    payload["analysis_source"] = "static_analyzer"
+    payload["metadata"] = {
+        "analysis_source": "static_analyzer",
+        "engine": "sql_rule_engine",
+    }
+
     result = json.dumps(payload, ensure_ascii=False, indent=2)
     return {"result": result}
 

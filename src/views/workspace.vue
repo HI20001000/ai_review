@@ -262,8 +262,20 @@ const activeReportDetails = computed(() => {
     const parsed = report.state.parsedReport;
     if (!parsed || typeof parsed !== "object") return null;
 
-    const issues = Array.isArray(parsed.issues) ? parsed.issues : [];
-    const summary = parsed.summary;
+    const reports = parsed.reports && typeof parsed.reports === "object" ? parsed.reports : null;
+    const staticReport = reports?.static_analyzer || reports?.staticAnalyzer || null;
+    const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
+
+    const issues = Array.isArray(staticReport?.issues)
+        ? staticReport.issues
+        : Array.isArray(parsed.issues)
+        ? parsed.issues
+        : [];
+    const rawStaticSummary =
+        staticReport && typeof staticReport === "object" && staticReport.summary !== undefined
+            ? staticReport.summary
+            : null;
+    const summary = (rawStaticSummary ?? parsed.summary) ?? null;
 
     let total = report.state.issueSummary?.totalIssues;
     if (!Number.isFinite(total)) {
@@ -290,6 +302,16 @@ const activeReportDetails = computed(() => {
 
     const summaryText = typeof summary === "string" ? summary.trim() : "";
     const summaryObject = summary && typeof summary === "object" ? summary : null;
+    const staticSummaryObject =
+        rawStaticSummary && typeof rawStaticSummary === "object" ? rawStaticSummary : summaryObject;
+    const staticSummaryDetails = buildSummaryDetailList(staticSummaryObject, {
+        omitKeys: ["by_rule", "byRule", "sources"]
+    });
+    const staticMetadata =
+        staticReport && typeof staticReport.metadata === "object" && !Array.isArray(staticReport.metadata)
+            ? staticReport.metadata
+            : null;
+    const staticMetadataDetails = buildSummaryDetailList(staticMetadata);
 
     const severityCounts = new Map();
     const ruleCounts = new Map();
@@ -374,7 +396,8 @@ const activeReportDetails = computed(() => {
 
             const ruleId = typeof ruleCandidate === "string" ? ruleCandidate.trim() : String(ruleCandidate ?? "").trim();
             const message = typeof messageCandidate === "string" ? messageCandidate.trim() : String(messageCandidate ?? "").trim();
-            const severityRaw = typeof severityCandidate === "string" ? severityCandidate.trim() : String(severityCandidate ?? "").trim();
+            const severityRaw =
+                typeof severityCandidate === "string" ? severityCandidate.trim() : String(severityCandidate ?? "").trim();
             const severityKey = severityRaw ? severityRaw.toUpperCase() : "未標示";
             let severityClass = "info";
             if (!severityRaw || severityKey === "未標示") {
@@ -545,16 +568,118 @@ const activeReportDetails = computed(() => {
 
     ruleBreakdown.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 
+    const globalSummary = parsed.summary && typeof parsed.summary === "object" ? parsed.summary : null;
+    const combinedSummaryDetails = buildSummaryDetailList(globalSummary, {
+        omitKeys: ["sources", "by_rule", "byRule"]
+    });
+    const sourceSummaries = [];
+    if (globalSummary?.sources && typeof globalSummary.sources === "object") {
+        for (const [key, value] of Object.entries(globalSummary.sources)) {
+            if (!value || typeof value !== "object") continue;
+            const keyLower = key.toLowerCase();
+            let label = key;
+            if (keyLower === "static_analyzer" || keyLower === "staticanalyzer") {
+                label = "靜態分析器";
+            } else if (keyLower === "dml_prompt" || keyLower === "dmlprompt") {
+                label = "DML 提示詞分析";
+            }
+            const metrics = [];
+            if (value.total_issues !== undefined || value.totalIssues !== undefined) {
+                const totalValue = Number(value.total_issues ?? value.totalIssues ?? 0);
+                metrics.push({ label: "問題數", value: Number.isFinite(totalValue) ? totalValue : 0 });
+            }
+            if (value.by_rule || value.byRule) {
+                const byRuleEntries = Object.entries(value.by_rule || value.byRule || {});
+                metrics.push({ label: "規則數", value: byRuleEntries.length });
+            }
+            if (value.total_segments !== undefined || value.totalSegments !== undefined) {
+                const totalSegments = Number(value.total_segments ?? value.totalSegments ?? 0);
+                metrics.push({ label: "拆分語句", value: Number.isFinite(totalSegments) ? totalSegments : 0 });
+            }
+            if (value.analyzed_segments !== undefined || value.analyzedSegments !== undefined) {
+                const analysedSegments = Number(value.analyzed_segments ?? value.analyzedSegments ?? 0);
+                metrics.push({ label: "已分析段數", value: Number.isFinite(analysedSegments) ? analysedSegments : 0 });
+            }
+            const status = typeof value.status === "string" ? value.status : "";
+            const errorMessage =
+                typeof value.error_message === "string"
+                    ? value.error_message
+                    : typeof value.errorMessage === "string"
+                    ? value.errorMessage
+                    : "";
+            const generatedAt = value.generated_at || value.generatedAt || null;
+            sourceSummaries.push({ key, label, metrics, status, errorMessage, generatedAt });
+        }
+    }
+
+    let dmlDetails = null;
+    if (dmlReport && typeof dmlReport === "object") {
+        const dmlSummary =
+            dmlReport.summary && typeof dmlReport.summary === "object" ? dmlReport.summary : null;
+        const dmlChunks = Array.isArray(dmlReport.chunks) ? dmlReport.chunks : [];
+        const dmlSegments = Array.isArray(dmlReport.segments)
+            ? dmlReport.segments.map((segment, index) => {
+                  const chunk = dmlChunks[index] || null;
+                  const sql = typeof segment?.text === "string" ? segment.text : String(segment?.sql || "");
+                  const analysisText = typeof chunk?.answer === "string" ? chunk.answer : "";
+                  return {
+                      key: `${index}-segment`,
+                      index: Number.isFinite(Number(segment?.index)) ? Number(segment.index) : index + 1,
+                      sql,
+                      startLine: Number.isFinite(Number(segment?.startLine)) ? Number(segment.startLine) : null,
+                      endLine: Number.isFinite(Number(segment?.endLine)) ? Number(segment.endLine) : null,
+                      startColumn: Number.isFinite(Number(segment?.startColumn)) ? Number(segment.startColumn) : null,
+                      endColumn: Number.isFinite(Number(segment?.endColumn)) ? Number(segment.endColumn) : null,
+                      analysis: analysisText,
+                      raw: chunk?.raw || null
+                  };
+              })
+            : [];
+        const aggregatedText = typeof dmlReport.report === "string" ? dmlReport.report.trim() : "";
+        const errorMessage =
+            typeof dmlReport.error === "string"
+                ? dmlReport.error
+                : typeof dmlSummary?.error_message === "string"
+                ? dmlSummary.error_message
+                : typeof dmlSummary?.errorMessage === "string"
+                ? dmlSummary.errorMessage
+                : "";
+        const status = typeof dmlSummary?.status === "string" ? dmlSummary.status : "";
+        const generatedAt = dmlReport.generatedAt || dmlSummary?.generated_at || dmlSummary?.generatedAt || null;
+        const conversationId =
+            typeof dmlReport.conversationId === "string" ? dmlReport.conversationId : "";
+        dmlDetails = {
+            summary: dmlSummary,
+            segments: dmlSegments,
+            reportText: aggregatedText,
+            error: errorMessage,
+            status,
+            generatedAt,
+            conversationId
+        };
+    }
+
     return {
-        totalIssues: Number.isFinite(total) ? total : null,
-        summaryText,
+        totalIssues: Number.isFinite(total) ? Number(total) : null,
+        summary,
         summaryObject,
+        summaryText,
+        staticSummary: staticSummaryObject,
+        staticSummaryDetails,
+        staticMetadata,
+        staticMetadataDetails,
         issues: normalisedIssues,
         severityBreakdown,
         ruleBreakdown,
-        raw: parsed
+        raw: parsed,
+        sourceSummaries,
+        combinedSummary: parsed.summary && typeof parsed.summary === "object" ? parsed.summary : null,
+        combinedSummaryDetails,
+        staticReport,
+        dmlReport: dmlDetails
     };
 });
+
 
 const hasStructuredReport = computed(() => Boolean(activeReportDetails.value));
 const activeReportSourceText = computed(() => {
@@ -821,6 +946,33 @@ function buildWorksheetFromValue(value) {
 
     const rows = buildGenericWorksheetRows(value);
     return { rows, merges: [] };
+}
+
+function buildSummaryDetailList(source, options = {}) {
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+        return [];
+    }
+
+    const omit = new Set(options.omitKeys || []);
+    const details = [];
+
+    for (const [key, rawValue] of Object.entries(source)) {
+        if (omit.has(key)) continue;
+        if (rawValue === null || rawValue === undefined) continue;
+        if (typeof rawValue === "object") continue;
+
+        let value;
+        if (typeof rawValue === "boolean") {
+            value = rawValue ? "是" : "否";
+        } else {
+            value = String(rawValue);
+        }
+
+        const label = typeof key === "string" && key.trim() ? key : "-";
+        details.push({ label, value });
+    }
+
+    return details;
 }
 
 function buildHierarchicalWorksheet(value) {
@@ -2201,6 +2353,16 @@ function computeIssueSummary(reportText, parsedOverride = null) {
         if (Number.isFinite(numeric)) {
             total = numeric;
         }
+        if (!Number.isFinite(total) && summary.sources && typeof summary.sources === "object") {
+            const staticSource = summary.sources.static_analyzer || summary.sources.staticAnalyzer;
+            if (staticSource && typeof staticSource === "object") {
+                const staticTotal = staticSource.total_issues ?? staticSource.totalIssues;
+                const staticNumeric = Number(staticTotal);
+                if (Number.isFinite(staticNumeric)) {
+                    total = staticNumeric;
+                }
+            }
+        }
     }
     if (total === null && Array.isArray(parsed?.issues)) {
         total = parsed.issues.length;
@@ -3179,61 +3341,228 @@ onBeforeUnmount(() => {
                                 <template v-else>
                                     <div v-if="hasStructuredReport" class="reportStructured">
                                         <section class="reportSummaryGrid">
-                                            <div class="reportSummaryCard reportSummaryCard--total">
-                                                <span class="reportSummaryLabel">總問題</span>
-                                                <span class="reportSummaryValue">
-                                                    {{
-                                                        activeReportDetails?.totalIssues === null
-                                                            ? "—"
-                                                            : activeReportDetails.totalIssues
-                                                    }}
+    <div
+        v-if="activeReportDetails?.sourceSummaries?.length"
+        class="reportSummaryCard reportSummaryCard--span"
+    >
+        <span class="reportSummaryLabel">來源摘要</span>
+        <ul class="reportSummarySources">
+            <li
+                v-for="item in activeReportDetails.sourceSummaries"
+                :key="item.key"
+                class="reportSummarySource"
+            >
+                <div class="reportSummarySourceHeading">
+                    <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                    <span
+                        v-if="item.status"
+                        class="reportSummarySourceStatus"
+                    >
+                        {{ item.status }}
+                    </span>
+                </div>
+                <ul
+                    v-if="item.metrics?.length"
+                    class="reportSummarySourceMetrics"
+                >
+                    <li
+                        v-for="metric in item.metrics"
+                        :key="`${item.key}-${metric.label}`"
+                    >
+                        <span class="reportSummaryItemLabel">{{ metric.label }}</span>
+                        <span class="reportSummaryItemValue">{{ metric.value }}</span>
+                    </li>
+                </ul>
+                <p
+                    v-if="item.errorMessage"
+                    class="reportSummarySourceError"
+                >
+                    {{ item.errorMessage }}
+                </p>
+            </li>
+        </ul>
+    </div>
+    <div
+        v-if="activeReportDetails?.combinedSummaryDetails?.length"
+        class="reportSummaryCard reportSummaryCard--span"
+    >
+        <span class="reportSummaryLabel">整合摘要</span>
+        <ul class="reportSummaryList">
+            <li
+                v-for="item in activeReportDetails.combinedSummaryDetails"
+                :key="`combined-${item.label}-${item.value}`"
+            >
+                <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                <span class="reportSummaryItemValue">{{ item.value }}</span>
+            </li>
+        </ul>
+    </div>
+    <div class="reportSummaryCard reportSummaryCard--total">
+        <span class="reportSummaryLabel">問題</span>
+        <span class="reportSummaryValue">
+            {{
+                activeReportDetails?.totalIssues === null
+                    ? "—"
+                    : activeReportDetails.totalIssues
+            }}
+        </span>
+    </div>
+    <div
+        v-if="activeReportDetails?.summaryText"
+        class="reportSummaryCard reportSummaryCard--span"
+    >
+        <span class="reportSummaryLabel">摘要</span>
+        <p class="reportSummaryText">{{ activeReportDetails.summaryText }}</p>
+    </div>
+    <div
+        v-else-if="activeReportDetails && activeReportDetails.totalIssues === 0"
+        class="reportSummaryCard reportSummaryCard--span"
+    >
+        <span class="reportSummaryLabel">摘要</span>
+        <p class="reportSummaryText">未檢測到問題。</p>
+    </div>
+    <div
+        v-if="activeReportDetails?.ruleBreakdown?.length"
+        class="reportSummaryCard"
+    >
+        <span class="reportSummaryLabel">規則分佈</span>
+        <ul class="reportSummaryList">
+            <li
+                v-for="item in activeReportDetails.ruleBreakdown"
+                :key="`${item.label}-${item.count}`"
+            >
+                <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                <span class="reportSummaryItemValue">{{ item.count }}</span>
+            </li>
+        </ul>
+    </div>
+    <div
+        v-if="activeReportDetails?.severityBreakdown?.length"
+        class="reportSummaryCard"
+    >
+        <span class="reportSummaryLabel">嚴重度</span>
+        <ul class="reportSummaryList">
+            <li
+                v-for="item in activeReportDetails.severityBreakdown"
+                :key="`${item.label}-${item.count}`"
+            >
+                <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                <span class="reportSummaryItemValue">{{ item.count }}</span>
+            </li>
+        </ul>
+    </div>
+</section>
+
+                                        <section
+                                            v-if="
+                                                activeReportDetails?.staticSummaryDetails?.length ||
+                                                activeReportDetails?.staticMetadataDetails?.length
+                                            "
+                                            class="reportStaticSection"
+                                        >
+                                            <div class="reportStaticHeader">
+                                                <h4>靜態分析器</h4>
+                                                <span
+                                                    v-if="activeReportDetails?.staticMetadata?.engine"
+                                                    class="reportStaticEngine"
+                                                >
+                                                    引擎：{{ activeReportDetails.staticMetadata.engine }}
+                                                </span>
+                                                <span
+                                                    v-else-if="activeReportDetails?.staticSummary?.analysis_source"
+                                                    class="reportStaticEngine"
+                                                >
+                                                    來源：{{ activeReportDetails.staticSummary.analysis_source }}
                                                 </span>
                                             </div>
                                             <div
-                                                v-if="activeReportDetails?.summaryText"
-                                                class="reportSummaryCard reportSummaryCard--span"
+                                                v-if="activeReportDetails?.staticSummaryDetails?.length"
+                                                class="reportStaticBlock"
                                             >
-                                                <span class="reportSummaryLabel">摘要</span>
-                                                <p class="reportSummaryText">{{ activeReportDetails.summaryText }}</p>
-                                            </div>
-                                            <div
-                                                v-else-if="activeReportDetails && activeReportDetails.totalIssues === 0"
-                                                class="reportSummaryCard reportSummaryCard--span"
-                                            >
-                                                <span class="reportSummaryLabel">摘要</span>
-                                                <p class="reportSummaryText">未檢測到問題。</p>
-                                            </div>
-                                            <div
-                                                v-if="activeReportDetails?.ruleBreakdown?.length"
-                                                class="reportSummaryCard"
-                                            >
-                                                <span class="reportSummaryLabel">規則分佈</span>
-                                                <ul class="reportSummaryList">
+                                                <h5>摘要資訊</h5>
+                                                <ul class="reportStaticList">
                                                     <li
-                                                        v-for="item in activeReportDetails.ruleBreakdown"
-                                                        :key="`${item.label}-${item.count}`"
+                                                        v-for="item in activeReportDetails.staticSummaryDetails"
+                                                        :key="`static-summary-${item.label}-${item.value}`"
                                                     >
-                                                        <span class="reportSummaryItemLabel">{{ item.label }}</span>
-                                                        <span class="reportSummaryItemValue">{{ item.count }}</span>
+                                                        <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                        <span class="reportStaticItemValue">{{ item.value }}</span>
                                                     </li>
                                                 </ul>
                                             </div>
                                             <div
-                                                v-if="activeReportDetails?.severityBreakdown?.length"
-                                                class="reportSummaryCard"
+                                                v-if="activeReportDetails?.staticMetadataDetails?.length"
+                                                class="reportStaticBlock"
                                             >
-                                                <span class="reportSummaryLabel">嚴重度</span>
-                                                <ul class="reportSummaryList">
+                                                <h5>中繼資料</h5>
+                                                <ul class="reportStaticList">
                                                     <li
-                                                        v-for="item in activeReportDetails.severityBreakdown"
-                                                        :key="`${item.label}-${item.count}`"
+                                                        v-for="item in activeReportDetails.staticMetadataDetails"
+                                                        :key="`static-metadata-${item.label}-${item.value}`"
                                                     >
-                                                        <span class="reportSummaryItemLabel">{{ item.label }}</span>
-                                                        <span class="reportSummaryItemValue">{{ item.count }}</span>
+                                                        <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                        <span class="reportStaticItemValue">{{ item.value }}</span>
                                                     </li>
                                                 </ul>
                                             </div>
                                         </section>
+
+                                        <section
+                                            v-if="activeReportDetails?.dmlReport"
+                                            class="reportDmlSection"
+                                        >
+                                            <div class="reportDmlHeader">
+                                                <h4>DML 提示詞分析</h4>
+                                                <span
+                                                    v-if="activeReportDetails.dmlReport.status"
+                                                    class="reportDmlStatus"
+                                                >
+                                                    {{ activeReportDetails.dmlReport.status }}
+                                                </span>
+                                                <span
+                                                    v-if="activeReportDetails.dmlReport.generatedAt"
+                                                    class="reportDmlTimestamp"
+                                                >
+                                                    產生於 {{ activeReportDetails.dmlReport.generatedAt }}
+                                                </span>
+                                            </div>
+                                            <p
+                                                v-if="activeReportDetails.dmlReport.error"
+                                                class="reportDmlError"
+                                            >
+                                                {{ activeReportDetails.dmlReport.error }}
+                                            </p>
+                                            <div
+                                                v-if="activeReportDetails.dmlReport.segments?.length"
+                                                class="reportDmlSegments"
+                                            >
+                                                <details
+                                                    v-for="segment in activeReportDetails.dmlReport.segments"
+                                                    :key="segment.key"
+                                                    class="reportDmlSegment"
+                                                >
+                                                    <summary>
+                                                        第 {{ segment.index }} 段
+                                                        <template v-if="segment.startLine">
+                                                            （第 {{ segment.startLine }} 行起
+                                                            <template v-if="segment.endLine">，至第 {{ segment.endLine }} 行止</template>
+                                                            ）
+                                                        </template>
+                                                    </summary>
+                                                    <pre class="reportDmlSql codeScroll themed-scrollbar">{{ segment.sql }}</pre>
+                                                    <pre
+                                                        v-if="segment.analysis"
+                                                        class="reportDmlAnalysis codeScroll themed-scrollbar"
+                                                    >{{ segment.analysis }}</pre>
+                                                </details>
+                                            </div>
+                                            <p v-else class="reportDmlEmpty">尚未取得 DML 拆分結果。</p>
+                                            <pre
+                                                v-if="activeReportDetails.dmlReport.reportText"
+                                                class="reportDmlSummary codeScroll themed-scrollbar"
+                                            >{{ activeReportDetails.dmlReport.reportText }}</pre>
+                                        </section>
+
 
                                         <section class="reportIssuesSection" v-if="shouldShowReportIssuesSection">
                                             <div class="reportIssuesHeader">
@@ -3886,6 +4215,217 @@ body,
 
 .reportSummaryItemValue {
     color: #cbd5f5;
+}
+
+.reportSummarySources {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportSummarySource {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: rgba(30, 41, 59, 0.32);
+}
+
+.reportSummarySourceHeading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.reportSummarySourceStatus {
+    font-size: 12px;
+    font-weight: 600;
+    color: #38bdf8;
+    text-transform: uppercase;
+}
+
+.reportSummarySourceMetrics {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    font-size: 13px;
+    color: #e2e8f0;
+}
+
+.reportSummarySourceMetrics li {
+    display: flex;
+    gap: 6px;
+}
+
+.reportSummarySourceError {
+    margin: 0;
+    font-size: 12px;
+    color: #f87171;
+}
+
+.reportStaticSection {
+    margin-top: 24px;
+    padding: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 8px;
+    background: rgba(30, 41, 59, 0.32);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportStaticHeader {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.reportStaticHeader h4 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #f8fafc;
+}
+
+.reportStaticEngine {
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportStaticBlock {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.reportStaticBlock h5 {
+    margin: 0;
+    font-size: 13px;
+    color: #cbd5f5;
+    text-transform: none;
+    letter-spacing: 0.02em;
+}
+
+.reportStaticList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    color: #e2e8f0;
+}
+
+.reportStaticItemLabel {
+    font-weight: 600;
+    margin-right: 6px;
+}
+
+.reportStaticItemValue {
+    color: #cbd5f5;
+}
+
+.reportDmlSection {
+    margin-top: 24px;
+    padding: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.4);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportDmlHeader {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.reportDmlHeader h4 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #f8fafc;
+}
+
+.reportDmlStatus {
+    font-size: 12px;
+    font-weight: 600;
+    color: #22d3ee;
+    text-transform: uppercase;
+}
+
+.reportDmlTimestamp {
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportDmlError {
+    margin: 0;
+    color: #f87171;
+    font-size: 13px;
+}
+
+.reportDmlSegments {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.reportDmlSegment {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.35);
+}
+
+.reportDmlSegment summary {
+    cursor: pointer;
+    padding: 8px 12px;
+    font-weight: 600;
+    color: #e2e8f0;
+}
+
+.reportDmlSegment pre {
+    margin: 0;
+    padding: 12px;
+    font-size: 13px;
+}
+
+.reportDmlSql {
+    background: rgba(15, 23, 42, 0.55);
+    color: #e0f2fe;
+}
+
+.reportDmlAnalysis {
+    background: rgba(8, 47, 73, 0.55);
+    color: #fef9c3;
+}
+
+.reportDmlSummary {
+    margin: 0;
+    font-size: 13px;
+    background: rgba(15, 23, 42, 0.65);
+    color: #cbd5f5;
+    border-radius: 6px;
+    padding: 12px;
+}
+
+.reportDmlEmpty {
+    margin: 0;
+    font-size: 13px;
+    color: #94a3b8;
 }
 
 
