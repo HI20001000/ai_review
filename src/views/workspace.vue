@@ -761,8 +761,8 @@ async function exportActiveReportRawToExcel() {
 
     try {
         isExportingActiveReportRawExcel.value = true;
-        const rows = buildWorksheetRowsFromValue(raw.value);
-        const blob = await createExcelBlobFromRows(rows);
+        const worksheet = buildWorksheetFromValue(raw.value);
+        const blob = await createExcelBlobFromWorksheet(worksheet);
         const fileName = buildActiveReportExcelFileName();
         triggerBlobDownload(blob, fileName);
     } catch (error) {
@@ -808,7 +808,226 @@ function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function buildWorksheetRowsFromValue(value) {
+function buildWorksheetFromValue(value) {
+    const categorized = buildCategorizedWorksheet(value);
+    if (categorized) {
+        return categorized;
+    }
+
+    const rows = buildGenericWorksheetRows(value);
+    return { rows, merges: [] };
+}
+
+function buildCategorizedWorksheet(value) {
+    const fromMap = buildCategorizedWorksheetFromMap(value);
+    if (fromMap) {
+        return fromMap;
+    }
+
+    const fromArray = buildCategorizedWorksheetFromArray(value);
+    if (fromArray) {
+        return fromArray;
+    }
+
+    return null;
+}
+
+function buildCategorizedWorksheetFromMap(value) {
+    if (!isPlainObject(value)) {
+        return null;
+    }
+
+    const categoryEntries = Object.entries(value);
+    if (categoryEntries.length === 0) {
+        return null;
+    }
+
+    const normalized = categoryEntries.map(([categoryName, entries]) => ({
+        categoryName,
+        entries: Array.isArray(entries) ? entries.filter((item) => isPlainObject(item)) : []
+    }));
+
+    if (normalized.every(({ entries }) => entries.length === 0)) {
+        return null;
+    }
+
+    const columnKeys = [];
+    const seen = new Set();
+    for (const { entries } of normalized) {
+        for (const item of entries) {
+            for (const key of Object.keys(item)) {
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    columnKeys.push(key);
+                }
+            }
+        }
+    }
+
+    if (columnKeys.length === 0) {
+        return null;
+    }
+
+    const rows = [
+        [createSheetCell("分類", { forceString: true }), ...columnKeys.map((key) => createSheetCell(key, { forceString: true }))]
+    ];
+    const merges = [];
+    let rowCursor = 2;
+
+    for (const { categoryName, entries } of normalized) {
+        const safeEntries = entries.length > 0 ? entries : [{}];
+        const rowCount = safeEntries.length;
+
+        safeEntries.forEach((item, index) => {
+            const firstCell = index === 0 ? createSheetCell(categoryName, { forceString: true }) : createSheetCell(null);
+            const rowCells = [firstCell];
+            for (const key of columnKeys) {
+                rowCells.push(createSheetCell(item[key]));
+            }
+            rows.push(rowCells);
+        });
+
+        if (rowCount > 1) {
+            merges.push({ startRow: rowCursor, endRow: rowCursor + rowCount - 1, startColumn: 0, endColumn: 0 });
+        }
+        rowCursor += rowCount;
+    }
+
+    return { rows, merges };
+}
+
+function buildCategorizedWorksheetFromArray(value) {
+    if (!Array.isArray(value) || value.length === 0) {
+        return null;
+    }
+
+    const items = value.filter((item) => isPlainObject(item));
+    if (items.length === 0) {
+        return null;
+    }
+
+    const categoryKey = findCategoryKey(items);
+    if (!categoryKey) {
+        return null;
+    }
+
+    const columnKeys = [];
+    const seen = new Set();
+    for (const item of items) {
+        for (const key of Object.keys(item)) {
+            if (key === categoryKey) continue;
+            if (!seen.has(key)) {
+                seen.add(key);
+                columnKeys.push(key);
+            }
+        }
+    }
+
+    if (columnKeys.length === 0) {
+        return null;
+    }
+
+    const groups = [];
+    const groupMap = new Map();
+    for (const item of items) {
+        const label = formatCategoryLabel(item[categoryKey]);
+        if (!groupMap.has(label)) {
+            const container = { label, rows: [] };
+            groupMap.set(label, container);
+            groups.push(container);
+        }
+        groupMap.get(label).rows.push(item);
+    }
+
+    const rows = [
+        [createSheetCell("分類", { forceString: true }), ...columnKeys.map((key) => createSheetCell(key, { forceString: true }))]
+    ];
+    const merges = [];
+    let rowCursor = 2;
+
+    for (const { label, rows: groupRows } of groups) {
+        const rowCount = groupRows.length;
+        groupRows.forEach((item, index) => {
+            const firstCell = index === 0 ? createSheetCell(label, { forceString: true }) : createSheetCell(null);
+            const rowCells = [firstCell];
+            for (const key of columnKeys) {
+                rowCells.push(createSheetCell(item[key]));
+            }
+            rows.push(rowCells);
+        });
+
+        if (rowCount > 1) {
+            merges.push({ startRow: rowCursor, endRow: rowCursor + rowCount - 1, startColumn: 0, endColumn: 0 });
+        }
+        rowCursor += rowCount;
+    }
+
+    return { rows, merges };
+}
+
+function findCategoryKey(items) {
+    const keyInfo = new Map();
+    const priorityPattern = /(category|分類|分類別|類別|類型|类型|group|分組|分组|module|模組|模块|section|type)/iu;
+
+    for (const item of items) {
+        for (const key of Object.keys(item)) {
+            const value = item[key];
+            if (value === undefined) {
+                continue;
+            }
+            let info = keyInfo.get(key);
+            if (!info) {
+                info = {
+                    values: new Set(),
+                    total: 0,
+                    stringLike: 0,
+                    priority: priorityPattern.test(key) ? 1 : 0
+                };
+                keyInfo.set(key, info);
+            }
+            info.total += 1;
+            if (typeof value === "string" || typeof value === "number") {
+                info.stringLike += 1;
+                info.values.add(String(value));
+            } else if (value === null) {
+                info.stringLike += 1;
+                info.values.add("");
+            } else {
+                info.priority = -Infinity;
+            }
+        }
+    }
+
+    const candidates = [];
+    keyInfo.forEach((info, key) => {
+        if (info.priority === -Infinity) return;
+        if (info.stringLike === 0) return;
+        if (info.values.size === info.total) return;
+        candidates.push({ key, priority: info.priority, diversity: info.values.size });
+    });
+
+    if (candidates.length === 0) {
+        return null;
+    }
+
+    candidates.sort((a, b) => {
+        if (b.priority !== a.priority) {
+            return b.priority - a.priority;
+        }
+        return a.diversity - b.diversity;
+    });
+
+    return candidates[0].key;
+}
+
+function formatCategoryLabel(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    return String(value);
+}
+
+function buildGenericWorksheetRows(value) {
     if (Array.isArray(value)) {
         const rows = [];
         const allPlainObjects = value.every((item) => isPlainObject(item));
@@ -884,8 +1103,8 @@ function createSheetCell(value, { forceString = false } = {}) {
     }
 }
 
-async function createExcelBlobFromRows(rows) {
-    const sheetXml = buildSheetXml(rows);
+async function createExcelBlobFromWorksheet(worksheet) {
+    const sheetXml = buildSheetXml(worksheet.rows, worksheet.merges);
 
     const zip = new JSZip();
     zip.file("[Content_Types].xml", CONTENT_TYPES_XML);
@@ -899,7 +1118,7 @@ async function createExcelBlobFromRows(rows) {
     return zip.generateAsync({ type: "blob" });
 }
 
-function buildSheetXml(rows) {
+function buildSheetXml(rows, merges = []) {
     const rowXml = [];
     let maxColumnCount = 0;
 
@@ -941,9 +1160,20 @@ function buildSheetXml(rows) {
             ? `<dimension ref="A1:${columnLetter(maxColumnCount - 1)}${rows.length}"/>`
             : "";
 
+    const mergeXml =
+        Array.isArray(merges) && merges.length > 0
+            ? `<mergeCells count="${merges.length}">${merges
+                  .map(({ startRow, endRow, startColumn, endColumn }) => {
+                      const startCell = `${columnLetter(startColumn)}${startRow}`;
+                      const endCell = `${columnLetter(endColumn ?? startColumn)}${endRow ?? startRow}`;
+                      return `<mergeCell ref="${startCell}:${endCell}"/>`;
+                  })
+                  .join("")}</mergeCells>`
+            : "";
+
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${dimension}<sheetData>${rowXml.join(
         ""
-    )}</sheetData></worksheet>`;
+    )}</sheetData>${mergeXml}</worksheet>`;
 }
 
 function columnLetter(index) {
