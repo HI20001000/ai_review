@@ -136,6 +136,45 @@ def _split_columns(sql: str, masked_sql: str, start_idx: int, end_idx: int) -> L
     return segments
 
 
+def _find_statement_terminator(masked_sql: str, start_idx: int) -> int:
+    for idx in range(start_idx, len(masked_sql)):
+        if masked_sql[idx] == ";":
+            return idx + 1
+    return len(masked_sql)
+
+
+def _iter_dml_segments(statement: str) -> List[Tuple[int, int]]:
+    masked = _mask_comments_and_strings(statement)
+    segments: List[Tuple[int, int]] = []
+    for match in re.finditer(r"\b(INSERT|UPDATE|DELETE)\b", masked, flags=re.IGNORECASE):
+        start = match.start()
+        end = _find_statement_terminator(masked, start)
+        segments.append((start, end))
+    return segments
+
+
+def _has_adjacent_comment(statement: str, start_idx: int, end_idx: int) -> bool:
+    segment = statement[start_idx:end_idx]
+    if re.search(r"--|/\*", segment):
+        return True
+
+    prefix = statement[:start_idx]
+    stripped_prefix = prefix.rstrip()
+    if stripped_prefix:
+        last_line_start = stripped_prefix.rfind("\n") + 1
+        last_line = stripped_prefix[last_line_start:]
+        if "--" in last_line:
+            return True
+        if re.search(r"/\*.*\*/\s*$", stripped_prefix, flags=re.DOTALL):
+            return True
+
+    suffix = statement[end_idx:]
+    if re.match(r"\s*(--|/\*)", suffix):
+        return True
+
+    return False
+
+
 def _enforce_identifier_format(
     issues: List[Dict],
     name: str,
@@ -618,16 +657,18 @@ def _check_procedure_comments(sql: str, issues: List[Dict]) -> None:
     ):
         for match in pattern.finditer(masked):
             obj_name = _last_identifier(match.group(1))
-            statement = _extract_statement(sql, masked, match.start())
-            if re.search(r"\b(INSERT|UPDATE|DELETE)\b", statement, flags=re.IGNORECASE):
-                if re.search(r"--|/\*", statement) is None:
+            stmt_start = match.start()
+            statement = _extract_statement(sql, masked, stmt_start)
+            for seg_start, seg_end in _iter_dml_segments(statement):
+                if not _has_adjacent_comment(statement, seg_start, seg_end):
+                    snippet = statement[seg_start:seg_end].strip()
                     _add_issue(
                         issues,
                         rule_id,
                         f"{label} {obj_name} 包含 DML 语句但缺少注释。",
                         sql,
-                        match.start(),
-                        evidence=obj_name,
+                        stmt_start + seg_start,
+                        evidence=snippet,
                         obj_name=obj_name,
                     )
 
