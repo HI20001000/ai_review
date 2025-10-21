@@ -125,6 +125,9 @@ const reportBatchStates = reactive({});
 const activeReportTarget = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
+const shouldPrepareReportTrees = computed(
+    () => isProjectToolActive.value || isReportToolActive.value
+);
 const panelMode = computed(() => (isReportToolActive.value ? "reports" : "projects"));
 const reportProjectEntries = computed(() => {
     const list = Array.isArray(projects.value) ? projects.value : [];
@@ -145,24 +148,42 @@ const reportProjectEntries = computed(() => {
     });
 });
 
+const activePreviewTarget = computed(() => {
+    const projectId = normaliseProjectId(selectedProjectId.value);
+    const path = activeTreePath.value || "";
+    if (!projectId || !path) return null;
+    return { projectId, path };
+});
+
 const reportPanelConfig = computed(() => {
-    if (!isReportToolActive.value) {
-        return null;
-    }
+    const viewMode = isReportToolActive.value ? "reports" : "projects";
+    const showProjectActions = isReportToolActive.value;
+    const showIssueBadge = isReportToolActive.value;
+    const showFileActions = isReportToolActive.value;
+    const allowSelectWithoutReport = !isReportToolActive.value;
+    const projectIssueGetter = showIssueBadge ? getProjectIssueCount : null;
+
     return {
+        panelTitle: viewMode === "reports" ? "代碼審查" : "Project Files",
+        showProjectActions,
+        showIssueBadge,
+        showFileActions,
+        allowSelectWithoutReport,
         entries: reportProjectEntries.value,
         normaliseProjectId,
         isNodeExpanded: isReportNodeExpanded,
         toggleNode: toggleReportNode,
         getReportState: getReportStateForFile,
         onGenerate: generateReportForFile,
-        onSelect: selectReport,
+        onSelect: viewMode === "reports" ? selectReport : previewReportFile,
         getStatusLabel,
         onReloadProject: loadReportTreeForProject,
         onGenerateProject: generateProjectReports,
         getProjectBatchState,
-        getProjectIssueCount,
-        activeTarget: activeReportTarget.value
+        getProjectIssueCount: projectIssueGetter,
+        activeTarget: isReportToolActive.value
+            ? activeReportTarget.value
+            : activePreviewTarget.value
     };
 });
 const readyReports = computed(() => {
@@ -1841,6 +1862,23 @@ function collectFileNodes(nodes, bucket = []) {
     return bucket;
 }
 
+function findTreeNodeByPath(nodes, targetPath) {
+    if (!targetPath) return null;
+    for (const node of nodes || []) {
+        if (!node) continue;
+        if (node.path === targetPath) {
+            return node;
+        }
+        if (node.children && node.children.length) {
+            const found = findTreeNodeByPath(node.children, targetPath);
+            if (found) {
+                return found;
+            }
+        }
+    }
+    return null;
+}
+
 function ensureStatesForProject(projectId, nodes) {
     const fileNodes = collectFileNodes(nodes);
     const validPaths = new Set();
@@ -1953,6 +1991,52 @@ function selectReport(projectId, path) {
         projectId: normaliseProjectId(projectId),
         path
     };
+}
+
+async function previewReportFile(projectId, path) {
+    const projectKey = normaliseProjectId(projectId);
+    if (!projectKey || !path) return;
+
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const project = projectList.find(
+        (item) => normaliseProjectId(item.id) === projectKey
+    );
+    if (!project) return;
+
+    if (isTreeCollapsed.value) {
+        isTreeCollapsed.value = false;
+    }
+
+    if (selectedProjectId.value !== project.id) {
+        await openProject(project);
+    } else if (!Array.isArray(tree.value) || tree.value.length === 0) {
+        await openProject(project);
+    }
+
+    const entry = ensureReportTreeEntry(project.id);
+    if (entry && !entry.nodes.length && !entry.loading) {
+        loadReportTreeForProject(project.id);
+    }
+
+    const searchNodes = (entry && entry.nodes && entry.nodes.length)
+        ? entry.nodes
+        : tree.value;
+    let targetNode = findTreeNodeByPath(searchNodes, path);
+    if (!targetNode) {
+        const name = path.split("/").pop() || path;
+        targetNode = { type: "file", path, name, mime: "" };
+    }
+
+    treeStore.selectTreeNode(path);
+    try {
+        await treeStore.openNode(targetNode);
+    } catch (error) {
+        console.error("[Workspace] Failed to preview file from report tree", {
+            projectId: project.id,
+            path,
+            error
+        });
+    }
 }
 
 async function generateReportForFile(project, node, options = {}) {
@@ -2135,11 +2219,11 @@ watch(
 
         projectList.forEach((project) => {
             const entry = ensureReportTreeEntry(project.id);
-            if (isReportToolActive.value && entry && !entry.nodes.length && !entry.loading) {
+            if (shouldPrepareReportTrees.value && entry && !entry.nodes.length && !entry.loading) {
                 loadReportTreeForProject(project.id);
             }
             if (
-                isReportToolActive.value &&
+                shouldPrepareReportTrees.value &&
                 entry &&
                 !entry.hydratedReports &&
                 !entry.hydratingReports
@@ -2176,7 +2260,7 @@ watch(
 );
 
 watch(
-    isReportToolActive,
+    shouldPrepareReportTrees,
     (active) => {
         if (!active) return;
         const list = Array.isArray(projects.value) ? projects.value : [];
