@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, watch, onMounted, onBeforeUnmount, computed, nextTick } from "vue";
+import JSZip from "jszip";
 import { usePreview } from "../scripts/composables/usePreview.js";
 import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
@@ -124,6 +125,9 @@ const reportBatchStates = reactive({});
 const activeReportTarget = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
+const shouldPrepareReportTrees = computed(
+    () => isProjectToolActive.value || isReportToolActive.value
+);
 const panelMode = computed(() => (isReportToolActive.value ? "reports" : "projects"));
 const reportProjectEntries = computed(() => {
     const list = Array.isArray(projects.value) ? projects.value : [];
@@ -144,24 +148,42 @@ const reportProjectEntries = computed(() => {
     });
 });
 
+const activePreviewTarget = computed(() => {
+    const projectId = normaliseProjectId(selectedProjectId.value);
+    const path = activeTreePath.value || "";
+    if (!projectId || !path) return null;
+    return { projectId, path };
+});
+
 const reportPanelConfig = computed(() => {
-    if (!isReportToolActive.value) {
-        return null;
-    }
+    const viewMode = isReportToolActive.value ? "reports" : "projects";
+    const showProjectActions = isReportToolActive.value;
+    const showIssueBadge = isReportToolActive.value;
+    const showFileActions = isReportToolActive.value;
+    const allowSelectWithoutReport = !isReportToolActive.value;
+    const projectIssueGetter = showIssueBadge ? getProjectIssueCount : null;
+
     return {
+        panelTitle: viewMode === "reports" ? "代碼審查" : "Project Files",
+        showProjectActions,
+        showIssueBadge,
+        showFileActions,
+        allowSelectWithoutReport,
         entries: reportProjectEntries.value,
         normaliseProjectId,
         isNodeExpanded: isReportNodeExpanded,
         toggleNode: toggleReportNode,
         getReportState: getReportStateForFile,
         onGenerate: generateReportForFile,
-        onSelect: selectReport,
+        onSelect: viewMode === "reports" ? selectReport : previewReportFile,
         getStatusLabel,
         onReloadProject: loadReportTreeForProject,
         onGenerateProject: generateProjectReports,
         getProjectBatchState,
-        getProjectIssueCount,
-        activeTarget: activeReportTarget.value
+        getProjectIssueCount: projectIssueGetter,
+        activeTarget: isReportToolActive.value
+            ? activeReportTarget.value
+            : activePreviewTarget.value
     };
 });
 const readyReports = computed(() => {
@@ -667,6 +689,9 @@ function formatReportRawText(rawText) {
 }
 
 const activeReportRawText = computed(() => formatReportRawText(activeReportRawSourceText.value));
+const activeReportRawValue = computed(() => parseReportRawValue(activeReportRawSourceText.value));
+const canExportActiveReportRaw = computed(() => activeReportRawValue.value.success);
+const isExportingActiveReportRawExcel = ref(false);
 
 const canShowCodeIssues = computed(() => {
     const report = activeReport.value;
@@ -725,6 +750,294 @@ watch(
     },
     { immediate: true }
 );
+
+async function exportActiveReportRawToExcel() {
+    if (isExportingActiveReportRawExcel.value) return;
+    const raw = activeReportRawValue.value;
+    if (!raw.success) {
+        alert("原始資料不是有效的 JSON 格式，無法匯出 Excel。");
+        return;
+    }
+
+    try {
+        isExportingActiveReportRawExcel.value = true;
+        const rows = buildWorksheetRowsFromValue(raw.value);
+        const blob = await createExcelBlobFromRows(rows);
+        const fileName = buildActiveReportExcelFileName();
+        triggerBlobDownload(blob, fileName);
+    } catch (error) {
+        console.error("[reports] Failed to export raw JSON to Excel", error);
+        const message = error?.message || String(error);
+        alert(`匯出 Excel 失敗：${message}`);
+    } finally {
+        isExportingActiveReportRawExcel.value = false;
+    }
+}
+
+function parseReportRawValue(rawText) {
+    if (typeof rawText !== "string") {
+        return { success: false, value: null };
+    }
+    let candidate = rawText.trim();
+    if (!candidate) {
+        return { success: false, value: null };
+    }
+
+    const maxDepth = 3;
+    for (let depth = 0; depth < maxDepth; depth += 1) {
+        try {
+            const parsed = JSON.parse(candidate);
+            if (typeof parsed === "string") {
+                const trimmed = parsed.trim();
+                if (trimmed && trimmed !== candidate && /^[\[{]/.test(trimmed)) {
+                    candidate = trimmed;
+                    continue;
+                }
+                return { success: true, value: parsed };
+            }
+            return { success: true, value: parsed };
+        } catch (error) {
+            break;
+        }
+    }
+
+    return { success: false, value: null };
+}
+
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function buildWorksheetRowsFromValue(value) {
+    if (Array.isArray(value)) {
+        const rows = [];
+        const allPlainObjects = value.every((item) => isPlainObject(item));
+        if (allPlainObjects && value.length > 0) {
+            const keySet = new Set();
+            for (const item of value) {
+                for (const key of Object.keys(item)) {
+                    keySet.add(key);
+                }
+            }
+            const headers = keySet.size > 0 ? Array.from(keySet) : [];
+            if (headers.length > 0) {
+                rows.push(headers.map((key) => createSheetCell(key, { forceString: true })));
+                for (const item of value) {
+                    rows.push(headers.map((key) => createSheetCell(item[key])));
+                }
+                return rows;
+            }
+        }
+
+        const header = [createSheetCell("index", { forceString: true }), createSheetCell("value", { forceString: true })];
+        rows.push(header);
+        if (value.length > 0) {
+            value.forEach((item, index) => {
+                rows.push([createSheetCell(index), createSheetCell(item)]);
+            });
+        }
+        return rows;
+    }
+
+    if (isPlainObject(value)) {
+        const rows = [
+            [createSheetCell("key", { forceString: true }), createSheetCell("value", { forceString: true })]
+        ];
+        const entries = Object.entries(value);
+        if (entries.length > 0) {
+            for (const [key, entryValue] of entries) {
+                rows.push([createSheetCell(key, { forceString: true }), createSheetCell(entryValue)]);
+            }
+        }
+        return rows;
+    }
+
+    return [
+        [createSheetCell("value", { forceString: true })],
+        [createSheetCell(value)]
+    ];
+}
+
+function createSheetCell(value, { forceString = false } = {}) {
+    if (forceString) {
+        return { type: "string", text: value === null || value === undefined ? "" : String(value) };
+    }
+    if (value === null || value === undefined) {
+        return { type: "empty", text: "" };
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return { type: "number", text: String(value) };
+    }
+    if (typeof value === "boolean") {
+        return { type: "boolean", text: value ? "1" : "0" };
+    }
+    if (value instanceof Date) {
+        return { type: "string", text: value.toISOString() };
+    }
+    if (typeof value === "string") {
+        return { type: "string", text: value };
+    }
+    try {
+        return { type: "string", text: JSON.stringify(value) };
+    } catch (error) {
+        return { type: "string", text: String(value) };
+    }
+}
+
+async function createExcelBlobFromRows(rows) {
+    const sheetXml = buildSheetXml(rows);
+
+    const zip = new JSZip();
+    zip.file("[Content_Types].xml", CONTENT_TYPES_XML);
+    zip.folder("_rels").file(".rels", ROOT_RELS_XML);
+    const xlFolder = zip.folder("xl");
+    xlFolder.file("workbook.xml", WORKBOOK_XML);
+    xlFolder.file("styles.xml", STYLES_XML);
+    xlFolder.folder("_rels").file("workbook.xml.rels", WORKBOOK_RELS_XML);
+    xlFolder.folder("worksheets").file("sheet1.xml", sheetXml);
+
+    return zip.generateAsync({ type: "blob" });
+}
+
+function buildSheetXml(rows) {
+    const rowXml = [];
+    let maxColumnCount = 0;
+
+    rows.forEach((cells, rowIndex) => {
+        if (!Array.isArray(cells) || cells.length === 0) {
+            return;
+        }
+        const cellXml = cells
+            .map((cell, cellIndex) => {
+                if (!cell) return "";
+                const column = columnLetter(cellIndex);
+                const cellRef = `${column}${rowIndex + 1}`;
+                switch (cell.type) {
+                    case "number":
+                        return `<c r="${cellRef}"><v>${cell.text}</v></c>`;
+                    case "boolean":
+                        return `<c r="${cellRef}" t="b"><v>${cell.text}</v></c>`;
+                    case "string": {
+                        const needsPreserve = /(^\s)|([\s]$)|([\r\n])/u.test(cell.text);
+                        const preserveAttr = needsPreserve ? ' xml:space="preserve"' : "";
+                        return `<c r="${cellRef}" t="inlineStr"><is><t${preserveAttr}>${escapeXml(
+                            cell.text
+                        )}</t></is></c>`;
+                    }
+                    default:
+                        return `<c r="${cellRef}"/>`;
+                }
+            })
+            .join("");
+
+        rowXml.push(`<row r="${rowIndex + 1}">${cellXml}</row>`);
+        if (cells.length > maxColumnCount) {
+            maxColumnCount = cells.length;
+        }
+    });
+
+    const dimension =
+        rows.length > 0 && maxColumnCount > 0
+            ? `<dimension ref="A1:${columnLetter(maxColumnCount - 1)}${rows.length}"/>`
+            : "";
+
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${dimension}<sheetData>${rowXml.join(
+        ""
+    )}</sheetData></worksheet>`;
+}
+
+function columnLetter(index) {
+    let result = "";
+    let current = index;
+    while (current >= 0) {
+        result = String.fromCharCode((current % 26) + 65) + result;
+        current = Math.floor(current / 26) - 1;
+    }
+    return result || "A";
+}
+
+function escapeXml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
+
+function triggerBlobDownload(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+function buildActiveReportExcelFileName() {
+    const report = activeReport.value;
+    const parts = [];
+    if (report?.project?.name) {
+        parts.push(report.project.name);
+    }
+    if (report?.path) {
+        const segments = report.path.split(/[/\\]+/);
+        const last = segments[segments.length - 1];
+        if (last) {
+            parts.push(last);
+        }
+    }
+    const base = parts.join("_") || "report";
+    const safe = base.replace(/[\\/:*?"<>|]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+    const finalName = safe || "report";
+    return `${finalName}_raw.xlsx`;
+}
+
+const CONTENT_TYPES_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+    '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+    "</Types>";
+
+const ROOT_RELS_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+    "</Relationships>";
+
+const WORKBOOK_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    '<sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets>' +
+    "</workbook>";
+
+const WORKBOOK_RELS_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+    "</Relationships>";
+
+const STYLES_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<fonts count="1"><font/></fonts>' +
+    '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>' +
+    '<borders count="1"><border/></borders>' +
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+    '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>' +
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+    '<dxfs count="0"/>' +
+    '<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>' +
+    "</styleSheet>";
+
 const middlePaneStyle = computed(() => {
     const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
     const width = hasActiveTool ? middlePaneWidth.value : 0;
@@ -1549,6 +1862,23 @@ function collectFileNodes(nodes, bucket = []) {
     return bucket;
 }
 
+function findTreeNodeByPath(nodes, targetPath) {
+    if (!targetPath) return null;
+    for (const node of nodes || []) {
+        if (!node) continue;
+        if (node.path === targetPath) {
+            return node;
+        }
+        if (node.children && node.children.length) {
+            const found = findTreeNodeByPath(node.children, targetPath);
+            if (found) {
+                return found;
+            }
+        }
+    }
+    return null;
+}
+
 function ensureStatesForProject(projectId, nodes) {
     const fileNodes = collectFileNodes(nodes);
     const validPaths = new Set();
@@ -1661,6 +1991,52 @@ function selectReport(projectId, path) {
         projectId: normaliseProjectId(projectId),
         path
     };
+}
+
+async function previewReportFile(projectId, path) {
+    const projectKey = normaliseProjectId(projectId);
+    if (!projectKey || !path) return;
+
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const project = projectList.find(
+        (item) => normaliseProjectId(item.id) === projectKey
+    );
+    if (!project) return;
+
+    if (isTreeCollapsed.value) {
+        isTreeCollapsed.value = false;
+    }
+
+    if (selectedProjectId.value !== project.id) {
+        await openProject(project);
+    } else if (!Array.isArray(tree.value) || tree.value.length === 0) {
+        await openProject(project);
+    }
+
+    const entry = ensureReportTreeEntry(project.id);
+    if (entry && !entry.nodes.length && !entry.loading) {
+        loadReportTreeForProject(project.id);
+    }
+
+    const searchNodes = (entry && entry.nodes && entry.nodes.length)
+        ? entry.nodes
+        : tree.value;
+    let targetNode = findTreeNodeByPath(searchNodes, path);
+    if (!targetNode) {
+        const name = path.split("/").pop() || path;
+        targetNode = { type: "file", path, name, mime: "" };
+    }
+
+    treeStore.selectTreeNode(path);
+    try {
+        await treeStore.openNode(targetNode);
+    } catch (error) {
+        console.error("[Workspace] Failed to preview file from report tree", {
+            projectId: project.id,
+            path,
+            error
+        });
+    }
 }
 
 async function generateReportForFile(project, node, options = {}) {
@@ -1843,11 +2219,11 @@ watch(
 
         projectList.forEach((project) => {
             const entry = ensureReportTreeEntry(project.id);
-            if (isReportToolActive.value && entry && !entry.nodes.length && !entry.loading) {
+            if (shouldPrepareReportTrees.value && entry && !entry.nodes.length && !entry.loading) {
                 loadReportTreeForProject(project.id);
             }
             if (
-                isReportToolActive.value &&
+                shouldPrepareReportTrees.value &&
                 entry &&
                 !entry.hydratedReports &&
                 !entry.hydratingReports
@@ -1884,7 +2260,7 @@ watch(
 );
 
 watch(
-    isReportToolActive,
+    shouldPrepareReportTrees,
     (active) => {
         if (!active) return;
         const list = Array.isArray(projects.value) ? projects.value : [];
@@ -2522,7 +2898,21 @@ onBeforeUnmount(() => {
                                                 </template>
                                                 <template v-else-if="reportIssuesViewMode === 'raw'">
                                                     <div v-if="activeReportRawText.trim().length" class="reportRow">
+                                                        <div v-if="canExportActiveReportRaw" class="reportRowActions">
+                                                            <button
+                                                                type="button"
+                                                                class="reportRowActionButton"
+                                                                :disabled="isExportingActiveReportRawExcel"
+                                                                @click="exportActiveReportRawToExcel"
+                                                            >
+                                                                <span v-if="isExportingActiveReportRawExcel">匯出中…</span>
+                                                                <span v-else>匯出 Excel</span>
+                                                            </button>
+                                                        </div>
                                                         <pre class="reportRowContent codeScroll themed-scrollbar">{{ activeReportRawText }}</pre>
+                                                        <p v-if="!canExportActiveReportRaw" class="reportRowNotice">
+                                                            原始資料不是有效的 JSON 格式，因此無法匯出 Excel。
+                                                        </p>
                                                     </div>
                                                     <p v-else class="reportIssuesEmpty">尚未取得原始報告內容。</p>
                                                 </template>
@@ -3149,6 +3539,35 @@ body,
     flex-direction: column;
 }
 
+.reportRowActions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 12px 16px 0;
+    gap: 8px;
+}
+
+.reportRowActionButton {
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.14);
+    color: #e2e8f0;
+    font-size: 12px;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.reportRowActionButton:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.5);
+    color: #f8fafc;
+}
+
+.reportRowActionButton:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .reportRowContent {
     flex: 1 1 auto;
     margin: 0;
@@ -3160,6 +3579,13 @@ body,
     background: transparent;
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+.reportRowNotice {
+    margin: 0;
+    padding: 0 16px 12px;
+    font-size: 12px;
+    color: #94a3b8;
 }
 
 .reportIssuesBox .codeEditor {
