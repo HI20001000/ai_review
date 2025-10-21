@@ -1299,9 +1299,14 @@ async function createExcelBlobFromWorksheet(worksheet) {
     return zip.generateAsync({ type: "blob" });
 }
 
+const MIN_COLUMN_WIDTH = 6;
+const MAX_COLUMN_WIDTH = 80;
+const COLUMN_WIDTH_PADDING = 2;
+
 function buildSheetXml(rows, merges = []) {
     const rowXml = [];
     let maxColumnCount = 0;
+    const columnWidths = [];
 
     rows.forEach((cells, rowIndex) => {
         if (!Array.isArray(cells) || cells.length === 0) {
@@ -1312,6 +1317,10 @@ function buildSheetXml(rows, merges = []) {
                 if (!cell) return "";
                 const column = columnLetter(cellIndex);
                 const cellRef = `${column}${rowIndex + 1}`;
+                const cellWidth = deduceCellWidth(cell);
+                if (cellWidth > (columnWidths[cellIndex] ?? 0)) {
+                    columnWidths[cellIndex] = cellWidth;
+                }
                 switch (cell.type) {
                     case "number":
                         return `<c r="${cellRef}"><v>${cell.text}</v></c>`;
@@ -1336,6 +1345,27 @@ function buildSheetXml(rows, merges = []) {
         }
     });
 
+    if (maxColumnCount > 0) {
+        for (let index = 0; index < maxColumnCount; index += 1) {
+            if (columnWidths[index] === undefined) {
+                columnWidths[index] = 0;
+            }
+        }
+    }
+
+    const colsXml =
+        columnWidths.length > 0
+            ? `<cols>${columnWidths
+                  .map((width, index) => {
+                      const adjusted = Math.min(
+                          MAX_COLUMN_WIDTH,
+                          Math.max(MIN_COLUMN_WIDTH, Math.ceil(width + COLUMN_WIDTH_PADDING))
+                      );
+                      return `<col min="${index + 1}" max="${index + 1}" width="${adjusted}" customWidth="1"/>`;
+                  })
+                  .join("")}</cols>`
+            : "";
+
     const dimension =
         rows.length > 0 && maxColumnCount > 0
             ? `<dimension ref="A1:${columnLetter(maxColumnCount - 1)}${rows.length}"/>`
@@ -1352,7 +1382,7 @@ function buildSheetXml(rows, merges = []) {
                   .join("")}</mergeCells>`
             : "";
 
-    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${dimension}<sheetData>${rowXml.join(
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${dimension}${colsXml}<sheetData>${rowXml.join(
         ""
     )}</sheetData>${mergeXml}</worksheet>`;
 }
@@ -1365,6 +1395,21 @@ function columnLetter(index) {
         current = Math.floor(current / 26) - 1;
     }
     return result || "A";
+}
+
+function deduceCellWidth(cell) {
+    if (!cell || typeof cell.text !== "string") {
+        if (cell?.type === "number" || cell?.type === "boolean") {
+            return String(cell.text ?? "").length;
+        }
+        return 0;
+    }
+    if (!cell.text) {
+        return 0;
+    }
+    return cell.text
+        .split(/\r?\n/)
+        .reduce((max, line) => Math.max(max, line.length), 0);
 }
 
 function escapeXml(value) {
@@ -1443,7 +1488,7 @@ const STYLES_XML =
     '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>' +
     '<borders count="1"><border/></borders>' +
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-    '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>' +
+    '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center"/></xf></cellXfs>' +
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
     '<dxfs count="0"/>' +
     '<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>' +
