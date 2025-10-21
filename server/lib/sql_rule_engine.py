@@ -455,52 +455,6 @@ def _check_delete_full_table(sql: str, issues: List[Dict]) -> None:
             )
 
 
-def _slice_from_clauses(sql: str) -> List[Tuple[int, int, str]]:
-    masked = _mask_block_comments(sql)
-    slices: List[Tuple[int, int, str]] = []
-    for match in re.finditer(r"\bFROM\b", masked, flags=re.IGNORECASE):
-        start = match.end()
-        remainder = masked[start:]
-        boundary = re.search(r"\bWHERE\b|\bGROUP\b|\bORDER\b|\bHAVING\b|\bLIMIT\b|;", remainder, flags=re.IGNORECASE)
-        end = start + boundary.start() if boundary else len(sql)
-        slices.append((start, end, sql[start:end]))
-    return slices
-
-
-def _check_cartesian(sql: str, issues: List[Dict]) -> None:
-    """Rule 21: prevent implicit cartesian products in queries."""
-    for start, _end, fragment in _slice_from_clauses(sql):
-        masked_fragment = _mask_block_comments(fragment)
-        if "," in masked_fragment and re.search(r"\bJOIN\b", masked_fragment, flags=re.IGNORECASE) is None:
-            _add_issue(
-                issues,
-                "RULE_21_FROM_COMMA",
-                "FROM 子句使用逗号进行隐式连接，容易产生笛卡尔积。请使用显式 JOIN ... ON。",
-                sql,
-                start,
-                evidence=fragment.strip(),
-            )
-
-    masked = _mask_block_comments(sql)
-
-    join_re = re.finditer(
-        r"\bJOIN\b(?P<seg>.*?)(?=\bJOIN\b|\bWHERE\b|\bGROUP\b|\bORDER\b|\bHAVING\b|\bLIMIT\b|;|$)",
-        masked,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    for match in join_re:
-        segment = match.group("seg") or ""
-        if re.search(r"\bON\b|\bUSING\b|\bNATURAL\b|\bCROSS\b", segment, flags=re.IGNORECASE) is None:
-            _add_issue(
-                issues,
-                "RULE_21_JOIN_NO_ON",
-                "出现 JOIN 但未检测到 ON/USING/NATURAL（可能导致笛卡尔积或语义不清）。",
-                sql,
-                match.start(),
-                evidence=("JOIN" + segment).strip(),
-            )
-
-
 def _check_uppercase(sql: str, issues: List[Dict]) -> None:
     masked = _mask_comments_and_strings(sql)
     match = re.search(r"[a-z]", masked)
@@ -699,7 +653,6 @@ def main(sql_query: str) -> Dict[str, str]:
     _check_naming_prefixes(sql, issues)
     _check_table_definitions(sql, issues)
     _check_delete_full_table(sql, issues)
-    _check_cartesian(sql, issues)
     _check_uppercase(sql, issues)
     _check_view_nesting(sql, issues)
     _check_function_rules(sql, issues)
