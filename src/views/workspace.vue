@@ -809,6 +809,11 @@ function isPlainObject(value) {
 }
 
 function buildWorksheetFromValue(value) {
+    const hierarchical = buildHierarchicalWorksheet(value);
+    if (hierarchical) {
+        return hierarchical;
+    }
+
     const categorized = buildCategorizedWorksheet(value);
     if (categorized) {
         return categorized;
@@ -816,6 +821,182 @@ function buildWorksheetFromValue(value) {
 
     const rows = buildGenericWorksheetRows(value);
     return { rows, merges: [] };
+}
+
+function buildHierarchicalWorksheet(value) {
+    if (!isPlainObject(value) && !Array.isArray(value)) {
+        return null;
+    }
+
+    const rootChildren = createTreeChildren(value);
+    if (rootChildren.length === 0) {
+        return null;
+    }
+
+    const root = { label: null, value: undefined, children: rootChildren };
+    assignTreeDepth(root, -1);
+    computeTreeRowSpan(root);
+    assignTreeStartRow(root, 1);
+
+    const leafRecords = [];
+    collectTreeLeafRows(root, [], leafRecords);
+    if (leafRecords.length === 0) {
+        return null;
+    }
+
+    const maxLabelCount = leafRecords.reduce(
+        (max, record) => Math.max(max, record.labels.length),
+        0
+    );
+    const totalColumns = maxLabelCount + 1;
+
+    const rows = leafRecords.map((record) => {
+        const cells = new Array(totalColumns);
+        for (let index = 0; index < totalColumns; index += 1) {
+            cells[index] = createSheetCell(null);
+        }
+
+        record.labels.forEach((label, index) => {
+            cells[index] = createSheetCell(label, { forceString: true });
+        });
+
+        const valueColumnIndex = record.labels.length;
+        cells[valueColumnIndex] = createSheetCell(record.value);
+
+        return cells;
+    });
+
+    const merges = [];
+    collectTreeMerges(root, merges);
+
+    return { rows, merges };
+}
+
+function createTreeChildren(value) {
+    if (isPlainObject(value)) {
+        const entries = Object.entries(value);
+        if (entries.length === 0) {
+            return [];
+        }
+        return entries.map(([key, childValue]) => createTreeNode(key, childValue));
+    }
+
+    if (Array.isArray(value)) {
+        if (value.length === 0) {
+            return [];
+        }
+        return value.map((item, index) => createTreeNode(deduceArrayItemLabel(item, index), item));
+    }
+
+    return [];
+}
+
+function createTreeNode(label, value) {
+    if (isPlainObject(value)) {
+        const children = createTreeChildren(value);
+        if (children.length === 0) {
+            return { label, value: "", children: [] };
+        }
+        return { label, value: undefined, children };
+    }
+
+    if (Array.isArray(value)) {
+        const children = createTreeChildren(value);
+        if (children.length === 0) {
+            return { label, value: "", children: [] };
+        }
+        return { label, value: undefined, children };
+    }
+
+    return { label, value, children: [] };
+}
+
+function deduceArrayItemLabel(item, index) {
+    if (isPlainObject(item)) {
+        const candidateKeys = ["name", "label", "key", "id", "title"];
+        for (const key of candidateKeys) {
+            const value = item[key];
+            if (typeof value === "string" && value.trim()) {
+                return value;
+            }
+            if (typeof value === "number" && Number.isFinite(value)) {
+                return String(value);
+            }
+        }
+    }
+
+    return `[${index}]`;
+}
+
+function assignTreeDepth(node, depth) {
+    node.depth = depth;
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    const nextDepth = depth + 1;
+    node.children.forEach((child) => assignTreeDepth(child, nextDepth));
+}
+
+function computeTreeRowSpan(node) {
+    if (!node.children || node.children.length === 0) {
+        node.rowSpan = 1;
+        return 1;
+    }
+
+    let total = 0;
+    node.children.forEach((child) => {
+        total += computeTreeRowSpan(child);
+    });
+
+    node.rowSpan = Math.max(total, 1);
+    return node.rowSpan;
+}
+
+function assignTreeStartRow(node, startRow) {
+    node.startRow = startRow;
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    let cursor = startRow;
+    node.children.forEach((child) => {
+        assignTreeStartRow(child, cursor);
+        cursor += child.rowSpan;
+    });
+}
+
+function collectTreeLeafRows(node, path, rows) {
+    const nextPath = node.label !== null && node.label !== undefined ? [...path, node] : path;
+
+    if (!node.children || node.children.length === 0) {
+        const labels = nextPath
+            .filter((entry) => entry.label !== null && entry.label !== undefined)
+            .map((entry) => entry.label);
+        rows.push({ labels, value: node.value });
+        return;
+    }
+
+    node.children.forEach((child) => {
+        collectTreeLeafRows(child, nextPath, rows);
+    });
+}
+
+function collectTreeMerges(node, merges) {
+    if (node.label !== null && node.label !== undefined && node.rowSpan > 1 && node.depth >= 0) {
+        merges.push({
+            startRow: node.startRow,
+            endRow: node.startRow + node.rowSpan - 1,
+            startColumn: node.depth,
+            endColumn: node.depth
+        });
+    }
+
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    node.children.forEach((child) => collectTreeMerges(child, merges));
 }
 
 function buildCategorizedWorksheet(value) {
