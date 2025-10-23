@@ -883,6 +883,42 @@ const canShowCodeIssues = computed(() => {
 const canShowStaticReportJson = computed(() => activeReportStaticRawText.value.trim().length > 0);
 const canShowDifyReportJson = computed(() => activeReportDifyRawText.value.trim().length > 0);
 
+const activeReportDifyErrorMessage = computed(() => {
+    const report = activeReport.value;
+    if (!report) return "";
+
+    const direct = typeof report.state?.difyErrorMessage === "string" ? report.state.difyErrorMessage : "";
+    if (direct && direct.trim()) {
+        return direct.trim();
+    }
+
+    const nested = typeof report.state?.analysis?.difyErrorMessage === "string"
+        ? report.state.analysis.difyErrorMessage
+        : "";
+    if (nested && nested.trim()) {
+        return nested.trim();
+    }
+
+    return "";
+});
+
+const shouldShowDifyUnavailableNotice = computed(() => {
+    const report = activeReport.value;
+    if (!report) return false;
+    if (!canShowStaticReportJson.value) return false;
+    if (canShowDifyReportJson.value) return false;
+    return true;
+});
+
+const reportDifyUnavailableNotice = computed(() => {
+    if (!shouldShowDifyUnavailableNotice.value) return "";
+    const detail = activeReportDifyErrorMessage.value;
+    if (detail) {
+        return `無法連接 Dify 分析：${detail}。目前僅顯示靜態分析器報告。`;
+    }
+    return "無法連接 Dify 分析，僅顯示靜態分析器報告。";
+});
+
 const shouldShowReportIssuesSection = computed(
     () =>
         Boolean(activeReportDetails.value) ||
@@ -2761,6 +2797,52 @@ async function previewReportFile(projectId, path) {
     }
 }
 
+async function previewReportFile(projectId, path) {
+    const projectKey = normaliseProjectId(projectId);
+    if (!projectKey || !path) return;
+
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const project = projectList.find(
+        (item) => normaliseProjectId(item.id) === projectKey
+    );
+    if (!project) return;
+
+    if (isTreeCollapsed.value) {
+        isTreeCollapsed.value = false;
+    }
+
+    if (selectedProjectId.value !== project.id) {
+        await openProject(project);
+    } else if (!Array.isArray(tree.value) || tree.value.length === 0) {
+        await openProject(project);
+    }
+
+    const entry = ensureReportTreeEntry(project.id);
+    if (entry && !entry.nodes.length && !entry.loading) {
+        loadReportTreeForProject(project.id);
+    }
+
+    const searchNodes = (entry && entry.nodes && entry.nodes.length)
+        ? entry.nodes
+        : tree.value;
+    let targetNode = findTreeNodeByPath(searchNodes, path);
+    if (!targetNode) {
+        const name = path.split("/").pop() || path;
+        targetNode = { type: "file", path, name, mime: "" };
+    }
+
+    treeStore.selectTreeNode(path);
+    try {
+        await treeStore.openNode(targetNode);
+    } catch (error) {
+        console.error("[Workspace] Failed to preview file from report tree", {
+            projectId: project.id,
+            path,
+            error
+        });
+    }
+}
+
 async function generateReportForFile(project, node, options = {}) {
     const { autoSelect = true, silent = false } = options;
     if (!project || !node || node.type !== "file") {
@@ -3724,73 +3806,81 @@ onBeforeUnmount(() => {
                                                         >
                                                             無法載入檔案內容：{{ activeReport.state.sourceError }}
                                                         </div>
-                                                        <div
-                                                            v-else-if="hasReportIssueLines"
-                                                            class="pvBox codeBox reportIssuesBox"
-                                                        >
-                                                            <div class="codeScroll themed-scrollbar reportIssueCodeScroll">
-                                                                <div class="codeEditor">
-                                                                    <div
-                                                                        v-for="line in reportIssueLines"
-                                                                        :key="line.key"
-                                                                        class="codeLine"
-                                                                        :class="{
-                                                                            'codeLine--issue': line.type === 'code' && line.hasIssue,
-                                                                            'codeLine--meta': line.type !== 'code',
-                                                                            'codeLine--issuesMeta': line.type === 'issues',
-                                                                            'codeLine--fixMeta': line.type === 'fix'
-                                                                        }"
-                                                                    >
-                                                                        <span
-                                                                            class="codeLineNo"
+                                                        <template v-else>
+                                                            <div
+                                                                v-if="shouldShowDifyUnavailableNotice"
+                                                                class="reportIssuesNotice reportIssuesNotice--warning"
+                                                            >
+                                                                {{ reportDifyUnavailableNotice }}
+                                                            </div>
+                                                            <div
+                                                                v-if="hasReportIssueLines"
+                                                                class="pvBox codeBox reportIssuesBox"
+                                                            >
+                                                                <div class="codeScroll themed-scrollbar reportIssueCodeScroll">
+                                                                    <div class="codeEditor">
+                                                                        <div
+                                                                            v-for="line in reportIssueLines"
+                                                                            :key="line.key"
+                                                                            class="codeLine"
                                                                             :class="{
-                                                                                'codeLineNo--issue': line.type === 'code' && line.hasIssue,
-                                                                                'codeLineNo--meta': line.type !== 'code',
-                                                                                'codeLineNo--issues': line.type === 'issues',
-                                                                                'codeLineNo--fix': line.type === 'fix'
+                                                                                'codeLine--issue': line.type === 'code' && line.hasIssue,
+                                                                                'codeLine--meta': line.type !== 'code',
+                                                                                'codeLine--issuesMeta': line.type === 'issues',
+                                                                                'codeLine--fixMeta': line.type === 'fix'
                                                                             }"
-                                                                            :data-line="line.displayNumber"
-                                                                            :aria-label="line.type !== 'code' ? line.iconLabel : null"
-                                                                            :aria-hidden="line.type === 'code'"
                                                                         >
-                                                                            <svg
-                                                                                v-if="line.type === 'issues'"
-                                                                                class="codeLineNoIcon codeLineNoIcon--warning"
-                                                                                viewBox="0 0 20 20"
-                                                                                focusable="false"
-                                                                                aria-hidden="true"
+                                                                            <span
+                                                                                class="codeLineNo"
+                                                                                :class="{
+                                                                                    'codeLineNo--issue': line.type === 'code' && line.hasIssue,
+                                                                                    'codeLineNo--meta': line.type !== 'code',
+                                                                                    'codeLineNo--issues': line.type === 'issues',
+                                                                                    'codeLineNo--fix': line.type === 'fix'
+                                                                                }"
+                                                                                :data-line="line.displayNumber"
+                                                                                :aria-label="line.type !== 'code' ? line.iconLabel : null"
+                                                                                :aria-hidden="line.type === 'code'"
                                                                             >
-                                                                                <path
-                                                                                    d="M10.447 2.105a1 1 0 00-1.894 0l-7 14A1 1 0 002.447 18h15.106a1 1 0 00.894-1.447l-7-14zM10 6a1 1 0 01.993.883L11 7v4a1 1 0 01-1.993.117L9 11V7a1 1 0 011-1zm0 8a1 1 0 110 2 1 1 0 010-2z"
-                                                                                />
-                                                                            </svg>
-                                                                            <svg
-                                                                                v-else-if="line.type === 'fix'"
-                                                                                class="codeLineNoIcon codeLineNoIcon--fix"
-                                                                                viewBox="0 0 20 20"
-                                                                                focusable="false"
-                                                                                aria-hidden="true"
-                                                                            >
-                                                                                <path
-                                                                                    d="M17.898 2.102a1 1 0 00-1.517.127l-2.156 2.873-1.21-.403a1 1 0 00-1.043.24l-4.95 4.95a1 1 0 000 1.414l1.775 1.775-5.189 5.189a1 1 0 001.414 1.414l5.189-5.189 1.775 1.775a1 1 0 001.414 0l4.95-4.95a1 1 0 00.24-1.043l-.403-1.21 2.873-2.156a1 1 0 00.127-1.517l-.489-.489z"
-                                                                                />
-                                                                            </svg>
-                                                                        </span>
-                                                                        <span
-                                                                            class="codeLineContent"
-                                                                            :class="{
-                                                                                'codeLineContent--issueHighlight':
-                                                                                    line.type === 'code' && line.hasIssue,
-                                                                                'codeLineContent--issues': line.type === 'issues',
-                                                                                'codeLineContent--fix': line.type === 'fix'
-                                                                            }"
-                                                                            v-html="line.html"
-                                                                        ></span>
+                                                                                <svg
+                                                                                    v-if="line.type === 'issues'"
+                                                                                    class="codeLineNoIcon codeLineNoIcon--warning"
+                                                                                    viewBox="0 0 20 20"
+                                                                                    focusable="false"
+                                                                                    aria-hidden="true"
+                                                                                >
+                                                                                    <path
+                                                                                        d="M10.447 2.105a1 1 0 00-1.894 0l-7 14A1 1 0 002.447 18h15.106a1 1 0 00.894-1.447l-7-14zM10 6a1 1 0 01.993.883L11 7v4a1 1 0 01-1.993.117L9 11V7a1 1 0 011-1zm0 8a1 1 0 110 2 1 1 0 010-2z"
+                                                                                    />
+                                                                                </svg>
+                                                                                <svg
+                                                                                    v-else-if="line.type === 'fix'"
+                                                                                    class="codeLineNoIcon codeLineNoIcon--fix"
+                                                                                    viewBox="0 0 20 20"
+                                                                                    focusable="false"
+                                                                                    aria-hidden="true"
+                                                                                >
+                                                                                    <path
+                                                                                        d="M17.898 2.102a1 1 0 00-1.517.127l-2.156 2.873-1.21-.403a1 1 0 00-1.043.24l-4.95 4.95a1 1 0 000 1.414l1.775 1.775-5.189 5.189a1 1 0 001.414 1.414l5.189-5.189 1.775 1.775a1 1 0 001.414 0l4.95-4.95a1 1 0 00.24-1.043l-.403-1.21 2.873-2.156a1 1 0 00.127-1.517l-.489-.489z"
+                                                                                    />
+                                                                                </svg>
+                                                                            </span>
+                                                                            <span
+                                                                                class="codeLineContent"
+                                                                                :class="{
+                                                                                    'codeLineContent--issueHighlight':
+                                                                                        line.type === 'code' && line.hasIssue,
+                                                                                    'codeLineContent--issues': line.type === 'issues',
+                                                                                    'codeLineContent--fix': line.type === 'fix'
+                                                                                }"
+                                                                                v-html="line.html"
+                                                                            ></span>
+                                                                        </div>
                                                                     </div>
                                                                 </div>
                                                             </div>
-                                                        </div>
-                                                        <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
+                                                            <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
+                                                        </template>
                                                     </template>
                                                     <p v-else class="reportIssuesEmpty">此報告不支援結構化檢視。</p>
                                                 </template>
@@ -4643,6 +4733,11 @@ body,
 .reportIssuesNotice--error {
     background: rgba(248, 113, 113, 0.12);
     color: #fda4af;
+}
+
+.reportIssuesNotice--warning {
+    background: rgba(250, 204, 21, 0.12);
+    color: #facc15;
 }
 
 .reportIssuesBox {
