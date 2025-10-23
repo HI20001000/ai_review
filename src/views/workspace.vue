@@ -800,6 +800,22 @@ const activeReportStaticRawSourceText = computed(() => {
         }
     }
 
+    const parsedReport = report.state?.parsedReport;
+    if (parsedReport && typeof parsedReport === "object") {
+        const reports =
+            parsedReport.reports && typeof parsedReport.reports === "object" ? parsedReport.reports : null;
+        if (reports) {
+            const staticReport = reports.static_analyzer || reports.staticAnalyzer;
+            if (staticReport && typeof staticReport === "object") {
+                try {
+                    return JSON.stringify(staticReport);
+                } catch (error) {
+                    console.warn("[reports] Failed to stringify parsed static report", error);
+                }
+            }
+        }
+    }
+
     return "";
 });
 
@@ -2454,6 +2470,11 @@ function createDefaultReportState() {
         analysis: null,
         issueSummary: null,
         parsedReport: null,
+        rawReport: "",
+        dify: null,
+        dml: null,
+        difyErrorMessage: "",
+        dmlErrorMessage: "",
         sourceText: "",
         sourceLoaded: false,
         sourceLoading: false,
@@ -2518,6 +2539,60 @@ function computeIssueSummary(reportText, parsedOverride = null) {
         summary,
         raw: parsed
     };
+}
+
+function normaliseReportAnalysisState(state) {
+    if (!state) return;
+
+    const rawReport = typeof state.rawReport === "string" ? state.rawReport : "";
+    const baseAnalysis =
+        state.analysis && typeof state.analysis === "object" && !Array.isArray(state.analysis)
+            ? { ...state.analysis }
+            : {};
+
+    if (rawReport) {
+        if (typeof baseAnalysis.rawReport !== "string") {
+            baseAnalysis.rawReport = rawReport;
+        }
+        if (typeof baseAnalysis.originalResult !== "string") {
+            baseAnalysis.originalResult = rawReport;
+        }
+        if (typeof baseAnalysis.result !== "string") {
+            baseAnalysis.result = rawReport;
+        }
+    }
+
+    const parsedReport = state.parsedReport && typeof state.parsedReport === "object" ? state.parsedReport : null;
+    if (parsedReport) {
+        const reports =
+            parsedReport.reports && typeof parsedReport.reports === "object" ? parsedReport.reports : null;
+        if (reports) {
+            const staticReport = reports.static_analyzer || reports.staticAnalyzer;
+            if (staticReport && typeof staticReport === "object") {
+                if (!baseAnalysis.staticReport) {
+                    baseAnalysis.staticReport = staticReport;
+                }
+            }
+
+            const dmlReport = reports.dml_prompt || reports.dmlPrompt;
+            if (dmlReport && typeof dmlReport === "object") {
+                state.dml = dmlReport;
+                const summary =
+                    dmlReport.summary && typeof dmlReport.summary === "object" ? dmlReport.summary : null;
+                if (!state.dmlErrorMessage) {
+                    const dmlError =
+                        typeof summary?.error_message === "string"
+                            ? summary.error_message
+                            : typeof summary?.errorMessage === "string"
+                            ? summary.errorMessage
+                            : "";
+                    state.dmlErrorMessage = dmlError || "";
+                }
+            }
+        }
+    }
+
+    state.analysis = Object.keys(baseAnalysis).length ? baseAnalysis : null;
 }
 
 function ensureReportTreeEntry(projectId) {
@@ -2694,8 +2769,14 @@ async function hydrateReportsForProject(projectId) {
             state.segments = Array.isArray(record.segments) ? record.segments : [];
             state.conversationId = record.conversationId || "";
             state.analysis = record.analysis || null;
+            state.rawReport = typeof record.analysis?.result === "string" ? record.analysis.result : "";
+            state.dify = null;
+            state.dml = null;
+            state.difyErrorMessage = "";
+            state.dmlErrorMessage = "";
             state.parsedReport = parseReportJson(state.report);
             state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
+            normaliseReportAnalysisState(state);
             const timestamp = parseHydratedTimestamp(record.generatedAt || record.updatedAt || record.createdAt);
             state.updatedAt = timestamp;
             state.updatedAtDisplay = timestamp ? timestamp.toLocaleString() : null;
@@ -2817,6 +2898,11 @@ async function generateReportForFile(project, node, options = {}) {
     state.analysis = null;
     state.issueSummary = null;
     state.parsedReport = null;
+    state.rawReport = "";
+    state.dify = null;
+    state.dml = null;
+    state.difyErrorMessage = "";
+    state.dmlErrorMessage = "";
     state.sourceText = "";
     state.sourceLoaded = false;
     state.sourceLoading = false;
@@ -2855,9 +2941,15 @@ async function generateReportForFile(project, node, options = {}) {
         state.chunks = Array.isArray(payload?.chunks) ? payload.chunks : [];
         state.segments = Array.isArray(payload?.segments) ? payload.segments : [];
         state.conversationId = payload?.conversationId || "";
+        state.rawReport = typeof payload?.rawReport === "string" ? payload.rawReport : "";
+        state.dify = payload?.dify || null;
+        state.dml = payload?.dml || null;
+        state.difyErrorMessage = typeof payload?.difyErrorMessage === "string" ? payload.difyErrorMessage : "";
+        state.dmlErrorMessage = typeof payload?.dmlErrorMessage === "string" ? payload.dmlErrorMessage : "";
         state.analysis = payload?.analysis || null;
         state.parsedReport = parseReportJson(state.report);
         state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
+        normaliseReportAnalysisState(state);
         state.error = "";
 
         if (autoSelect) {
@@ -2879,6 +2971,11 @@ async function generateReportForFile(project, node, options = {}) {
         state.analysis = null;
         state.issueSummary = null;
         state.parsedReport = null;
+        state.rawReport = "";
+        state.dify = null;
+        state.dml = null;
+        state.difyErrorMessage = "";
+        state.dmlErrorMessage = "";
         state.sourceLoading = false;
         if (!state.sourceText) {
             state.sourceLoaded = false;
