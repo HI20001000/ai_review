@@ -3705,6 +3705,7 @@ onBeforeUnmount(() => {
                                             </section>
                                         </div>
 
+
                                         <section class="reportIssuesSection" v-if="shouldShowReportIssuesSection">
                                             <div class="reportIssuesHeader">
                                                 <div class="reportIssuesHeaderInfo">
