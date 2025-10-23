@@ -4440,8 +4440,9 @@ body,
 
 .reportSummaryGrid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 12px;
+    width: 100%;
 }
 
 .reportSummaryCard {
@@ -4452,6 +4453,8 @@ body,
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-width: 0;
+    word-break: break-word;
 }
 
 .reportSummaryCard--total {
@@ -4460,7 +4463,7 @@ body,
 }
 
 .reportSummaryCard--span {
-    grid-column: span 2;
+    grid-column: 1 / -1;
 }
 
 @media (max-width: 720px) {
@@ -4534,6 +4537,7 @@ body,
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
 }
 
 .reportSummarySourceStatus {
@@ -4552,6 +4556,7 @@ body,
     gap: 10px 16px;
     font-size: 13px;
     color: #e2e8f0;
+    word-break: break-word;
 }
 
 .reportSummarySourceMetrics li {
@@ -4737,6 +4742,7 @@ body,
     display: flex;
     align-items: center;
     gap: 12px;
+    flex-wrap: wrap;
 }
 
 .reportIssuesHeaderInfo {
@@ -4751,6 +4757,7 @@ body,
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
 }
 
 .reportIssuesToggleButton {
