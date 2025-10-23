@@ -2797,6 +2797,52 @@ async function previewReportTreeFile(projectId, path) {
     }
 }
 
+async function previewReportTreeFile(projectId, path) {
+    const projectKey = normaliseProjectId(projectId);
+    if (!projectKey || !path) return;
+
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const project = projectList.find(
+        (item) => normaliseProjectId(item.id) === projectKey
+    );
+    if (!project) return;
+
+    if (isTreeCollapsed.value) {
+        isTreeCollapsed.value = false;
+    }
+
+    if (selectedProjectId.value !== project.id) {
+        await openProject(project);
+    } else if (!Array.isArray(tree.value) || tree.value.length === 0) {
+        await openProject(project);
+    }
+
+    const entry = ensureReportTreeEntry(project.id);
+    if (entry && !entry.nodes.length && !entry.loading) {
+        loadReportTreeForProject(project.id);
+    }
+
+    const searchNodes = (entry && entry.nodes && entry.nodes.length)
+        ? entry.nodes
+        : tree.value;
+    let targetNode = findTreeNodeByPath(searchNodes, path);
+    if (!targetNode) {
+        const name = path.split("/").pop() || path;
+        targetNode = { type: "file", path, name, mime: "" };
+    }
+
+    treeStore.selectTreeNode(path);
+    try {
+        await treeStore.openNode(targetNode);
+    } catch (error) {
+        console.error("[Workspace] Failed to preview file from report tree", {
+            projectId: project.id,
+            path,
+            error
+        });
+    }
+}
+
 async function generateReportForFile(project, node, options = {}) {
     const { autoSelect = true, silent = false } = options;
     if (!project || !node || node.type !== "file") {
@@ -3480,7 +3526,8 @@ onBeforeUnmount(() => {
                                 </div>
                                 <template v-else>
                                     <div v-if="hasStructuredReport" class="reportStructured">
-                                        <section class="reportSummaryGrid">
+                                        <div class="reportStructuredPrimary">
+                                            <section class="reportSummaryGrid">
     <div
         v-if="activeReportDetails?.sourceSummaries?.length"
         class="reportSummaryCard reportSummaryCard--span"
@@ -3593,59 +3640,116 @@ onBeforeUnmount(() => {
     </div>
 </section>
 
-                                        <section
-                                            v-if="
-                                                activeReportDetails?.staticSummaryDetails?.length ||
-                                                activeReportDetails?.staticMetadataDetails?.length
-                                            "
-                                            class="reportStaticSection"
-                                        >
-                                            <div class="reportStaticHeader">
-                                                <h4>靜態分析器</h4>
-                                                <span
-                                                    v-if="activeReportDetails?.staticMetadata?.engine"
-                                                    class="reportStaticEngine"
-                                                >
-                                                    引擎：{{ activeReportDetails.staticMetadata.engine }}
-                                                </span>
-                                                <span
-                                                    v-else-if="activeReportDetails?.staticSummary?.analysis_source"
-                                                    class="reportStaticEngine"
-                                                >
-                                                    來源：{{ activeReportDetails.staticSummary.analysis_source }}
-                                                </span>
-                                            </div>
-                                            <div
-                                                v-if="activeReportDetails?.staticSummaryDetails?.length"
-                                                class="reportStaticBlock"
+                                            <section
+                                                v-if="
+                                                    activeReportDetails?.staticSummaryDetails?.length ||
+                                                    activeReportDetails?.staticMetadataDetails?.length
+                                                "
+                                                class="reportStaticSection"
                                             >
-                                                <h5>摘要資訊</h5>
-                                                <ul class="reportStaticList">
-                                                    <li
-                                                        v-for="item in activeReportDetails.staticSummaryDetails"
-                                                        :key="`static-summary-${item.label}-${item.value}`"
+                                                <div class="reportStaticHeader">
+                                                    <h4>靜態分析器</h4>
+                                                    <span
+                                                        v-if="activeReportDetails?.staticMetadata?.engine"
+                                                        class="reportStaticEngine"
                                                     >
-                                                        <span class="reportStaticItemLabel">{{ item.label }}</span>
-                                                        <span class="reportStaticItemValue">{{ item.value }}</span>
-                                                    </li>
-                                                </ul>
-                                            </div>
-                                            <div
-                                                v-if="activeReportDetails?.staticMetadataDetails?.length"
-                                                class="reportStaticBlock"
+                                                        引擎：{{ activeReportDetails.staticMetadata.engine }}
+                                                    </span>
+                                                    <span
+                                                        v-else-if="activeReportDetails?.staticSummary?.analysis_source"
+                                                        class="reportStaticEngine"
+                                                    >
+                                                        來源：{{ activeReportDetails.staticSummary.analysis_source }}
+                                                    </span>
+                                                </div>
+                                                <div
+                                                    v-if="activeReportDetails?.staticSummaryDetails?.length"
+                                                    class="reportStaticBlock"
+                                                >
+                                                    <h5>摘要資訊</h5>
+                                                    <ul class="reportStaticList">
+                                                        <li
+                                                            v-for="item in activeReportDetails.staticSummaryDetails"
+                                                            :key="`static-summary-${item.label}-${item.value}`"
+                                                        >
+                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
+                                                        </li>
+                                                    </ul>
+                                                </div>
+                                                <div
+                                                    v-if="activeReportDetails?.staticMetadataDetails?.length"
+                                                    class="reportStaticBlock"
+                                                >
+                                                    <h5>中繼資料</h5>
+                                                    <ul class="reportStaticList">
+                                                        <li
+                                                            v-for="item in activeReportDetails.staticMetadataDetails"
+                                                            :key="`static-metadata-${item.label}-${item.value}`"
+                                                        >
+                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
+                                                        </li>
+                                                    </ul>
+                                                </div>
+                                            </section>
+
+                                            <section
+                                                v-if="activeReportDetails?.dmlReport"
+                                                class="reportDmlSection"
                                             >
-                                                <h5>中繼資料</h5>
-                                                <ul class="reportStaticList">
-                                                    <li
-                                                        v-for="item in activeReportDetails.staticMetadataDetails"
-                                                        :key="`static-metadata-${item.label}-${item.value}`"
+                                                <div class="reportDmlHeader">
+                                                    <h4>DML 提示詞分析</h4>
+                                                    <span
+                                                        v-if="activeReportDetails.dmlReport.status"
+                                                        class="reportDmlStatus"
                                                     >
-                                                        <span class="reportStaticItemLabel">{{ item.label }}</span>
-                                                        <span class="reportStaticItemValue">{{ item.value }}</span>
-                                                    </li>
-                                                </ul>
-                                            </div>
-                                        </section>
+                                                        {{ activeReportDetails.dmlReport.status }}
+                                                    </span>
+                                                    <span
+                                                        v-if="activeReportDetails.dmlReport.generatedAt"
+                                                        class="reportDmlTimestamp"
+                                                    >
+                                                        產生於 {{ activeReportDetails.dmlReport.generatedAt }}
+                                                    </span>
+                                                </div>
+                                                <p
+                                                    v-if="activeReportDetails.dmlReport.error"
+                                                    class="reportDmlError"
+                                                >
+                                                    {{ activeReportDetails.dmlReport.error }}
+                                                </p>
+                                                <div
+                                                    v-if="activeReportDetails.dmlReport.segments?.length"
+                                                    class="reportDmlSegments"
+                                                >
+                                                    <details
+                                                        v-for="segment in activeReportDetails.dmlReport.segments"
+                                                        :key="segment.key"
+                                                        class="reportDmlSegment"
+                                                    >
+                                                        <summary>
+                                                            第 {{ segment.index }} 段
+                                                            <template v-if="segment.startLine">
+                                                                （第 {{ segment.startLine }} 行起
+                                                                <template v-if="segment.endLine">，至第 {{ segment.endLine }} 行止</template>
+                                                                ）
+                                                            </template>
+                                                        </summary>
+                                                        <pre class="reportDmlSql codeScroll themed-scrollbar">{{ segment.sql }}</pre>
+                                                        <pre
+                                                            v-if="segment.analysis"
+                                                            class="reportDmlAnalysis codeScroll themed-scrollbar"
+                                                        >{{ segment.analysis }}</pre>
+                                                    </details>
+                                                </div>
+                                                <p v-else class="reportDmlEmpty">尚未取得 DML 拆分結果。</p>
+                                                <pre
+                                                    v-if="activeReportDetails.dmlReport.reportText"
+                                                    class="reportDmlSummary codeScroll themed-scrollbar"
+                                                >{{ activeReportDetails.dmlReport.reportText }}</pre>
+                                            </section>
+                                        </div>
 
                                         <section
                                             v-if="activeReportDetails?.dmlReport"
@@ -4314,11 +4418,25 @@ body,
 }
 
 .reportStructured {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
     gap: 20px;
     flex: 1 1 auto;
     min-height: 0;
+    align-items: start;
+}
+
+.reportStructuredPrimary {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-height: 0;
+}
+
+@media (max-width: 1200px) {
+    .reportStructured {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }
 
 .reportSummaryGrid {
@@ -4612,6 +4730,7 @@ body,
     gap: 12px;
     flex: 1 1 auto;
     min-height: 0;
+    align-self: stretch;
 }
 
 
@@ -4758,13 +4877,6 @@ body,
     white-space: pre-wrap;
     word-break: break-word;
     min-height: 800px;
-}
-
-.reportRowNotice {
-    margin: 0;
-    padding: 0 16px 12px;
-    font-size: 12px;
-    color: #94a3b8;
 }
 
 .reportRowNotice {
