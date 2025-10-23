@@ -445,7 +445,9 @@ app.post("/api/reports/dify", async (req, res, next) => {
                 analysis: sqlAnalysis.analysis,
                 content,
                 dify: sqlAnalysis.dify,
-                difyError: sqlAnalysis.difyError
+                difyError: sqlAnalysis.difyError,
+                dml: sqlAnalysis.dml,
+                dmlError: sqlAnalysis.dmlError
             });
             await upsertReport({
                 projectId,
@@ -465,7 +467,10 @@ app.post("/api/reports/dify", async (req, res, next) => {
                 savedAt: savedAtIso,
                 difyError:
                     reportPayload.difyErrorMessage ||
-                    (sqlAnalysis.difyError ? sqlAnalysis.difyError.message || String(sqlAnalysis.difyError) : undefined)
+                    (sqlAnalysis.difyError ? sqlAnalysis.difyError.message || String(sqlAnalysis.difyError) : undefined),
+                dmlError:
+                    reportPayload.dmlErrorMessage ||
+                    (sqlAnalysis.dmlError ? sqlAnalysis.dmlError.message || String(sqlAnalysis.dmlError) : undefined)
             });
             return;
         }
