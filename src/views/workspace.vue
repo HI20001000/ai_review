@@ -4321,24 +4321,9 @@ body,
 
 .reportStructured {
     display: grid;
-    grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
-    gap: 20px;
+    grid-auto-flow: row;
+    row-gap: 20px;
     flex: 1 1 auto;
-    min-height: 0;
-    align-items: start;
-}
-
-.reportStructuredPrimary {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    min-height: 0;
-}
-
-.reportStructuredPrimary {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
     min-height: 0;
 }
 
