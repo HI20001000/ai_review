@@ -175,7 +175,7 @@ const reportPanelConfig = computed(() => {
         toggleNode: toggleReportNode,
         getReportState: getReportStateForFile,
         onGenerate: generateReportForFile,
-        onSelect: viewMode === "reports" ? selectReport : previewReportFile,
+        onSelect: viewMode === "reports" ? selectReport : previewReportTreeFile,
         getStatusLabel,
         onReloadProject: loadReportTreeForProject,
         onGenerateProject: generateProjectReports,
@@ -2751,53 +2751,7 @@ function selectReport(projectId, path) {
     };
 }
 
-async function previewReportFile(projectId, path) {
-    const projectKey = normaliseProjectId(projectId);
-    if (!projectKey || !path) return;
-
-    const projectList = Array.isArray(projects.value) ? projects.value : [];
-    const project = projectList.find(
-        (item) => normaliseProjectId(item.id) === projectKey
-    );
-    if (!project) return;
-
-    if (isTreeCollapsed.value) {
-        isTreeCollapsed.value = false;
-    }
-
-    if (selectedProjectId.value !== project.id) {
-        await openProject(project);
-    } else if (!Array.isArray(tree.value) || tree.value.length === 0) {
-        await openProject(project);
-    }
-
-    const entry = ensureReportTreeEntry(project.id);
-    if (entry && !entry.nodes.length && !entry.loading) {
-        loadReportTreeForProject(project.id);
-    }
-
-    const searchNodes = (entry && entry.nodes && entry.nodes.length)
-        ? entry.nodes
-        : tree.value;
-    let targetNode = findTreeNodeByPath(searchNodes, path);
-    if (!targetNode) {
-        const name = path.split("/").pop() || path;
-        targetNode = { type: "file", path, name, mime: "" };
-    }
-
-    treeStore.selectTreeNode(path);
-    try {
-        await treeStore.openNode(targetNode);
-    } catch (error) {
-        console.error("[Workspace] Failed to preview file from report tree", {
-            projectId: project.id,
-            path,
-            error
-        });
-    }
-}
-
-async function previewReportFile(projectId, path) {
+async function previewReportTreeFile(projectId, path) {
     const projectKey = normaliseProjectId(projectId);
     if (!projectKey || !path) return;
 
