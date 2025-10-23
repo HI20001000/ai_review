@@ -4757,6 +4757,14 @@ body,
     background: transparent;
     white-space: pre-wrap;
     word-break: break-word;
+    min-height: 800px;
+}
+
+.reportRowNotice {
+    margin: 0;
+    padding: 0 16px 12px;
+    font-size: 12px;
+    color: #94a3b8;
 }
 
 .reportRowNotice {
