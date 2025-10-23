@@ -3705,7 +3705,6 @@ onBeforeUnmount(() => {
                                             </section>
                                         </div>
 
-
                                         <section class="reportIssuesSection" v-if="shouldShowReportIssuesSection">
                                             <div class="reportIssuesHeader">
                                                 <div class="reportIssuesHeaderInfo">
@@ -4331,10 +4330,11 @@ body,
     min-height: 0;
 }
 
-@media (max-width: 1200px) {
-    .reportStructured {
-        grid-template-columns: minmax(0, 1fr);
-    }
+.reportStructuredPrimary {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-height: 0;
 }
 
 .reportSummaryGrid {
@@ -4626,7 +4626,7 @@ body,
     display: flex;
     flex-direction: column;
     gap: 12px;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     min-height: 0;
     align-self: stretch;
 }
