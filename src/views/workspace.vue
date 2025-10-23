@@ -772,21 +772,69 @@ const hasReportIssueLines = computed(() => reportIssueLines.value.length > 0);
 
 const reportIssuesViewMode = ref("code");
 
-const activeReportRawSourceText = computed(() => {
+const activeReportStaticRawSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
-    const enrichedText = typeof report.state?.report === "string" ? report.state.report : "";
-    if (enrichedText && enrichedText.trim()) {
-        return enrichedText;
+
+    const direct = report.state?.rawReport;
+    if (typeof direct === "string" && direct.trim()) {
+        return direct;
     }
-    const analysisText = report.state?.analysis?.result;
-    if (typeof analysisText === "string" && analysisText.trim()) {
-        return analysisText;
+
+    const analysisRaw = report.state?.analysis?.rawReport;
+    if (typeof analysisRaw === "string" && analysisRaw.trim()) {
+        return analysisRaw;
     }
-    const original = report.state?.analysis?.originalResult;
-    if (typeof original === "string" && original.trim()) {
-        return original;
+
+    const analysisOriginal = report.state?.analysis?.originalResult;
+    if (typeof analysisOriginal === "string" && analysisOriginal.trim()) {
+        return analysisOriginal;
     }
+
+    const staticReportObject = report.state?.analysis?.staticReport;
+    if (staticReportObject && typeof staticReportObject === "object") {
+        try {
+            return JSON.stringify(staticReportObject);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify static report", error);
+        }
+    }
+
+    return "";
+});
+
+const activeReportDifyRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report) return "";
+
+    const difyReport = report.state?.dify?.report;
+    if (typeof difyReport === "string" && difyReport.trim()) {
+        return difyReport;
+    }
+
+    const difyOriginal = report.state?.dify?.originalReport;
+    if (typeof difyOriginal === "string" && difyOriginal.trim()) {
+        return difyOriginal;
+    }
+
+    const difyChunks = report.state?.dify?.chunks;
+    if (Array.isArray(difyChunks) && difyChunks.length) {
+        try {
+            return JSON.stringify(difyChunks);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify dify chunks", error);
+        }
+    }
+
+    const analysisDify = report.state?.analysis?.difyReport;
+    if (analysisDify && typeof analysisDify === "object") {
+        try {
+            return JSON.stringify(analysisDify);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify analysis dify report", error);
+        }
+    }
+
     return "";
 });
 
@@ -813,10 +861,15 @@ function formatReportRawText(rawText) {
     return candidate;
 }
 
-const activeReportRawText = computed(() => formatReportRawText(activeReportRawSourceText.value));
-const activeReportRawValue = computed(() => parseReportRawValue(activeReportRawSourceText.value));
-const canExportActiveReportRaw = computed(() => activeReportRawValue.value.success);
-const isExportingActiveReportRawExcel = ref(false);
+const activeReportStaticRawText = computed(() => formatReportRawText(activeReportStaticRawSourceText.value));
+const activeReportStaticRawValue = computed(() => parseReportRawValue(activeReportStaticRawSourceText.value));
+const canExportActiveReportStaticRaw = computed(() => activeReportStaticRawValue.value.success);
+
+const activeReportDifyRawText = computed(() => formatReportRawText(activeReportDifyRawSourceText.value));
+const activeReportDifyRawValue = computed(() => parseReportRawValue(activeReportDifyRawSourceText.value));
+const canExportActiveReportDifyRaw = computed(() => activeReportDifyRawValue.value.success);
+
+const isExportingReportJsonExcel = ref(false);
 
 const canShowCodeIssues = computed(() => {
     const report = activeReport.value;
@@ -827,10 +880,14 @@ const canShowCodeIssues = computed(() => {
     return hasReportIssueLines.value;
 });
 
-const canShowRawIssues = computed(() => activeReportRawText.value.trim().length > 0);
+const canShowStaticReportJson = computed(() => activeReportStaticRawText.value.trim().length > 0);
+const canShowDifyReportJson = computed(() => activeReportDifyRawText.value.trim().length > 0);
 
 const shouldShowReportIssuesSection = computed(
-    () => Boolean(activeReportDetails.value) || canShowRawIssues.value
+    () =>
+        Boolean(activeReportDetails.value) ||
+        canShowStaticReportJson.value ||
+        canShowDifyReportJson.value
 );
 
 const activeReportIssueCount = computed(() => {
@@ -842,60 +899,99 @@ const activeReportIssueCount = computed(() => {
 });
 
 function setReportIssuesViewMode(mode) {
-    if (mode !== "code" && mode !== "raw") return;
+    if (!mode) return;
+    if (mode !== "code" && mode !== "static" && mode !== "dify") return;
     if (mode === reportIssuesViewMode.value) return;
     if (mode === "code" && !canShowCodeIssues.value) return;
-    if (mode === "raw" && !canShowRawIssues.value) return;
+    if (mode === "static" && !canShowStaticReportJson.value) return;
+    if (mode === "dify" && !canShowDifyReportJson.value) return;
     reportIssuesViewMode.value = mode;
 }
 
-watch(
-    activeReport,
-    (report) => {
-        if (!report) {
-            reportIssuesViewMode.value = "code";
-            return;
-        }
-        if (canShowCodeIssues.value) {
-            reportIssuesViewMode.value = "code";
-            return;
-        }
-        reportIssuesViewMode.value = activeReportRawText.value.trim() ? "raw" : "code";
+function ensureReportIssuesViewMode(preferred) {
+    const order = [];
+    if (preferred) {
+        order.push(preferred);
     }
-);
+    order.push("code", "static", "dify");
+
+    for (const mode of order) {
+        if (mode === "code" && canShowCodeIssues.value) {
+            if (reportIssuesViewMode.value !== "code") {
+                reportIssuesViewMode.value = "code";
+            }
+            return;
+        }
+        if (mode === "static" && canShowStaticReportJson.value) {
+            if (reportIssuesViewMode.value !== "static") {
+                reportIssuesViewMode.value = "static";
+            }
+            return;
+        }
+        if (mode === "dify" && canShowDifyReportJson.value) {
+            if (reportIssuesViewMode.value !== "dify") {
+                reportIssuesViewMode.value = "dify";
+            }
+            return;
+        }
+    }
+
+    if (reportIssuesViewMode.value !== "code") {
+        reportIssuesViewMode.value = "code";
+    }
+}
+
+watch(activeReport, (report) => {
+    if (!report) {
+        reportIssuesViewMode.value = "code";
+        return;
+    }
+    ensureReportIssuesViewMode("code");
+});
 
 watch(
-    [canShowCodeIssues, canShowRawIssues],
-    ([codeAvailable, rawAvailable]) => {
-        if (reportIssuesViewMode.value === "code" && !codeAvailable && rawAvailable) {
-            reportIssuesViewMode.value = "raw";
-        } else if (reportIssuesViewMode.value === "raw" && !rawAvailable && codeAvailable) {
-            reportIssuesViewMode.value = "code";
-        }
+    [canShowCodeIssues, canShowStaticReportJson, canShowDifyReportJson],
+    () => {
+        ensureReportIssuesViewMode(reportIssuesViewMode.value);
     },
     { immediate: true }
 );
 
-async function exportActiveReportRawToExcel() {
-    if (isExportingActiveReportRawExcel.value) return;
-    const raw = activeReportRawValue.value;
+function getReportJsonValueForMode(mode) {
+    if (mode === "dify") {
+        return activeReportDifyRawValue.value;
+    }
+    return activeReportStaticRawValue.value;
+}
+
+function getReportJsonLabel(mode) {
+    if (mode === "dify") {
+        return "Dify JSON";
+    }
+    return "靜態分析器 JSON";
+}
+
+async function exportActiveReportJsonToExcel(mode) {
+    if (isExportingReportJsonExcel.value) return;
+    const raw = getReportJsonValueForMode(mode);
     if (!raw.success) {
-        alert("原始資料不是有效的 JSON 格式，無法匯出 Excel。");
+        const label = getReportJsonLabel(mode);
+        alert(`${label} 不是有效的 JSON 格式，無法匯出 Excel。`);
         return;
     }
 
     try {
-        isExportingActiveReportRawExcel.value = true;
+        isExportingReportJsonExcel.value = true;
         const worksheet = buildWorksheetFromValue(raw.value);
         const blob = await createExcelBlobFromWorksheet(worksheet);
-        const fileName = buildActiveReportExcelFileName();
+        const fileName = buildActiveReportExcelFileName(mode);
         triggerBlobDownload(blob, fileName);
     } catch (error) {
-        console.error("[reports] Failed to export raw JSON to Excel", error);
+        console.error("[reports] Failed to export report JSON to Excel", error);
         const message = error?.message || String(error);
         alert(`匯出 Excel 失敗：${message}`);
     } finally {
-        isExportingActiveReportRawExcel.value = false;
+        isExportingReportJsonExcel.value = false;
     }
 }
 
@@ -1585,7 +1681,7 @@ function triggerBlobDownload(blob, fileName) {
     URL.revokeObjectURL(url);
 }
 
-function buildActiveReportExcelFileName() {
+function buildActiveReportExcelFileName(mode = "raw") {
     const report = activeReport.value;
     const parts = [];
     if (report?.project?.name) {
@@ -1601,7 +1697,15 @@ function buildActiveReportExcelFileName() {
     const base = parts.join("_") || "report";
     const safe = base.replace(/[\\/:*?"<>|]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
     const finalName = safe || "report";
-    return `${finalName}_raw.xlsx`;
+
+    let suffix = "raw";
+    if (mode === "static") {
+        suffix = "static";
+    } else if (mode === "dify") {
+        suffix = "dify";
+    }
+
+    return `${finalName}_${suffix}.xlsx`;
 }
 
 const CONTENT_TYPES_XML =
@@ -3583,16 +3687,25 @@ onBeforeUnmount(() => {
                                                         :disabled="!canShowCodeIssues"
                                                         @click="setReportIssuesViewMode('code')"
                                                     >
-                                                        代碼視圖
+                                                        報告預覽
                                                     </button>
                                                     <button
                                                         type="button"
                                                         class="reportIssuesToggleButton"
-                                                        :class="{ active: reportIssuesViewMode === 'raw' }"
-                                                        :disabled="!canShowRawIssues"
-                                                        @click="setReportIssuesViewMode('raw')"
+                                                        :class="{ active: reportIssuesViewMode === 'static' }"
+                                                        :disabled="!canShowStaticReportJson"
+                                                        @click="setReportIssuesViewMode('static')"
                                                     >
-                                                        原始資料
+                                                        靜態分析器 JSON
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        class="reportIssuesToggleButton"
+                                                        :class="{ active: reportIssuesViewMode === 'dify' }"
+                                                        :disabled="!canShowDifyReportJson"
+                                                        @click="setReportIssuesViewMode('dify')"
+                                                    >
+                                                        Dify JSON
                                                     </button>
                                                 </div>
                                             </div>
@@ -3681,25 +3794,45 @@ onBeforeUnmount(() => {
                                                     </template>
                                                     <p v-else class="reportIssuesEmpty">此報告不支援結構化檢視。</p>
                                                 </template>
-                                                <template v-else-if="reportIssuesViewMode === 'raw'">
-                                                    <div v-if="activeReportRawText.trim().length" class="reportRow">
-                                                        <div v-if="canExportActiveReportRaw" class="reportRowActions">
+                                                <template v-else-if="reportIssuesViewMode === 'static'">
+                                                    <div v-if="activeReportStaticRawText.trim().length" class="reportRow">
+                                                        <div v-if="canExportActiveReportStaticRaw" class="reportRowActions">
                                                             <button
                                                                 type="button"
                                                                 class="reportRowActionButton"
-                                                                :disabled="isExportingActiveReportRawExcel"
-                                                                @click="exportActiveReportRawToExcel"
+                                                                :disabled="isExportingReportJsonExcel"
+                                                                @click="exportActiveReportJsonToExcel('static')"
                                                             >
-                                                                <span v-if="isExportingActiveReportRawExcel">匯出中…</span>
+                                                                <span v-if="isExportingReportJsonExcel">匯出中…</span>
                                                                 <span v-else>匯出 Excel</span>
                                                             </button>
                                                         </div>
-                                                        <pre class="reportRowContent codeScroll themed-scrollbar">{{ activeReportRawText }}</pre>
-                                                        <p v-if="!canExportActiveReportRaw" class="reportRowNotice">
-                                                            原始資料不是有效的 JSON 格式，因此無法匯出 Excel。
+                                                        <pre class="reportRowContent codeScroll themed-scrollbar">{{ activeReportStaticRawText }}</pre>
+                                                        <p v-if="!canExportActiveReportStaticRaw" class="reportRowNotice">
+                                                            靜態分析器 JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
                                                         </p>
                                                     </div>
-                                                    <p v-else class="reportIssuesEmpty">尚未取得原始報告內容。</p>
+                                                    <p v-else class="reportIssuesEmpty">尚未取得靜態分析器報告內容。</p>
+                                                </template>
+                                                <template v-else-if="reportIssuesViewMode === 'dify'">
+                                                    <div v-if="activeReportDifyRawText.trim().length" class="reportRow">
+                                                        <div v-if="canExportActiveReportDifyRaw" class="reportRowActions">
+                                                            <button
+                                                                type="button"
+                                                                class="reportRowActionButton"
+                                                                :disabled="isExportingReportJsonExcel"
+                                                                @click="exportActiveReportJsonToExcel('dify')"
+                                                            >
+                                                                <span v-if="isExportingReportJsonExcel">匯出中…</span>
+                                                                <span v-else>匯出 Excel</span>
+                                                            </button>
+                                                        </div>
+                                                        <pre class="reportRowContent codeScroll themed-scrollbar">{{ activeReportDifyRawText }}</pre>
+                                                        <p v-if="!canExportActiveReportDifyRaw" class="reportRowNotice">
+                                                            Dify JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
+                                                        </p>
+                                                    </div>
+                                                    <p v-else class="reportIssuesEmpty">尚未取得 Dify 報告內容。</p>
                                                 </template>
                                             </div>
                                         </section>
