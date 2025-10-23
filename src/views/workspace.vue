@@ -4202,7 +4202,7 @@ body,
     flex-direction: column;
     gap: 12px;
     min-height: 0;
-    overflow: hidden;
+    overflow: auto;
     background: #191919;
     border: 1px solid #323232;
     border-radius: 0;
