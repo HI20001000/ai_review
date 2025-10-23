@@ -2797,6 +2797,52 @@ async function previewReportTreeFile(projectId, path) {
     }
 }
 
+async function previewReportTreeFile(projectId, path) {
+    const projectKey = normaliseProjectId(projectId);
+    if (!projectKey || !path) return;
+
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const project = projectList.find(
+        (item) => normaliseProjectId(item.id) === projectKey
+    );
+    if (!project) return;
+
+    if (isTreeCollapsed.value) {
+        isTreeCollapsed.value = false;
+    }
+
+    if (selectedProjectId.value !== project.id) {
+        await openProject(project);
+    } else if (!Array.isArray(tree.value) || tree.value.length === 0) {
+        await openProject(project);
+    }
+
+    const entry = ensureReportTreeEntry(project.id);
+    if (entry && !entry.nodes.length && !entry.loading) {
+        loadReportTreeForProject(project.id);
+    }
+
+    const searchNodes = (entry && entry.nodes && entry.nodes.length)
+        ? entry.nodes
+        : tree.value;
+    let targetNode = findTreeNodeByPath(searchNodes, path);
+    if (!targetNode) {
+        const name = path.split("/").pop() || path;
+        targetNode = { type: "file", path, name, mime: "" };
+    }
+
+    treeStore.selectTreeNode(path);
+    try {
+        await treeStore.openNode(targetNode);
+    } catch (error) {
+        console.error("[Workspace] Failed to preview file from report tree", {
+            projectId: project.id,
+            path,
+            error
+        });
+    }
+}
+
 async function generateReportForFile(project, node, options = {}) {
     const { autoSelect = true, silent = false } = options;
     if (!project || !node || node.type !== "file") {
@@ -3704,6 +3750,63 @@ onBeforeUnmount(() => {
                                                 >{{ activeReportDetails.dmlReport.reportText }}</pre>
                                             </section>
                                         </div>
+
+                                        <section
+                                            v-if="activeReportDetails?.dmlReport"
+                                            class="reportDmlSection"
+                                        >
+                                            <div class="reportDmlHeader">
+                                                <h4>DML 提示詞分析</h4>
+                                                <span
+                                                    v-if="activeReportDetails.dmlReport.status"
+                                                    class="reportDmlStatus"
+                                                >
+                                                    {{ activeReportDetails.dmlReport.status }}
+                                                </span>
+                                                <span
+                                                    v-if="activeReportDetails.dmlReport.generatedAt"
+                                                    class="reportDmlTimestamp"
+                                                >
+                                                    產生於 {{ activeReportDetails.dmlReport.generatedAt }}
+                                                </span>
+                                            </div>
+                                            <p
+                                                v-if="activeReportDetails.dmlReport.error"
+                                                class="reportDmlError"
+                                            >
+                                                {{ activeReportDetails.dmlReport.error }}
+                                            </p>
+                                            <div
+                                                v-if="activeReportDetails.dmlReport.segments?.length"
+                                                class="reportDmlSegments"
+                                            >
+                                                <details
+                                                    v-for="segment in activeReportDetails.dmlReport.segments"
+                                                    :key="segment.key"
+                                                    class="reportDmlSegment"
+                                                >
+                                                    <summary>
+                                                        第 {{ segment.index }} 段
+                                                        <template v-if="segment.startLine">
+                                                            （第 {{ segment.startLine }} 行起
+                                                            <template v-if="segment.endLine">，至第 {{ segment.endLine }} 行止</template>
+                                                            ）
+                                                        </template>
+                                                    </summary>
+                                                    <pre class="reportDmlSql codeScroll themed-scrollbar">{{ segment.sql }}</pre>
+                                                    <pre
+                                                        v-if="segment.analysis"
+                                                        class="reportDmlAnalysis codeScroll themed-scrollbar"
+                                                    >{{ segment.analysis }}</pre>
+                                                </details>
+                                            </div>
+                                            <p v-else class="reportDmlEmpty">尚未取得 DML 拆分結果。</p>
+                                            <pre
+                                                v-if="activeReportDetails.dmlReport.reportText"
+                                                class="reportDmlSummary codeScroll themed-scrollbar"
+                                            >{{ activeReportDetails.dmlReport.reportText }}</pre>
+                                        </section>
+
 
                                         <section class="reportIssuesSection" v-if="shouldShowReportIssuesSection">
                                             <div class="reportIssuesHeader">
