@@ -285,7 +285,7 @@ function handlePointerDown(event) {
 
 .projectItem.active {
     border-color: var(--panel-border-strong);
-    background: rgba(148, 163, 184, 0.18);
+    background: rgba(82, 82, 91, 0.32);
 }
 
 .projectHeader {

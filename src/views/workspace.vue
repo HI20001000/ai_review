@@ -3577,7 +3577,6 @@ onBeforeUnmount(() => {
                                 </div>
                                 <template v-else>
                                     <div v-if="hasStructuredReport" class="reportStructured">
-                                        <div class="reportStructuredPrimary">
                                             <section class="reportSummaryGrid">
     <div
         v-if="activeReportDetails?.sourceSummaries?.length"
@@ -3800,13 +3799,10 @@ onBeforeUnmount(() => {
                                                     class="reportDmlSummary codeScroll themed-scrollbar"
                                                 >{{ activeReportDetails.dmlReport.reportText }}</pre>
                                             </section>
-                                        </div>
-
-                                        <div
+                                        <section
                                             v-if="shouldShowReportIssuesSection"
-                                            class="reportStructuredSecondary"
+                                            class="reportIssuesSection"
                                         >
-                                            <section class="reportIssuesSection">
                                                 <div class="reportIssuesHeader">
                                                     <div class="reportIssuesHeaderInfo">
                                                         <h4>問題清單</h4>
@@ -3982,7 +3978,6 @@ onBeforeUnmount(() => {
                                                 </template>
                                             </div>
                                             </section>
-                                        </div>
                                         <p v-else class="reportIssuesEmpty">未檢測到任何問題。</p>
 
                                     </div>
