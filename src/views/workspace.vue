@@ -3705,12 +3705,16 @@ onBeforeUnmount(() => {
                                             </section>
                                         </div>
 
-                                        <section class="reportIssuesSection" v-if="shouldShowReportIssuesSection">
-                                            <div class="reportIssuesHeader">
-                                                <div class="reportIssuesHeaderInfo">
-                                                    <h4>問題清單</h4>
-                                                    <span class="reportIssuesTotal">
-                                                        <template v-if="activeReportIssueCount !== null">
+                                        <div
+                                            v-if="shouldShowReportIssuesSection"
+                                            class="reportStructuredSecondary"
+                                        >
+                                            <section class="reportIssuesSection">
+                                                <div class="reportIssuesHeader">
+                                                    <div class="reportIssuesHeaderInfo">
+                                                        <h4>問題清單</h4>
+                                                        <span class="reportIssuesTotal">
+                                                            <template v-if="activeReportIssueCount !== null">
                                                             共 {{ activeReportIssueCount }} 項
                                                         </template>
                                                         <template v-else>—</template>
@@ -3745,35 +3749,35 @@ onBeforeUnmount(() => {
                                                         Dify JSON
                                                     </button>
                                                 </div>
-                                            </div>
-                                            <div class="reportIssuesContent">
-                                                <template v-if="reportIssuesViewMode === 'code'">
-                                                    <template v-if="activeReportDetails">
-                                                        <div
-                                                            v-if="activeReport.state.sourceLoading"
-                                                            class="reportIssuesNotice"
-                                                        >
-                                                            正在載入原始碼…
-                                                        </div>
-                                                        <div
-                                                            v-else-if="activeReport.state.sourceError"
-                                                            class="reportIssuesNotice reportIssuesNotice--error"
-                                                        >
-                                                            無法載入檔案內容：{{ activeReport.state.sourceError }}
-                                                        </div>
-                                                        <template v-else>
+                                                </div>
+                                                <div class="reportIssuesContent">
+                                                    <template v-if="reportIssuesViewMode === 'code'">
+                                                        <template v-if="activeReportDetails">
                                                             <div
-                                                                v-if="shouldShowDifyUnavailableNotice"
-                                                                class="reportIssuesNotice reportIssuesNotice--warning"
+                                                                v-if="activeReport.state.sourceLoading"
+                                                                class="reportIssuesNotice"
                                                             >
-                                                                {{ reportDifyUnavailableNotice }}
+                                                                正在載入原始碼…
                                                             </div>
                                                             <div
-                                                                v-if="hasReportIssueLines"
-                                                                class="pvBox codeBox reportIssuesBox"
+                                                                v-else-if="activeReport.state.sourceError"
+                                                                class="reportIssuesNotice reportIssuesNotice--error"
                                                             >
-                                                                <div class="codeScroll themed-scrollbar reportIssueCodeScroll">
-                                                                    <div class="codeEditor">
+                                                                無法載入檔案內容：{{ activeReport.state.sourceError }}
+                                                            </div>
+                                                            <template v-else>
+                                                                <div
+                                                                    v-if="shouldShowDifyUnavailableNotice"
+                                                                    class="reportIssuesNotice reportIssuesNotice--warning"
+                                                                >
+                                                                    {{ reportDifyUnavailableNotice }}
+                                                                </div>
+                                                                <div
+                                                                    v-if="hasReportIssueLines"
+                                                                    class="pvBox codeBox reportIssuesBox"
+                                                                >
+                                                                    <div class="codeScroll themed-scrollbar reportIssueCodeScroll">
+                                                                        <div class="codeEditor">
                                                                         <div
                                                                             v-for="line in reportIssueLines"
                                                                             :key="line.key"
@@ -3880,7 +3884,8 @@ onBeforeUnmount(() => {
                                                     <p v-else class="reportIssuesEmpty">尚未取得 Dify 報告內容。</p>
                                                 </template>
                                             </div>
-                                        </section>
+                                            </section>
+                                        </div>
                                         <p v-else class="reportIssuesEmpty">未檢測到任何問題。</p>
 
                                     </div>
@@ -4331,6 +4336,20 @@ body,
 }
 
 .reportStructuredPrimary {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-height: 0;
+}
+
+.reportStructuredPrimary {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-height: 0;
+}
+
+.reportStructuredSecondary {
     display: flex;
     flex-direction: column;
     gap: 20px;
