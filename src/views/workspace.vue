@@ -1599,6 +1599,7 @@ function findCategoryKey(items) {
                 info.priority = -Infinity;
             }
         }
+        return rows;
     }
 
     const candidates = [];
@@ -3987,18 +3988,24 @@ onBeforeUnmount(() => {
                                                                 ）
                                                             </template>
                                                         </summary>
-                                                        <pre class="reportDmlSql codeScroll themed-scrollbar">{{ segment.sql }}</pre>
+                                                        <pre class="reportDmlSql codeScroll themed-scrollbar">
+                                                            {{ segment.sql }}
+                                                        </pre>
                                                         <pre
                                                             v-if="segment.analysis"
                                                             class="reportDmlAnalysis codeScroll themed-scrollbar"
-                                                        >{{ segment.analysis }}</pre>
+                                                        >
+                                                            {{ segment.analysis }}
+                                                        </pre>
                                                     </details>
                                                 </div>
                                                 <p v-else class="reportDmlEmpty">尚未取得 DML 拆分結果。</p>
                                                 <pre
                                                     v-if="activeReportDetails.dmlReport.reportText"
                                                     class="reportDmlSummary codeScroll themed-scrollbar"
-                                                >{{ activeReportDetails.dmlReport.reportText }}</pre>
+                                                >
+                                                    {{ activeReportDetails.dmlReport.reportText }}
+                                                </pre>
                                             </section>
                                         <section
                                             v-if="shouldShowReportIssuesSection"
