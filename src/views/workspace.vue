@@ -3821,26 +3821,62 @@ onBeforeUnmount(() => {
                                                 v-if="activeReportDetails?.ruleBreakdown?.length"
                                                 class="reportSummaryCard"
                                             >
-                                                <span class="reportSummaryLabel">規則分佈</span>
-                                                <ul class="reportSummaryList">
-                                                    <li
-                                                        v-for="item in activeReportDetails.ruleBreakdown"
-                                                        :key="`${item.label}-${item.count}`"
+                                                <div class="reportStaticHeader">
+                                                    <h4>靜態分析器</h4>
+                                                    <span
+                                                        v-if="activeReportDetails?.staticMetadata?.engine"
+                                                        class="reportStaticEngine"
                                                     >
-                                                        <span class="reportSummaryItemLabel">{{ item.label }}</span>
-                                                        <span class="reportSummaryItemValue">{{ item.count }}</span>
-                                                    </li>
-                                                </ul>
-                                            </div>
-                                            <div
-                                                v-if="activeReportDetails?.severityBreakdown?.length"
-                                                class="reportSummaryCard"
+                                                        引擎：{{ activeReportDetails.staticMetadata.engine }}
+                                                    </span>
+                                                    <span
+                                                        v-else-if="activeReportDetails?.staticSummary?.analysis_source"
+                                                        class="reportStaticEngine"
+                                                    >
+                                                        來源：{{ activeReportDetails.staticSummary.analysis_source }}
+                                                    </span>
+                                                </div>
+                                                <div
+                                                    v-if="activeReportDetails?.staticSummaryDetails?.length"
+                                                    class="reportStaticBlock"
+                                                >
+                                                    <h5>摘要資訊</h5>
+                                                    <ul class="reportStaticList">
+                                                        <li
+                                                            v-for="item in activeReportDetails.staticSummaryDetails"
+                                                            :key="`static-summary-${item.label}-${item.value}`"
+                                                        >
+                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
+                                                        </li>
+                                                    </ul>
+                                                </div>
+                                                <div
+                                                    v-if="activeReportDetails?.staticMetadataDetails?.length"
+                                                    class="reportStaticBlock"
+                                                >
+                                                    <h5>中繼資料</h5>
+                                                    <ul class="reportStaticList">
+                                                        <li
+                                                            v-for="item in activeReportDetails.staticMetadataDetails"
+                                                            :key="`static-metadata-${item.label}-${item.value}`"
+                                                        >
+                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
+                                                        </li>
+                                                    </ul>
+                                                </div>
+                                            </section>
+
+                                            <section
+                                                v-if="activeReportDetails?.dmlReport"
+                                                class="reportDmlSection"
                                             >
-                                                <span class="reportSummaryLabel">嚴重度</span>
-                                                <ul class="reportSummaryList">
-                                                    <li
-                                                        v-for="item in activeReportDetails.severityBreakdown"
-                                                        :key="`${item.label}-${item.count}`"
+                                                <div class="reportDmlHeader">
+                                                    <h4>DML 提示詞分析</h4>
+                                                    <span
+                                                        v-if="activeReportDetails.dmlReport.status"
+                                                        class="reportDmlStatus"
                                                     >
                                                         <span class="reportSummaryItemLabel">{{ item.label }}</span>
                                                         <span class="reportSummaryItemValue">{{ item.count }}</span>
@@ -4577,10 +4613,24 @@ body,
 }
 
 .reportStructured {
+    display: grid;
+    grid-auto-flow: row;
+    row-gap: 20px;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.reportStructuredPrimary {
     display: flex;
     flex-direction: column;
     gap: 20px;
-    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.reportStructuredSecondary {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
     min-height: 0;
 }
 
