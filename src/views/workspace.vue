@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, watch, onMounted, onBeforeUnmount, computed, nextTick } from "vue";
+import JSZip from "jszip";
 import { usePreview } from "../scripts/composables/usePreview.js";
 import { useTreeStore } from "../scripts/composables/useTreeStore.js";
 import { useProjectsStore } from "../scripts/composables/useProjectsStore.js";
@@ -124,6 +125,9 @@ const reportBatchStates = reactive({});
 const activeReportTarget = ref(null);
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
+const shouldPrepareReportTrees = computed(
+    () => isProjectToolActive.value || isReportToolActive.value
+);
 const panelMode = computed(() => (isReportToolActive.value ? "reports" : "projects"));
 const reportProjectEntries = computed(() => {
     const list = Array.isArray(projects.value) ? projects.value : [];
@@ -144,24 +148,42 @@ const reportProjectEntries = computed(() => {
     });
 });
 
+const activePreviewTarget = computed(() => {
+    const projectId = normaliseProjectId(selectedProjectId.value);
+    const path = activeTreePath.value || "";
+    if (!projectId || !path) return null;
+    return { projectId, path };
+});
+
 const reportPanelConfig = computed(() => {
-    if (!isReportToolActive.value) {
-        return null;
-    }
+    const viewMode = isReportToolActive.value ? "reports" : "projects";
+    const showProjectActions = isReportToolActive.value;
+    const showIssueBadge = isReportToolActive.value;
+    const showFileActions = isReportToolActive.value;
+    const allowSelectWithoutReport = !isReportToolActive.value;
+    const projectIssueGetter = showIssueBadge ? getProjectIssueCount : null;
+
     return {
+        panelTitle: viewMode === "reports" ? "代碼審查" : "Project Files",
+        showProjectActions,
+        showIssueBadge,
+        showFileActions,
+        allowSelectWithoutReport,
         entries: reportProjectEntries.value,
         normaliseProjectId,
         isNodeExpanded: isReportNodeExpanded,
         toggleNode: toggleReportNode,
         getReportState: getReportStateForFile,
         onGenerate: generateReportForFile,
-        onSelect: selectReport,
+        onSelect: viewMode === "reports" ? selectReport : openProjectFileFromReportTree,
         getStatusLabel,
         onReloadProject: loadReportTreeForProject,
         onGenerateProject: generateProjectReports,
         getProjectBatchState,
-        getProjectIssueCount,
-        activeTarget: activeReportTarget.value
+        getProjectIssueCount: projectIssueGetter,
+        activeTarget: isReportToolActive.value
+            ? activeReportTarget.value
+            : activePreviewTarget.value
     };
 });
 const readyReports = computed(() => {
@@ -240,8 +262,20 @@ const activeReportDetails = computed(() => {
     const parsed = report.state.parsedReport;
     if (!parsed || typeof parsed !== "object") return null;
 
-    const issues = Array.isArray(parsed.issues) ? parsed.issues : [];
-    const summary = parsed.summary;
+    const reports = parsed.reports && typeof parsed.reports === "object" ? parsed.reports : null;
+    const staticReport = reports?.static_analyzer || reports?.staticAnalyzer || null;
+    const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
+
+    const issues = Array.isArray(staticReport?.issues)
+        ? staticReport.issues
+        : Array.isArray(parsed.issues)
+        ? parsed.issues
+        : [];
+    const rawStaticSummary =
+        staticReport && typeof staticReport === "object" && staticReport.summary !== undefined
+            ? staticReport.summary
+            : null;
+    const summary = (rawStaticSummary ?? parsed.summary) ?? null;
 
     let total = report.state.issueSummary?.totalIssues;
     if (!Number.isFinite(total)) {
@@ -268,6 +302,16 @@ const activeReportDetails = computed(() => {
 
     const summaryText = typeof summary === "string" ? summary.trim() : "";
     const summaryObject = summary && typeof summary === "object" ? summary : null;
+    const staticSummaryObject =
+        rawStaticSummary && typeof rawStaticSummary === "object" ? rawStaticSummary : summaryObject;
+    const staticSummaryDetails = buildSummaryDetailList(staticSummaryObject, {
+        omitKeys: ["by_rule", "byRule", "sources"]
+    });
+    const staticMetadata =
+        staticReport && typeof staticReport.metadata === "object" && !Array.isArray(staticReport.metadata)
+            ? staticReport.metadata
+            : null;
+    const staticMetadataDetails = buildSummaryDetailList(staticMetadata);
 
     const severityCounts = new Map();
     const ruleCounts = new Map();
@@ -352,7 +396,8 @@ const activeReportDetails = computed(() => {
 
             const ruleId = typeof ruleCandidate === "string" ? ruleCandidate.trim() : String(ruleCandidate ?? "").trim();
             const message = typeof messageCandidate === "string" ? messageCandidate.trim() : String(messageCandidate ?? "").trim();
-            const severityRaw = typeof severityCandidate === "string" ? severityCandidate.trim() : String(severityCandidate ?? "").trim();
+            const severityRaw =
+                typeof severityCandidate === "string" ? severityCandidate.trim() : String(severityCandidate ?? "").trim();
             const severityKey = severityRaw ? severityRaw.toUpperCase() : "未標示";
             let severityClass = "info";
             if (!severityRaw || severityKey === "未標示") {
@@ -523,16 +568,118 @@ const activeReportDetails = computed(() => {
 
     ruleBreakdown.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 
+    const globalSummary = parsed.summary && typeof parsed.summary === "object" ? parsed.summary : null;
+    const combinedSummaryDetails = buildSummaryDetailList(globalSummary, {
+        omitKeys: ["sources", "by_rule", "byRule"]
+    });
+    const sourceSummaries = [];
+    if (globalSummary?.sources && typeof globalSummary.sources === "object") {
+        for (const [key, value] of Object.entries(globalSummary.sources)) {
+            if (!value || typeof value !== "object") continue;
+            const keyLower = key.toLowerCase();
+            let label = key;
+            if (keyLower === "static_analyzer" || keyLower === "staticanalyzer") {
+                label = "靜態分析器";
+            } else if (keyLower === "dml_prompt" || keyLower === "dmlprompt") {
+                label = "DML 提示詞分析";
+            }
+            const metrics = [];
+            if (value.total_issues !== undefined || value.totalIssues !== undefined) {
+                const totalValue = Number(value.total_issues ?? value.totalIssues ?? 0);
+                metrics.push({ label: "問題數", value: Number.isFinite(totalValue) ? totalValue : 0 });
+            }
+            if (value.by_rule || value.byRule) {
+                const byRuleEntries = Object.entries(value.by_rule || value.byRule || {});
+                metrics.push({ label: "規則數", value: byRuleEntries.length });
+            }
+            if (value.total_segments !== undefined || value.totalSegments !== undefined) {
+                const totalSegments = Number(value.total_segments ?? value.totalSegments ?? 0);
+                metrics.push({ label: "拆分語句", value: Number.isFinite(totalSegments) ? totalSegments : 0 });
+            }
+            if (value.analyzed_segments !== undefined || value.analyzedSegments !== undefined) {
+                const analysedSegments = Number(value.analyzed_segments ?? value.analyzedSegments ?? 0);
+                metrics.push({ label: "已分析段數", value: Number.isFinite(analysedSegments) ? analysedSegments : 0 });
+            }
+            const status = typeof value.status === "string" ? value.status : "";
+            const errorMessage =
+                typeof value.error_message === "string"
+                    ? value.error_message
+                    : typeof value.errorMessage === "string"
+                    ? value.errorMessage
+                    : "";
+            const generatedAt = value.generated_at || value.generatedAt || null;
+            sourceSummaries.push({ key, label, metrics, status, errorMessage, generatedAt });
+        }
+    }
+
+    let dmlDetails = null;
+    if (dmlReport && typeof dmlReport === "object") {
+        const dmlSummary =
+            dmlReport.summary && typeof dmlReport.summary === "object" ? dmlReport.summary : null;
+        const dmlChunks = Array.isArray(dmlReport.chunks) ? dmlReport.chunks : [];
+        const dmlSegments = Array.isArray(dmlReport.segments)
+            ? dmlReport.segments.map((segment, index) => {
+                  const chunk = dmlChunks[index] || null;
+                  const sql = typeof segment?.text === "string" ? segment.text : String(segment?.sql || "");
+                  const analysisText = typeof chunk?.answer === "string" ? chunk.answer : "";
+                  return {
+                      key: `${index}-segment`,
+                      index: Number.isFinite(Number(segment?.index)) ? Number(segment.index) : index + 1,
+                      sql,
+                      startLine: Number.isFinite(Number(segment?.startLine)) ? Number(segment.startLine) : null,
+                      endLine: Number.isFinite(Number(segment?.endLine)) ? Number(segment.endLine) : null,
+                      startColumn: Number.isFinite(Number(segment?.startColumn)) ? Number(segment.startColumn) : null,
+                      endColumn: Number.isFinite(Number(segment?.endColumn)) ? Number(segment.endColumn) : null,
+                      analysis: analysisText,
+                      raw: chunk?.raw || null
+                  };
+              })
+            : [];
+        const aggregatedText = typeof dmlReport.report === "string" ? dmlReport.report.trim() : "";
+        const errorMessage =
+            typeof dmlReport.error === "string"
+                ? dmlReport.error
+                : typeof dmlSummary?.error_message === "string"
+                ? dmlSummary.error_message
+                : typeof dmlSummary?.errorMessage === "string"
+                ? dmlSummary.errorMessage
+                : "";
+        const status = typeof dmlSummary?.status === "string" ? dmlSummary.status : "";
+        const generatedAt = dmlReport.generatedAt || dmlSummary?.generated_at || dmlSummary?.generatedAt || null;
+        const conversationId =
+            typeof dmlReport.conversationId === "string" ? dmlReport.conversationId : "";
+        dmlDetails = {
+            summary: dmlSummary,
+            segments: dmlSegments,
+            reportText: aggregatedText,
+            error: errorMessage,
+            status,
+            generatedAt,
+            conversationId
+        };
+    }
+
     return {
-        totalIssues: Number.isFinite(total) ? total : null,
-        summaryText,
+        totalIssues: Number.isFinite(total) ? Number(total) : null,
+        summary,
         summaryObject,
+        summaryText,
+        staticSummary: staticSummaryObject,
+        staticSummaryDetails,
+        staticMetadata,
+        staticMetadataDetails,
         issues: normalisedIssues,
         severityBreakdown,
         ruleBreakdown,
-        raw: parsed
+        raw: parsed,
+        sourceSummaries,
+        combinedSummary: parsed.summary && typeof parsed.summary === "object" ? parsed.summary : null,
+        combinedSummaryDetails,
+        staticReport,
+        dmlReport: dmlDetails
     };
 });
+
 
 const hasStructuredReport = computed(() => Boolean(activeReportDetails.value));
 const activeReportSourceText = computed(() => {
@@ -624,22 +771,155 @@ const reportIssueLines = computed(() => {
 const hasReportIssueLines = computed(() => reportIssueLines.value.length > 0);
 
 const reportIssuesViewMode = ref("code");
+const structuredReportViewMode = ref("combined");
 
-const activeReportRawSourceText = computed(() => {
+const canShowStructuredSummary = computed(() => Boolean(activeReportDetails.value));
+
+const canShowStructuredStatic = computed(() => {
+    const details = activeReportDetails.value;
+    if (!details) return false;
+
+    if (details.staticReport && typeof details.staticReport === "object") {
+        if (Object.keys(details.staticReport).length > 0) {
+            return true;
+        }
+    }
+
+    if (Array.isArray(details.staticSummaryDetails) && details.staticSummaryDetails.length) {
+        return true;
+    }
+
+    if (Array.isArray(details.staticMetadataDetails) && details.staticMetadataDetails.length) {
+        return true;
+    }
+
+    if (details.staticSummary) {
+        if (typeof details.staticSummary === "string") {
+            if (details.staticSummary.trim().length) return true;
+        } else if (typeof details.staticSummary === "object") {
+            if (Object.keys(details.staticSummary).length) return true;
+        }
+    }
+
+    if (details.staticMetadata && typeof details.staticMetadata === "object") {
+        if (Object.keys(details.staticMetadata).length) {
+            return true;
+        }
+    }
+
+    return false;
+});
+
+const canShowStructuredDml = computed(() => {
+    const report = activeReportDetails.value?.dmlReport;
+    if (!report) return false;
+
+    if (Array.isArray(report.segments) && report.segments.length) {
+        return true;
+    }
+
+    if (typeof report.reportText === "string" && report.reportText.trim().length) {
+        return true;
+    }
+
+    if (typeof report.error === "string" && report.error.trim().length) {
+        return true;
+    }
+
+    if (typeof report.status === "string" && report.status.trim().length) {
+        return true;
+    }
+
+    if (report.generatedAt) {
+        return true;
+    }
+
+    return false;
+});
+
+const hasStructuredReportToggle = computed(
+    () => canShowStructuredSummary.value || canShowStructuredStatic.value || canShowStructuredDml.value
+);
+
+const activeReportStaticRawSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
-    const enrichedText = typeof report.state?.report === "string" ? report.state.report : "";
-    if (enrichedText && enrichedText.trim()) {
-        return enrichedText;
+
+    const direct = report.state?.rawReport;
+    if (typeof direct === "string" && direct.trim()) {
+        return direct;
     }
-    const analysisText = report.state?.analysis?.result;
-    if (typeof analysisText === "string" && analysisText.trim()) {
-        return analysisText;
+
+    const analysisRaw = report.state?.analysis?.rawReport;
+    if (typeof analysisRaw === "string" && analysisRaw.trim()) {
+        return analysisRaw;
     }
-    const original = report.state?.analysis?.originalResult;
-    if (typeof original === "string" && original.trim()) {
-        return original;
+
+    const analysisOriginal = report.state?.analysis?.originalResult;
+    if (typeof analysisOriginal === "string" && analysisOriginal.trim()) {
+        return analysisOriginal;
     }
+
+    const staticReportObject = report.state?.analysis?.staticReport;
+    if (staticReportObject && typeof staticReportObject === "object") {
+        try {
+            return JSON.stringify(staticReportObject);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify static report", error);
+        }
+    }
+
+    const parsedReport = report.state?.parsedReport;
+    if (parsedReport && typeof parsedReport === "object") {
+        const reports =
+            parsedReport.reports && typeof parsedReport.reports === "object" ? parsedReport.reports : null;
+        if (reports) {
+            const staticReport = reports.static_analyzer || reports.staticAnalyzer;
+            if (staticReport && typeof staticReport === "object") {
+                try {
+                    return JSON.stringify(staticReport);
+                } catch (error) {
+                    console.warn("[reports] Failed to stringify parsed static report", error);
+                }
+            }
+        }
+    }
+
+    return "";
+});
+
+const activeReportDifyRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report) return "";
+
+    const difyReport = report.state?.dify?.report;
+    if (typeof difyReport === "string" && difyReport.trim()) {
+        return difyReport;
+    }
+
+    const difyOriginal = report.state?.dify?.originalReport;
+    if (typeof difyOriginal === "string" && difyOriginal.trim()) {
+        return difyOriginal;
+    }
+
+    const difyChunks = report.state?.dify?.chunks;
+    if (Array.isArray(difyChunks) && difyChunks.length) {
+        try {
+            return JSON.stringify(difyChunks);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify dify chunks", error);
+        }
+    }
+
+    const analysisDify = report.state?.analysis?.difyReport;
+    if (analysisDify && typeof analysisDify === "object") {
+        try {
+            return JSON.stringify(analysisDify);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify analysis dify report", error);
+        }
+    }
+
     return "";
 });
 
@@ -666,7 +946,15 @@ function formatReportRawText(rawText) {
     return candidate;
 }
 
-const activeReportRawText = computed(() => formatReportRawText(activeReportRawSourceText.value));
+const activeReportStaticRawText = computed(() => formatReportRawText(activeReportStaticRawSourceText.value));
+const activeReportStaticRawValue = computed(() => parseReportRawValue(activeReportStaticRawSourceText.value));
+const canExportActiveReportStaticRaw = computed(() => activeReportStaticRawValue.value.success);
+
+const activeReportDifyRawText = computed(() => formatReportRawText(activeReportDifyRawSourceText.value));
+const activeReportDifyRawValue = computed(() => parseReportRawValue(activeReportDifyRawSourceText.value));
+const canExportActiveReportDifyRaw = computed(() => activeReportDifyRawValue.value.success);
+
+const isExportingReportJsonExcel = ref(false);
 
 const canShowCodeIssues = computed(() => {
     const report = activeReport.value;
@@ -677,10 +965,50 @@ const canShowCodeIssues = computed(() => {
     return hasReportIssueLines.value;
 });
 
-const canShowRawIssues = computed(() => activeReportRawText.value.trim().length > 0);
+const canShowStaticReportJson = computed(() => activeReportStaticRawText.value.trim().length > 0);
+const canShowDifyReportJson = computed(() => activeReportDifyRawText.value.trim().length > 0);
+
+const activeReportDifyErrorMessage = computed(() => {
+    const report = activeReport.value;
+    if (!report) return "";
+
+    const direct = typeof report.state?.difyErrorMessage === "string" ? report.state.difyErrorMessage : "";
+    if (direct && direct.trim()) {
+        return direct.trim();
+    }
+
+    const nested = typeof report.state?.analysis?.difyErrorMessage === "string"
+        ? report.state.analysis.difyErrorMessage
+        : "";
+    if (nested && nested.trim()) {
+        return nested.trim();
+    }
+
+    return "";
+});
+
+const shouldShowDifyUnavailableNotice = computed(() => {
+    const report = activeReport.value;
+    if (!report) return false;
+    if (!canShowStaticReportJson.value) return false;
+    if (canShowDifyReportJson.value) return false;
+    return true;
+});
+
+const reportDifyUnavailableNotice = computed(() => {
+    if (!shouldShowDifyUnavailableNotice.value) return "";
+    const detail = activeReportDifyErrorMessage.value;
+    if (detail) {
+        return `無法連接 Dify 分析：${detail}。目前僅顯示靜態分析器報告。`;
+    }
+    return "無法連接 Dify 分析，僅顯示靜態分析器報告。";
+});
 
 const shouldShowReportIssuesSection = computed(
-    () => Boolean(activeReportDetails.value) || canShowRawIssues.value
+    () =>
+        Boolean(activeReportDetails.value) ||
+        canShowStaticReportJson.value ||
+        canShowDifyReportJson.value
 );
 
 const activeReportIssueCount = computed(() => {
@@ -692,39 +1020,910 @@ const activeReportIssueCount = computed(() => {
 });
 
 function setReportIssuesViewMode(mode) {
-    if (mode !== "code" && mode !== "raw") return;
+    if (!mode) return;
+    if (mode !== "code" && mode !== "static" && mode !== "dify") return;
     if (mode === reportIssuesViewMode.value) return;
     if (mode === "code" && !canShowCodeIssues.value) return;
-    if (mode === "raw" && !canShowRawIssues.value) return;
+    if (mode === "static" && !canShowStaticReportJson.value) return;
+    if (mode === "dify" && !canShowDifyReportJson.value) return;
     reportIssuesViewMode.value = mode;
 }
 
-watch(
-    activeReport,
-    (report) => {
-        if (!report) {
-            reportIssuesViewMode.value = "code";
-            return;
-        }
-        if (canShowCodeIssues.value) {
-            reportIssuesViewMode.value = "code";
-            return;
-        }
-        reportIssuesViewMode.value = activeReportRawText.value.trim() ? "raw" : "code";
+function setStructuredReportViewMode(mode) {
+    if (!mode) return;
+    if (mode !== "combined" && mode !== "static" && mode !== "dml") return;
+    if (mode === structuredReportViewMode.value) return;
+    if (mode === "combined" && !canShowStructuredSummary.value) return;
+    if (mode === "static" && !canShowStructuredStatic.value) return;
+    if (mode === "dml" && !canShowStructuredDml.value) return;
+    structuredReportViewMode.value = mode;
+}
+
+function ensureReportIssuesViewMode(preferred) {
+    const order = [];
+    if (preferred) {
+        order.push(preferred);
     }
-);
+    order.push("code", "static", "dify");
+
+    for (const mode of order) {
+        if (mode === "code" && canShowCodeIssues.value) {
+            if (reportIssuesViewMode.value !== "code") {
+                reportIssuesViewMode.value = "code";
+            }
+            return;
+        }
+        if (mode === "static" && canShowStaticReportJson.value) {
+            if (reportIssuesViewMode.value !== "static") {
+                reportIssuesViewMode.value = "static";
+            }
+            return;
+        }
+        if (mode === "dify" && canShowDifyReportJson.value) {
+            if (reportIssuesViewMode.value !== "dify") {
+                reportIssuesViewMode.value = "dify";
+            }
+            return;
+        }
+    }
+
+    if (reportIssuesViewMode.value !== "code") {
+        reportIssuesViewMode.value = "code";
+    }
+}
+
+function ensureStructuredReportViewMode(preferred) {
+    const order = [];
+    if (preferred) {
+        order.push(preferred);
+    }
+    order.push("combined", "static", "dml");
+
+    for (const mode of order) {
+        if (mode === "combined" && canShowStructuredSummary.value) {
+            if (structuredReportViewMode.value !== "combined") {
+                structuredReportViewMode.value = "combined";
+            }
+            return;
+        }
+        if (mode === "static" && canShowStructuredStatic.value) {
+            if (structuredReportViewMode.value !== "static") {
+                structuredReportViewMode.value = "static";
+            }
+            return;
+        }
+        if (mode === "dml" && canShowStructuredDml.value) {
+            if (structuredReportViewMode.value !== "dml") {
+                structuredReportViewMode.value = "dml";
+            }
+            return;
+        }
+    }
+
+    if (structuredReportViewMode.value !== "combined") {
+        structuredReportViewMode.value = "combined";
+    }
+}
+
+watch(activeReport, (report) => {
+    if (!report) {
+        reportIssuesViewMode.value = "code";
+        structuredReportViewMode.value = "combined";
+        return;
+    }
+    ensureReportIssuesViewMode("code");
+    ensureStructuredReportViewMode("combined");
+});
 
 watch(
-    [canShowCodeIssues, canShowRawIssues],
-    ([codeAvailable, rawAvailable]) => {
-        if (reportIssuesViewMode.value === "code" && !codeAvailable && rawAvailable) {
-            reportIssuesViewMode.value = "raw";
-        } else if (reportIssuesViewMode.value === "raw" && !rawAvailable && codeAvailable) {
-            reportIssuesViewMode.value = "code";
-        }
+    [canShowCodeIssues, canShowStaticReportJson, canShowDifyReportJson],
+    () => {
+        ensureReportIssuesViewMode(reportIssuesViewMode.value);
     },
     { immediate: true }
 );
+
+watch(
+    [canShowStructuredSummary, canShowStructuredStatic, canShowStructuredDml],
+    () => {
+        ensureStructuredReportViewMode(structuredReportViewMode.value);
+    },
+    { immediate: true }
+);
+
+function getReportJsonValueForMode(mode) {
+    if (mode === "dify") {
+        return activeReportDifyRawValue.value;
+    }
+    return activeReportStaticRawValue.value;
+}
+
+function getReportJsonLabel(mode) {
+    if (mode === "dify") {
+        return "Dify JSON";
+    }
+    return "靜態分析器 JSON";
+}
+
+async function exportActiveReportJsonToExcel(mode) {
+    if (isExportingReportJsonExcel.value) return;
+    const raw = getReportJsonValueForMode(mode);
+    if (!raw.success) {
+        const label = getReportJsonLabel(mode);
+        alert(`${label} 不是有效的 JSON 格式，無法匯出 Excel。`);
+        return;
+    }
+
+    try {
+        isExportingReportJsonExcel.value = true;
+        const worksheet = buildWorksheetFromValue(raw.value);
+        const blob = await createExcelBlobFromWorksheet(worksheet);
+        const fileName = buildActiveReportExcelFileName(mode);
+        triggerBlobDownload(blob, fileName);
+    } catch (error) {
+        console.error("[reports] Failed to export report JSON to Excel", error);
+        const message = error?.message || String(error);
+        alert(`匯出 Excel 失敗：${message}`);
+    } finally {
+        isExportingReportJsonExcel.value = false;
+    }
+}
+
+function parseReportRawValue(rawText) {
+    if (typeof rawText !== "string") {
+        return { success: false, value: null };
+    }
+    let candidate = rawText.trim();
+    if (!candidate) {
+        return { success: false, value: null };
+    }
+
+    const maxDepth = 3;
+    for (let depth = 0; depth < maxDepth; depth += 1) {
+        try {
+            const parsed = JSON.parse(candidate);
+            if (typeof parsed === "string") {
+                const trimmed = parsed.trim();
+                if (trimmed && trimmed !== candidate && /^[\[{]/.test(trimmed)) {
+                    candidate = trimmed;
+                    continue;
+                }
+                return { success: true, value: parsed };
+            }
+            return { success: true, value: parsed };
+        } catch (error) {
+            break;
+        }
+    }
+
+    return { success: false, value: null };
+}
+
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function buildWorksheetFromValue(value) {
+    const hierarchical = buildHierarchicalWorksheet(value);
+    if (hierarchical) {
+        return hierarchical;
+    }
+
+    const categorized = buildCategorizedWorksheet(value);
+    if (categorized) {
+        return categorized;
+    }
+
+    const rows = buildGenericWorksheetRows(value);
+    return { rows, merges: [] };
+}
+
+function buildSummaryDetailList(source, options = {}) {
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+        return [];
+    }
+
+    const omit = new Set(options.omitKeys || []);
+    const details = [];
+
+    for (const [key, rawValue] of Object.entries(source)) {
+        if (omit.has(key)) continue;
+        if (rawValue === null || rawValue === undefined) continue;
+        if (typeof rawValue === "object") continue;
+
+        let value;
+        if (typeof rawValue === "boolean") {
+            value = rawValue ? "是" : "否";
+        } else {
+            value = String(rawValue);
+        }
+
+        const label = typeof key === "string" && key.trim() ? key : "-";
+        details.push({ label, value });
+    }
+
+    return details;
+}
+
+function buildHierarchicalWorksheet(value) {
+    if (!isPlainObject(value) && !Array.isArray(value)) {
+        return null;
+    }
+
+    const rootChildren = createTreeChildren(value);
+    if (rootChildren.length === 0) {
+        return null;
+    }
+
+    const root = { label: null, value: undefined, children: rootChildren };
+    assignTreeDepth(root, -1);
+    computeTreeRowSpan(root);
+    assignTreeStartRow(root, 1);
+
+    const leafRecords = [];
+    collectTreeLeafRows(root, [], leafRecords);
+    if (leafRecords.length === 0) {
+        return null;
+    }
+
+    const maxLabelCount = leafRecords.reduce(
+        (max, record) => Math.max(max, record.labels.length),
+        0
+    );
+    const totalColumns = maxLabelCount + 1;
+
+    const rows = leafRecords.map((record) => {
+        const cells = new Array(totalColumns);
+        for (let index = 0; index < totalColumns; index += 1) {
+            cells[index] = createSheetCell(null);
+        }
+
+        record.labels.forEach((label, index) => {
+            cells[index] = createSheetCell(label, { forceString: true });
+        });
+
+        const valueColumnIndex = record.labels.length;
+        cells[valueColumnIndex] = createSheetCell(record.value);
+
+        return cells;
+    });
+
+    const merges = [];
+    collectTreeMerges(root, merges);
+
+    return { rows, merges };
+}
+
+function createTreeChildren(value) {
+    if (isPlainObject(value)) {
+        const entries = Object.entries(value);
+        if (entries.length === 0) {
+            return [];
+        }
+        return entries.map(([key, childValue]) => createTreeNode(key, childValue));
+    }
+
+    if (Array.isArray(value)) {
+        if (value.length === 0) {
+            return [];
+        }
+        return value.map((item, index) => createTreeNode(deduceArrayItemLabel(item, index), item));
+    }
+
+    return [];
+}
+
+function createTreeNode(label, value) {
+    if (isPlainObject(value)) {
+        const children = createTreeChildren(value);
+        if (children.length === 0) {
+            return { label, value: "", children: [] };
+        }
+        return { label, value: undefined, children };
+    }
+
+    if (Array.isArray(value)) {
+        const children = createTreeChildren(value);
+        if (children.length === 0) {
+            return { label, value: "", children: [] };
+        }
+        return { label, value: undefined, children };
+    }
+
+    return { label, value, children: [] };
+}
+
+function deduceArrayItemLabel(item, index) {
+    if (isPlainObject(item)) {
+        const candidateKeys = ["name", "label", "key", "id", "title"];
+        for (const key of candidateKeys) {
+            const value = item[key];
+            if (typeof value === "string" && value.trim()) {
+                return value;
+            }
+            if (typeof value === "number" && Number.isFinite(value)) {
+                return String(value);
+            }
+        }
+    }
+
+    return `[${index}]`;
+}
+
+function assignTreeDepth(node, depth) {
+    node.depth = depth;
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    const nextDepth = depth + 1;
+    node.children.forEach((child) => assignTreeDepth(child, nextDepth));
+}
+
+function computeTreeRowSpan(node) {
+    if (!node.children || node.children.length === 0) {
+        node.rowSpan = 1;
+        return 1;
+    }
+
+    let total = 0;
+    node.children.forEach((child) => {
+        total += computeTreeRowSpan(child);
+    });
+
+    node.rowSpan = Math.max(total, 1);
+    return node.rowSpan;
+}
+
+function assignTreeStartRow(node, startRow) {
+    node.startRow = startRow;
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    let cursor = startRow;
+    node.children.forEach((child) => {
+        assignTreeStartRow(child, cursor);
+        cursor += child.rowSpan;
+    });
+}
+
+function collectTreeLeafRows(node, path, rows) {
+    const nextPath = node.label !== null && node.label !== undefined ? [...path, node] : path;
+
+    if (!node.children || node.children.length === 0) {
+        const labels = nextPath
+            .filter((entry) => entry.label !== null && entry.label !== undefined)
+            .map((entry) => entry.label);
+        rows.push({ labels, value: node.value });
+        return;
+    }
+
+    node.children.forEach((child) => {
+        collectTreeLeafRows(child, nextPath, rows);
+    });
+}
+
+function collectTreeMerges(node, merges) {
+    if (node.label !== null && node.label !== undefined && node.rowSpan > 1 && node.depth >= 0) {
+        merges.push({
+            startRow: node.startRow,
+            endRow: node.startRow + node.rowSpan - 1,
+            startColumn: node.depth,
+            endColumn: node.depth
+        });
+    }
+
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    node.children.forEach((child) => collectTreeMerges(child, merges));
+}
+
+function buildCategorizedWorksheet(value) {
+    const fromMap = buildCategorizedWorksheetFromMap(value);
+    if (fromMap) {
+        return fromMap;
+    }
+
+    const fromArray = buildCategorizedWorksheetFromArray(value);
+    if (fromArray) {
+        return fromArray;
+    }
+
+    return null;
+}
+
+function buildCategorizedWorksheetFromMap(value) {
+    if (!isPlainObject(value)) {
+        return null;
+    }
+
+    const categoryEntries = Object.entries(value);
+    if (categoryEntries.length === 0) {
+        return null;
+    }
+
+    const normalized = categoryEntries.map(([categoryName, entries]) => ({
+        categoryName,
+        entries: Array.isArray(entries) ? entries.filter((item) => isPlainObject(item)) : []
+    }));
+
+    if (normalized.every(({ entries }) => entries.length === 0)) {
+        return null;
+    }
+
+    const columnKeys = [];
+    const seen = new Set();
+    for (const { entries } of normalized) {
+        for (const item of entries) {
+            for (const key of Object.keys(item)) {
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    columnKeys.push(key);
+                }
+            }
+        }
+    }
+
+    if (columnKeys.length === 0) {
+        return null;
+    }
+
+    const rows = [
+        [createSheetCell("分類", { forceString: true }), ...columnKeys.map((key) => createSheetCell(key, { forceString: true }))]
+    ];
+    const merges = [];
+    let rowCursor = 2;
+
+    for (const { categoryName, entries } of normalized) {
+        const safeEntries = entries.length > 0 ? entries : [{}];
+        const rowCount = safeEntries.length;
+
+        safeEntries.forEach((item, index) => {
+            const firstCell = index === 0 ? createSheetCell(categoryName, { forceString: true }) : createSheetCell(null);
+            const rowCells = [firstCell];
+            for (const key of columnKeys) {
+                rowCells.push(createSheetCell(item[key]));
+            }
+            rows.push(rowCells);
+        });
+
+        if (rowCount > 1) {
+            merges.push({ startRow: rowCursor, endRow: rowCursor + rowCount - 1, startColumn: 0, endColumn: 0 });
+        }
+        rowCursor += rowCount;
+    }
+
+    return { rows, merges };
+}
+
+function buildCategorizedWorksheetFromArray(value) {
+    if (!Array.isArray(value) || value.length === 0) {
+        return null;
+    }
+
+    const items = value.filter((item) => isPlainObject(item));
+    if (items.length === 0) {
+        return null;
+    }
+
+    const categoryKey = findCategoryKey(items);
+    if (!categoryKey) {
+        return null;
+    }
+
+    const columnKeys = [];
+    const seen = new Set();
+    for (const item of items) {
+        for (const key of Object.keys(item)) {
+            if (key === categoryKey) continue;
+            if (!seen.has(key)) {
+                seen.add(key);
+                columnKeys.push(key);
+            }
+        }
+    }
+
+    if (columnKeys.length === 0) {
+        return null;
+    }
+
+    const groups = [];
+    const groupMap = new Map();
+    for (const item of items) {
+        const label = formatCategoryLabel(item[categoryKey]);
+        if (!groupMap.has(label)) {
+            const container = { label, rows: [] };
+            groupMap.set(label, container);
+            groups.push(container);
+        }
+        groupMap.get(label).rows.push(item);
+    }
+
+    const rows = [
+        [createSheetCell("分類", { forceString: true }), ...columnKeys.map((key) => createSheetCell(key, { forceString: true }))]
+    ];
+    const merges = [];
+    let rowCursor = 2;
+
+    for (const { label, rows: groupRows } of groups) {
+        const rowCount = groupRows.length;
+        groupRows.forEach((item, index) => {
+            const firstCell = index === 0 ? createSheetCell(label, { forceString: true }) : createSheetCell(null);
+            const rowCells = [firstCell];
+            for (const key of columnKeys) {
+                rowCells.push(createSheetCell(item[key]));
+            }
+            rows.push(rowCells);
+        });
+
+        if (rowCount > 1) {
+            merges.push({ startRow: rowCursor, endRow: rowCursor + rowCount - 1, startColumn: 0, endColumn: 0 });
+        }
+        rowCursor += rowCount;
+    }
+
+    return { rows, merges };
+}
+
+function findCategoryKey(items) {
+    const keyInfo = new Map();
+    const priorityPattern = /(category|分類|分類別|類別|類型|类型|group|分組|分组|module|模組|模块|section|type)/iu;
+
+    for (const item of items) {
+        for (const key of Object.keys(item)) {
+            const value = item[key];
+            if (value === undefined) {
+                continue;
+            }
+            let info = keyInfo.get(key);
+            if (!info) {
+                info = {
+                    values: new Set(),
+                    total: 0,
+                    stringLike: 0,
+                    priority: priorityPattern.test(key) ? 1 : 0
+                };
+                keyInfo.set(key, info);
+            }
+            info.total += 1;
+            if (typeof value === "string" || typeof value === "number") {
+                info.stringLike += 1;
+                info.values.add(String(value));
+            } else if (value === null) {
+                info.stringLike += 1;
+                info.values.add("");
+            } else {
+                info.priority = -Infinity;
+            }
+        }
+    }
+
+    const candidates = [];
+    keyInfo.forEach((info, key) => {
+        if (info.priority === -Infinity) return;
+        if (info.stringLike === 0) return;
+        if (info.values.size === info.total) return;
+        candidates.push({ key, priority: info.priority, diversity: info.values.size });
+    });
+
+    if (candidates.length === 0) {
+        return null;
+    }
+
+    candidates.sort((a, b) => {
+        if (b.priority !== a.priority) {
+            return b.priority - a.priority;
+        }
+        return a.diversity - b.diversity;
+    });
+
+    return candidates[0].key;
+}
+
+function formatCategoryLabel(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    return String(value);
+}
+
+function buildGenericWorksheetRows(value) {
+    if (Array.isArray(value)) {
+        const rows = [];
+        const allPlainObjects = value.every((item) => isPlainObject(item));
+        if (allPlainObjects && value.length > 0) {
+            const keySet = new Set();
+            for (const item of value) {
+                for (const key of Object.keys(item)) {
+                    keySet.add(key);
+                }
+            }
+            const headers = keySet.size > 0 ? Array.from(keySet) : [];
+            if (headers.length > 0) {
+                rows.push(headers.map((key) => createSheetCell(key, { forceString: true })));
+                for (const item of value) {
+                    rows.push(headers.map((key) => createSheetCell(item[key])));
+                }
+                return rows;
+            }
+        }
+
+        const header = [createSheetCell("index", { forceString: true }), createSheetCell("value", { forceString: true })];
+        rows.push(header);
+        if (value.length > 0) {
+            value.forEach((item, index) => {
+                rows.push([createSheetCell(index), createSheetCell(item)]);
+            });
+        }
+        return rows;
+    }
+
+    if (isPlainObject(value)) {
+        const rows = [
+            [createSheetCell("key", { forceString: true }), createSheetCell("value", { forceString: true })]
+        ];
+        const entries = Object.entries(value);
+        if (entries.length > 0) {
+            for (const [key, entryValue] of entries) {
+                rows.push([createSheetCell(key, { forceString: true }), createSheetCell(entryValue)]);
+            }
+        }
+        return rows;
+    }
+
+    return [
+        [createSheetCell("value", { forceString: true })],
+        [createSheetCell(value)]
+    ];
+}
+
+function createSheetCell(value, { forceString = false } = {}) {
+    if (forceString) {
+        return { type: "string", text: value === null || value === undefined ? "" : String(value) };
+    }
+    if (value === null || value === undefined) {
+        return { type: "empty", text: "" };
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return { type: "number", text: String(value) };
+    }
+    if (typeof value === "boolean") {
+        return { type: "boolean", text: value ? "1" : "0" };
+    }
+    if (value instanceof Date) {
+        return { type: "string", text: value.toISOString() };
+    }
+    if (typeof value === "string") {
+        return { type: "string", text: value };
+    }
+    try {
+        return { type: "string", text: JSON.stringify(value) };
+    } catch (error) {
+        return { type: "string", text: String(value) };
+    }
+}
+
+async function createExcelBlobFromWorksheet(worksheet) {
+    const sheetXml = buildSheetXml(worksheet.rows, worksheet.merges);
+
+    const zip = new JSZip();
+    zip.file("[Content_Types].xml", CONTENT_TYPES_XML);
+    zip.folder("_rels").file(".rels", ROOT_RELS_XML);
+    const xlFolder = zip.folder("xl");
+    xlFolder.file("workbook.xml", WORKBOOK_XML);
+    xlFolder.file("styles.xml", STYLES_XML);
+    xlFolder.folder("_rels").file("workbook.xml.rels", WORKBOOK_RELS_XML);
+    xlFolder.folder("worksheets").file("sheet1.xml", sheetXml);
+
+    return zip.generateAsync({ type: "blob" });
+}
+
+const MIN_COLUMN_WIDTH = 6;
+const MAX_COLUMN_WIDTH = 80;
+const COLUMN_WIDTH_PADDING = 2;
+
+function buildSheetXml(rows, merges = []) {
+    const rowXml = [];
+    let maxColumnCount = 0;
+    const columnWidths = [];
+
+    rows.forEach((cells, rowIndex) => {
+        if (!Array.isArray(cells) || cells.length === 0) {
+            return;
+        }
+        const cellXml = cells
+            .map((cell, cellIndex) => {
+                if (!cell) return "";
+                const column = columnLetter(cellIndex);
+                const cellRef = `${column}${rowIndex + 1}`;
+                const cellWidth = deduceCellWidth(cell);
+                if (cellWidth > (columnWidths[cellIndex] ?? 0)) {
+                    columnWidths[cellIndex] = cellWidth;
+                }
+                switch (cell.type) {
+                    case "number":
+                        return `<c r="${cellRef}"><v>${cell.text}</v></c>`;
+                    case "boolean":
+                        return `<c r="${cellRef}" t="b"><v>${cell.text}</v></c>`;
+                    case "string": {
+                        const needsPreserve = /(^\s)|([\s]$)|([\r\n])/u.test(cell.text);
+                        const preserveAttr = needsPreserve ? ' xml:space="preserve"' : "";
+                        return `<c r="${cellRef}" t="inlineStr"><is><t${preserveAttr}>${escapeXml(
+                            cell.text
+                        )}</t></is></c>`;
+                    }
+                    default:
+                        return `<c r="${cellRef}"/>`;
+                }
+            })
+            .join("");
+
+        rowXml.push(`<row r="${rowIndex + 1}">${cellXml}</row>`);
+        if (cells.length > maxColumnCount) {
+            maxColumnCount = cells.length;
+        }
+    });
+
+    if (maxColumnCount > 0) {
+        for (let index = 0; index < maxColumnCount; index += 1) {
+            if (columnWidths[index] === undefined) {
+                columnWidths[index] = 0;
+            }
+        }
+    }
+
+    const colsXml =
+        columnWidths.length > 0
+            ? `<cols>${columnWidths
+                  .map((width, index) => {
+                      const adjusted = Math.min(
+                          MAX_COLUMN_WIDTH,
+                          Math.max(MIN_COLUMN_WIDTH, Math.ceil(width + COLUMN_WIDTH_PADDING))
+                      );
+                      return `<col min="${index + 1}" max="${index + 1}" width="${adjusted}" customWidth="1"/>`;
+                  })
+                  .join("")}</cols>`
+            : "";
+
+    const dimension =
+        rows.length > 0 && maxColumnCount > 0
+            ? `<dimension ref="A1:${columnLetter(maxColumnCount - 1)}${rows.length}"/>`
+            : "";
+
+    const mergeXml =
+        Array.isArray(merges) && merges.length > 0
+            ? `<mergeCells count="${merges.length}">${merges
+                  .map(({ startRow, endRow, startColumn, endColumn }) => {
+                      const startCell = `${columnLetter(startColumn)}${startRow}`;
+                      const endCell = `${columnLetter(endColumn ?? startColumn)}${endRow ?? startRow}`;
+                      return `<mergeCell ref="${startCell}:${endCell}"/>`;
+                  })
+                  .join("")}</mergeCells>`
+            : "";
+
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${dimension}${colsXml}<sheetData>${rowXml.join(
+        ""
+    )}</sheetData>${mergeXml}</worksheet>`;
+}
+
+function columnLetter(index) {
+    let result = "";
+    let current = index;
+    while (current >= 0) {
+        result = String.fromCharCode((current % 26) + 65) + result;
+        current = Math.floor(current / 26) - 1;
+    }
+    return result || "A";
+}
+
+function deduceCellWidth(cell) {
+    if (!cell || typeof cell.text !== "string") {
+        if (cell?.type === "number" || cell?.type === "boolean") {
+            return String(cell.text ?? "").length;
+        }
+        return 0;
+    }
+    if (!cell.text) {
+        return 0;
+    }
+    return cell.text
+        .split(/\r?\n/)
+        .reduce((max, line) => Math.max(max, line.length), 0);
+}
+
+function escapeXml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
+
+function triggerBlobDownload(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+function buildActiveReportExcelFileName(mode = "raw") {
+    const report = activeReport.value;
+    const parts = [];
+    if (report?.project?.name) {
+        parts.push(report.project.name);
+    }
+    if (report?.path) {
+        const segments = report.path.split(/[/\\]+/);
+        const last = segments[segments.length - 1];
+        if (last) {
+            parts.push(last);
+        }
+    }
+    const base = parts.join("_") || "report";
+    const safe = base.replace(/[\\/:*?"<>|]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+    const finalName = safe || "report";
+
+    let suffix = "raw";
+    if (mode === "static") {
+        suffix = "static";
+    } else if (mode === "dify") {
+        suffix = "dify";
+    }
+
+    return `${finalName}_${suffix}.xlsx`;
+}
+
+const CONTENT_TYPES_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+    '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+    "</Types>";
+
+const ROOT_RELS_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+    "</Relationships>";
+
+const WORKBOOK_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    '<sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets>' +
+    "</workbook>";
+
+const WORKBOOK_RELS_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+    "</Relationships>";
+
+const STYLES_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<fonts count="1"><font/></fonts>' +
+    '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>' +
+    '<borders count="1"><border/></borders>' +
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+    '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center"/></xf></cellXfs>' +
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+    '<dxfs count="0"/>' +
+    '<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>' +
+    "</styleSheet>";
+
 const middlePaneStyle = computed(() => {
     const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
     const width = hasActiveTool ? middlePaneWidth.value : 0;
@@ -1393,6 +2592,11 @@ function createDefaultReportState() {
         analysis: null,
         issueSummary: null,
         parsedReport: null,
+        rawReport: "",
+        dify: null,
+        dml: null,
+        difyErrorMessage: "",
+        dmlErrorMessage: "",
         sourceText: "",
         sourceLoaded: false,
         sourceLoading: false,
@@ -1432,6 +2636,16 @@ function computeIssueSummary(reportText, parsedOverride = null) {
         if (Number.isFinite(numeric)) {
             total = numeric;
         }
+        if (!Number.isFinite(total) && summary.sources && typeof summary.sources === "object") {
+            const staticSource = summary.sources.static_analyzer || summary.sources.staticAnalyzer;
+            if (staticSource && typeof staticSource === "object") {
+                const staticTotal = staticSource.total_issues ?? staticSource.totalIssues;
+                const staticNumeric = Number(staticTotal);
+                if (Number.isFinite(staticNumeric)) {
+                    total = staticNumeric;
+                }
+            }
+        }
     }
     if (total === null && Array.isArray(parsed?.issues)) {
         total = parsed.issues.length;
@@ -1447,6 +2661,60 @@ function computeIssueSummary(reportText, parsedOverride = null) {
         summary,
         raw: parsed
     };
+}
+
+function normaliseReportAnalysisState(state) {
+    if (!state) return;
+
+    const rawReport = typeof state.rawReport === "string" ? state.rawReport : "";
+    const baseAnalysis =
+        state.analysis && typeof state.analysis === "object" && !Array.isArray(state.analysis)
+            ? { ...state.analysis }
+            : {};
+
+    if (rawReport) {
+        if (typeof baseAnalysis.rawReport !== "string") {
+            baseAnalysis.rawReport = rawReport;
+        }
+        if (typeof baseAnalysis.originalResult !== "string") {
+            baseAnalysis.originalResult = rawReport;
+        }
+        if (typeof baseAnalysis.result !== "string") {
+            baseAnalysis.result = rawReport;
+        }
+    }
+
+    const parsedReport = state.parsedReport && typeof state.parsedReport === "object" ? state.parsedReport : null;
+    if (parsedReport) {
+        const reports =
+            parsedReport.reports && typeof parsedReport.reports === "object" ? parsedReport.reports : null;
+        if (reports) {
+            const staticReport = reports.static_analyzer || reports.staticAnalyzer;
+            if (staticReport && typeof staticReport === "object") {
+                if (!baseAnalysis.staticReport) {
+                    baseAnalysis.staticReport = staticReport;
+                }
+            }
+
+            const dmlReport = reports.dml_prompt || reports.dmlPrompt;
+            if (dmlReport && typeof dmlReport === "object") {
+                state.dml = dmlReport;
+                const summary =
+                    dmlReport.summary && typeof dmlReport.summary === "object" ? dmlReport.summary : null;
+                if (!state.dmlErrorMessage) {
+                    const dmlError =
+                        typeof summary?.error_message === "string"
+                            ? summary.error_message
+                            : typeof summary?.errorMessage === "string"
+                            ? summary.errorMessage
+                            : "";
+                    state.dmlErrorMessage = dmlError || "";
+                }
+            }
+        }
+    }
+
+    state.analysis = Object.keys(baseAnalysis).length ? baseAnalysis : null;
 }
 
 function ensureReportTreeEntry(projectId) {
@@ -1549,6 +2817,23 @@ function collectFileNodes(nodes, bucket = []) {
     return bucket;
 }
 
+function findTreeNodeByPath(nodes, targetPath) {
+    if (!targetPath) return null;
+    for (const node of nodes || []) {
+        if (!node) continue;
+        if (node.path === targetPath) {
+            return node;
+        }
+        if (node.children && node.children.length) {
+            const found = findTreeNodeByPath(node.children, targetPath);
+            if (found) {
+                return found;
+            }
+        }
+    }
+    return null;
+}
+
 function ensureStatesForProject(projectId, nodes) {
     const fileNodes = collectFileNodes(nodes);
     const validPaths = new Set();
@@ -1606,8 +2891,14 @@ async function hydrateReportsForProject(projectId) {
             state.segments = Array.isArray(record.segments) ? record.segments : [];
             state.conversationId = record.conversationId || "";
             state.analysis = record.analysis || null;
+            state.rawReport = typeof record.analysis?.result === "string" ? record.analysis.result : "";
+            state.dify = null;
+            state.dml = null;
+            state.difyErrorMessage = "";
+            state.dmlErrorMessage = "";
             state.parsedReport = parseReportJson(state.report);
             state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
+            normaliseReportAnalysisState(state);
             const timestamp = parseHydratedTimestamp(record.generatedAt || record.updatedAt || record.createdAt);
             state.updatedAt = timestamp;
             state.updatedAtDisplay = timestamp ? timestamp.toLocaleString() : null;
@@ -1663,6 +2954,52 @@ function selectReport(projectId, path) {
     };
 }
 
+async function openProjectFileFromReportTree(projectId, path) {
+    const projectKey = normaliseProjectId(projectId);
+    if (!projectKey || !path) return;
+
+    const projectList = Array.isArray(projects.value) ? projects.value : [];
+    const project = projectList.find(
+        (item) => normaliseProjectId(item.id) === projectKey
+    );
+    if (!project) return;
+
+    if (isTreeCollapsed.value) {
+        isTreeCollapsed.value = false;
+    }
+
+    if (selectedProjectId.value !== project.id) {
+        await openProject(project);
+    } else if (!Array.isArray(tree.value) || tree.value.length === 0) {
+        await openProject(project);
+    }
+
+    const entry = ensureReportTreeEntry(project.id);
+    if (entry && !entry.nodes.length && !entry.loading) {
+        loadReportTreeForProject(project.id);
+    }
+
+    const searchNodes = (entry && entry.nodes && entry.nodes.length)
+        ? entry.nodes
+        : tree.value;
+    let targetNode = findTreeNodeByPath(searchNodes, path);
+    if (!targetNode) {
+        const name = path.split("/").pop() || path;
+        targetNode = { type: "file", path, name, mime: "" };
+    }
+
+    treeStore.selectTreeNode(path);
+    try {
+        await treeStore.openNode(targetNode);
+    } catch (error) {
+        console.error("[Workspace] Failed to preview file from report tree", {
+            projectId: project.id,
+            path,
+            error
+        });
+    }
+}
+
 async function generateReportForFile(project, node, options = {}) {
     const { autoSelect = true, silent = false } = options;
     if (!project || !node || node.type !== "file") {
@@ -1683,6 +3020,11 @@ async function generateReportForFile(project, node, options = {}) {
     state.analysis = null;
     state.issueSummary = null;
     state.parsedReport = null;
+    state.rawReport = "";
+    state.dify = null;
+    state.dml = null;
+    state.difyErrorMessage = "";
+    state.dmlErrorMessage = "";
     state.sourceText = "";
     state.sourceLoaded = false;
     state.sourceLoading = false;
@@ -1721,9 +3063,15 @@ async function generateReportForFile(project, node, options = {}) {
         state.chunks = Array.isArray(payload?.chunks) ? payload.chunks : [];
         state.segments = Array.isArray(payload?.segments) ? payload.segments : [];
         state.conversationId = payload?.conversationId || "";
+        state.rawReport = typeof payload?.rawReport === "string" ? payload.rawReport : "";
+        state.dify = payload?.dify || null;
+        state.dml = payload?.dml || null;
+        state.difyErrorMessage = typeof payload?.difyErrorMessage === "string" ? payload.difyErrorMessage : "";
+        state.dmlErrorMessage = typeof payload?.dmlErrorMessage === "string" ? payload.dmlErrorMessage : "";
         state.analysis = payload?.analysis || null;
         state.parsedReport = parseReportJson(state.report);
         state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
+        normaliseReportAnalysisState(state);
         state.error = "";
 
         if (autoSelect) {
@@ -1745,6 +3093,11 @@ async function generateReportForFile(project, node, options = {}) {
         state.analysis = null;
         state.issueSummary = null;
         state.parsedReport = null;
+        state.rawReport = "";
+        state.dify = null;
+        state.dml = null;
+        state.difyErrorMessage = "";
+        state.dmlErrorMessage = "";
         state.sourceLoading = false;
         if (!state.sourceText) {
             state.sourceLoaded = false;
@@ -1843,11 +3196,11 @@ watch(
 
         projectList.forEach((project) => {
             const entry = ensureReportTreeEntry(project.id);
-            if (isReportToolActive.value && entry && !entry.nodes.length && !entry.loading) {
+            if (shouldPrepareReportTrees.value && entry && !entry.nodes.length && !entry.loading) {
                 loadReportTreeForProject(project.id);
             }
             if (
-                isReportToolActive.value &&
+                shouldPrepareReportTrees.value &&
                 entry &&
                 !entry.hydratedReports &&
                 !entry.hydratingReports
@@ -1884,7 +3237,7 @@ watch(
 );
 
 watch(
-    isReportToolActive,
+    shouldPrepareReportTrees,
     (active) => {
         if (!active) return;
         const list = Array.isArray(projects.value) ? projects.value : [];
@@ -2346,9 +3699,102 @@ onBeforeUnmount(() => {
                                 </div>
                                 <template v-else>
                                     <div v-if="hasStructuredReport" class="reportStructured">
-                                        <section class="reportSummaryGrid">
+                                        <div
+                                            v-if="hasStructuredReportToggle"
+                                            class="reportStructuredToggle"
+                                            role="group"
+                                            aria-label="報告來源"
+                                        >
+                                            <button
+                                                type="button"
+                                                class="reportStructuredToggleButton"
+                                                :class="{ active: structuredReportViewMode === 'combined' }"
+                                                :disabled="!canShowStructuredSummary"
+                                                @click="setStructuredReportViewMode('combined')"
+                                            >
+                                                總報告
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="reportStructuredToggleButton"
+                                                :class="{ active: structuredReportViewMode === 'static' }"
+                                                :disabled="!canShowStructuredStatic"
+                                                @click="setStructuredReportViewMode('static')"
+                                            >
+                                                靜態分析器
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="reportStructuredToggleButton"
+                                                :class="{ active: structuredReportViewMode === 'dml' }"
+                                                :disabled="!canShowStructuredDml"
+                                                @click="setStructuredReportViewMode('dml')"
+                                            >
+                                                DML 語句分析
+                                            </button>
+                                        </div>
+                                        <section
+                                            v-if="structuredReportViewMode === 'combined' && canShowStructuredSummary"
+                                            class="reportSummaryGrid"
+                                        >
+                                            <div
+                                                v-if="activeReportDetails?.sourceSummaries?.length"
+                                                class="reportSummaryCard reportSummaryCard--span"
+                                            >
+                                                <span class="reportSummaryLabel">來源摘要</span>
+                                                <ul class="reportSummarySources">
+                                                    <li
+                                                        v-for="item in activeReportDetails.sourceSummaries"
+                                                        :key="item.key"
+                                                        class="reportSummarySource"
+                                                    >
+                                                        <div class="reportSummarySourceHeading">
+                                                            <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                                                            <span
+                                                                v-if="item.status"
+                                                                class="reportSummarySourceStatus"
+                                                            >
+                                                                {{ item.status }}
+                                                            </span>
+                                                        </div>
+                                                        <ul
+                                                            v-if="item.metrics?.length"
+                                                            class="reportSummarySourceMetrics"
+                                                        >
+                                                            <li
+                                                                v-for="metric in item.metrics"
+                                                                :key="`${item.key}-${metric.label}`"
+                                                            >
+                                                                <span class="reportSummaryItemLabel">{{ metric.label }}</span>
+                                                                <span class="reportSummaryItemValue">{{ metric.value }}</span>
+                                                            </li>
+                                                        </ul>
+                                                        <p
+                                                            v-if="item.errorMessage"
+                                                            class="reportSummarySourceError"
+                                                        >
+                                                            {{ item.errorMessage }}
+                                                        </p>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <div
+                                                v-if="activeReportDetails?.combinedSummaryDetails?.length"
+                                                class="reportSummaryCard reportSummaryCard--span"
+                                            >
+                                                <span class="reportSummaryLabel">整合摘要</span>
+                                                <ul class="reportSummaryList">
+                                                    <li
+                                                        v-for="item in activeReportDetails.combinedSummaryDetails"
+                                                        :key="`combined-${item.label}-${item.value}`"
+                                                    >
+                                                        <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                                                        <span class="reportSummaryItemValue">{{ item.value }}</span>
+                                                    </li>
+                                                </ul>
+                                            </div>
                                             <div class="reportSummaryCard reportSummaryCard--total">
-                                                <span class="reportSummaryLabel">總問題</span>
+                                                <span class="reportSummaryLabel">問題</span>
                                                 <span class="reportSummaryValue">
                                                     {{
                                                         activeReportDetails?.totalIssues === null
@@ -2403,132 +3849,317 @@ onBeforeUnmount(() => {
                                             </div>
                                         </section>
 
-                                        <section class="reportIssuesSection" v-if="shouldShowReportIssuesSection">
-                                            <div class="reportIssuesHeader">
-                                                <div class="reportIssuesHeaderInfo">
-                                                    <h4>問題清單</h4>
-                                                    <span class="reportIssuesTotal">
-                                                        <template v-if="activeReportIssueCount !== null">
-                                                            共 {{ activeReportIssueCount }} 項
-                                                        </template>
-                                                        <template v-else>—</template>
+                                            <section
+                                                v-if="
+                                                    structuredReportViewMode === 'static' &&
+                                                    (
+                                                        activeReportDetails?.staticSummaryDetails?.length ||
+                                                        activeReportDetails?.staticMetadataDetails?.length
+                                                    )
+                                                "
+                                                class="reportStaticSection"
+                                            >
+                                                <div class="reportStaticHeader">
+                                                    <h4>靜態分析器</h4>
+                                                    <span
+                                                        v-if="activeReportDetails?.staticMetadata?.engine"
+                                                        class="reportStaticEngine"
+                                                    >
+                                                        引擎：{{ activeReportDetails.staticMetadata.engine }}
+                                                    </span>
+                                                    <span
+                                                        v-else-if="activeReportDetails?.staticSummary?.analysis_source"
+                                                        class="reportStaticEngine"
+                                                    >
+                                                        來源：{{ activeReportDetails.staticSummary.analysis_source }}
                                                     </span>
                                                 </div>
-                                                <div class="reportIssuesToggle" role="group" aria-label="檢視模式">
-                                                    <button
-                                                        type="button"
-                                                        class="reportIssuesToggleButton"
-                                                        :class="{ active: reportIssuesViewMode === 'code' }"
-                                                        :disabled="!canShowCodeIssues"
-                                                        @click="setReportIssuesViewMode('code')"
-                                                    >
-                                                        代碼視圖
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        class="reportIssuesToggleButton"
-                                                        :class="{ active: reportIssuesViewMode === 'raw' }"
-                                                        :disabled="!canShowRawIssues"
-                                                        @click="setReportIssuesViewMode('raw')"
-                                                    >
-                                                        原始資料
-                                                    </button>
+                                                <div
+                                                    v-if="activeReportDetails?.staticSummaryDetails?.length"
+                                                    class="reportStaticBlock"
+                                                >
+                                                    <h5>摘要資訊</h5>
+                                                    <ul class="reportStaticList">
+                                                        <li
+                                                            v-for="item in activeReportDetails.staticSummaryDetails"
+                                                            :key="`static-summary-${item.label}-${item.value}`"
+                                                        >
+                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
+                                                        </li>
+                                                    </ul>
                                                 </div>
-                                            </div>
-                                            <div class="reportIssuesContent">
-                                                <template v-if="reportIssuesViewMode === 'code'">
-                                                    <template v-if="activeReportDetails">
-                                                        <div
-                                                            v-if="activeReport.state.sourceLoading"
-                                                            class="reportIssuesNotice"
+                                                <div
+                                                    v-if="activeReportDetails?.staticMetadataDetails?.length"
+                                                    class="reportStaticBlock"
+                                                >
+                                                    <h5>中繼資料</h5>
+                                                    <ul class="reportStaticList">
+                                                        <li
+                                                            v-for="item in activeReportDetails.staticMetadataDetails"
+                                                            :key="`static-metadata-${item.label}-${item.value}`"
                                                         >
-                                                            正在載入原始碼…
-                                                        </div>
-                                                        <div
-                                                            v-else-if="activeReport.state.sourceError"
-                                                            class="reportIssuesNotice reportIssuesNotice--error"
+                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
+                                                        </li>
+                                                    </ul>
+                                                </div>
+                                            </section>
+
+                                            <section
+                                                v-if="
+                                                    structuredReportViewMode === 'dml' &&
+                                                    activeReportDetails?.dmlReport
+                                                "
+                                                class="reportDmlSection"
+                                            >
+                                                <div class="reportDmlHeader">
+                                                    <h4>DML 提示詞分析</h4>
+                                                    <span
+                                                        v-if="activeReportDetails.dmlReport.status"
+                                                        class="reportDmlStatus"
+                                                    >
+                                                        {{ activeReportDetails.dmlReport.status }}
+                                                    </span>
+                                                    <span
+                                                        v-if="activeReportDetails.dmlReport.generatedAt"
+                                                        class="reportDmlTimestamp"
+                                                    >
+                                                        產生於 {{ activeReportDetails.dmlReport.generatedAt }}
+                                                    </span>
+                                                </div>
+                                                <p
+                                                    v-if="activeReportDetails.dmlReport.error"
+                                                    class="reportDmlError"
+                                                >
+                                                    {{ activeReportDetails.dmlReport.error }}
+                                                </p>
+                                                <div
+                                                    v-if="activeReportDetails.dmlReport.segments?.length"
+                                                    class="reportDmlSegments"
+                                                >
+                                                    <details
+                                                        v-for="segment in activeReportDetails.dmlReport.segments"
+                                                        :key="segment.key"
+                                                        class="reportDmlSegment"
+                                                    >
+                                                        <summary>
+                                                            第 {{ segment.index }} 段
+                                                            <span v-if="segment.startLine">
+                                                                （第 {{ segment.startLine }} 行起
+                                                                <span v-if="segment.endLine">，至第 {{ segment.endLine }} 行止</span>
+                                                                ）
+                                                            </span>
+                                                        </summary>
+                                                        <pre class="reportDmlSql codeScroll themed-scrollbar">
+                                                            {{ segment.sql }}
+                                                        </pre>
+                                                        <pre
+                                                            v-if="segment.analysis"
+                                                            class="reportDmlAnalysis codeScroll themed-scrollbar"
                                                         >
-                                                            無法載入檔案內容：{{ activeReport.state.sourceError }}
-                                                        </div>
-                                                        <div
-                                                            v-else-if="hasReportIssueLines"
-                                                            class="pvBox codeBox reportIssuesBox"
+                                                            {{ segment.analysis }}
+                                                        </pre>
+                                                    </details>
+                                                </div>
+                                                <p v-else class="reportDmlEmpty">尚未取得 DML 拆分結果。</p>
+                                                <pre
+                                                    v-if="activeReportDetails.dmlReport.reportText"
+                                                    class="reportDmlSummary codeScroll themed-scrollbar"
+                                                >
+                                                    {{ activeReportDetails.dmlReport.reportText }}
+                                                </pre>
+                                            </section>
+                                            <section
+                                                v-if="shouldShowReportIssuesSection"
+                                                class="reportIssuesSection"
+                                            >
+                                                <div class="reportIssuesHeader">
+                                                    <div class="reportIssuesHeaderInfo">
+                                                        <h4>問題清單</h4>
+                                                        <span class="reportIssuesTotal">
+                                                            <template v-if="activeReportIssueCount !== null">
+                                                                共 {{ activeReportIssueCount }} 項
+                                                            </template>
+                                                            <template v-else>—</template>
+                                                        </span>
+                                                    </div>
+                                                    <div class="reportIssuesToggle" role="group" aria-label="檢視模式">
+                                                        <button
+                                                            type="button"
+                                                            class="reportIssuesToggleButton"
+                                                            :class="{ active: reportIssuesViewMode === 'code' }"
+                                                            :disabled="!canShowCodeIssues"
+                                                            @click="setReportIssuesViewMode('code')"
                                                         >
-                                                            <div class="codeScroll themed-scrollbar reportIssueCodeScroll">
-                                                                <div class="codeEditor">
-                                                                    <div
-                                                                        v-for="line in reportIssueLines"
-                                                                        :key="line.key"
-                                                                        class="codeLine"
-                                                                        :class="{
-                                                                            'codeLine--issue': line.type === 'code' && line.hasIssue,
-                                                                            'codeLine--meta': line.type !== 'code',
-                                                                            'codeLine--issuesMeta': line.type === 'issues',
-                                                                            'codeLine--fixMeta': line.type === 'fix'
-                                                                        }"
-                                                                    >
-                                                                        <span
-                                                                            class="codeLineNo"
-                                                                            :class="{
-                                                                                'codeLineNo--issue': line.type === 'code' && line.hasIssue,
-                                                                                'codeLineNo--meta': line.type !== 'code',
-                                                                                'codeLineNo--issues': line.type === 'issues',
-                                                                                'codeLineNo--fix': line.type === 'fix'
-                                                                            }"
-                                                                            :data-line="line.displayNumber"
-                                                                            :aria-label="line.type !== 'code' ? line.iconLabel : null"
-                                                                            :aria-hidden="line.type === 'code'"
-                                                                        >
-                                                                            <svg
-                                                                                v-if="line.type === 'issues'"
-                                                                                class="codeLineNoIcon codeLineNoIcon--warning"
-                                                                                viewBox="0 0 20 20"
-                                                                                focusable="false"
-                                                                                aria-hidden="true"
+                                                            報告預覽
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="reportIssuesToggleButton"
+                                                            :class="{ active: reportIssuesViewMode === 'static' }"
+                                                            :disabled="!canShowStaticReportJson"
+                                                            @click="setReportIssuesViewMode('static')"
+                                                        >
+                                                            靜態分析器 JSON
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="reportIssuesToggleButton"
+                                                            :class="{ active: reportIssuesViewMode === 'dify' }"
+                                                            :disabled="!canShowDifyReportJson"
+                                                            @click="setReportIssuesViewMode('dify')"
+                                                        >
+                                                            Dify JSON
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div class="reportIssuesContent">
+                                                    <div v-if="reportIssuesViewMode === 'code'">
+                                                        <div v-if="activeReportDetails">
+                                                            <div
+                                                                v-if="activeReport.state.sourceLoading"
+                                                                class="reportIssuesNotice"
+                                                            >
+                                                                正在載入原始碼…
+                                                            </div>
+                                                            <div
+                                                                v-else-if="activeReport.state.sourceError"
+                                                                class="reportIssuesNotice reportIssuesNotice--error"
+                                                            >
+                                                                無法載入檔案內容：{{ activeReport.state.sourceError }}
+                                                            </div>
+                                                            <div v-else>
+                                                                <div
+                                                                    v-if="shouldShowDifyUnavailableNotice"
+                                                                    class="reportIssuesNotice reportIssuesNotice--warning"
+                                                                >
+                                                                    {{ reportDifyUnavailableNotice }}
+                                                                </div>
+                                                                <div
+                                                                    v-if="hasReportIssueLines"
+                                                                    class="reportRow reportIssuesRow"
+                                                                >
+                                                                    <div class="reportRowContent codeScroll themed-scrollbar">
+                                                                        <div class="codeEditor">
+                                                                            <div
+                                                                                v-for="line in reportIssueLines"
+                                                                                :key="line.key"
+                                                                                class="codeLine"
+                                                                                :class="{
+                                                                                    'codeLine--issue': line.type === 'code' && line.hasIssue,
+                                                                                    'codeLine--meta': line.type !== 'code',
+                                                                                    'codeLine--issuesMeta': line.type === 'issues',
+                                                                                    'codeLine--fixMeta': line.type === 'fix'
+                                                                                }"
                                                                             >
-                                                                                <path
-                                                                                    d="M10.447 2.105a1 1 0 00-1.894 0l-7 14A1 1 0 002.447 18h15.106a1 1 0 00.894-1.447l-7-14zM10 6a1 1 0 01.993.883L11 7v4a1 1 0 01-1.993.117L9 11V7a1 1 0 011-1zm0 8a1 1 0 110 2 1 1 0 010-2z"
-                                                                                />
-                                                                            </svg>
-                                                                            <svg
-                                                                                v-else-if="line.type === 'fix'"
-                                                                                class="codeLineNoIcon codeLineNoIcon--fix"
-                                                                                viewBox="0 0 20 20"
-                                                                                focusable="false"
-                                                                                aria-hidden="true"
-                                                                            >
-                                                                                <path
-                                                                                    d="M17.898 2.102a1 1 0 00-1.517.127l-2.156 2.873-1.21-.403a1 1 0 00-1.043.24l-4.95 4.95a1 1 0 000 1.414l1.775 1.775-5.189 5.189a1 1 0 001.414 1.414l5.189-5.189 1.775 1.775a1 1 0 001.414 0l4.95-4.95a1 1 0 00.24-1.043l-.403-1.21 2.873-2.156a1 1 0 00.127-1.517l-.489-.489z"
-                                                                                />
-                                                                            </svg>
-                                                                        </span>
-                                                                        <span
-                                                                            class="codeLineContent"
-                                                                            :class="{
-                                                                                'codeLineContent--issueHighlight':
-                                                                                    line.type === 'code' && line.hasIssue,
-                                                                                'codeLineContent--issues': line.type === 'issues',
-                                                                                'codeLineContent--fix': line.type === 'fix'
-                                                                            }"
-                                                                            v-html="line.html"
-                                                                        ></span>
+                                                                                <span
+                                                                                    class="codeLineNo"
+                                                                                    :class="{
+                                                                                        'codeLineNo--issue': line.type === 'code' && line.hasIssue,
+                                                                                        'codeLineNo--meta': line.type !== 'code',
+                                                                                        'codeLineNo--issues': line.type === 'issues',
+                                                                                        'codeLineNo--fix': line.type === 'fix'
+                                                                                    }"
+                                                                                    :data-line="line.displayNumber"
+                                                                                    :aria-label="line.type !== 'code' ? line.iconLabel : null"
+                                                                                    :aria-hidden="line.type === 'code'"
+                                                                                >
+                                                                                    <svg
+                                                                                        v-if="line.type === 'issues'"
+                                                                                        class="codeLineNoIcon codeLineNoIcon--warning"
+                                                                                        viewBox="0 0 20 20"
+                                                                                        focusable="false"
+                                                                                        aria-hidden="true"
+                                                                                    >
+                                                                                        <path
+                                                                                            d="M10.447 2.105a1 1 0 00-1.894 0l-7 14A1 1 0 002.447 18h15.106a1 1 0 00.894-1.447l-7-14zM10 6a1 1 0 01.993.883L11 7v4a1 1 0 01-1.993.117L9 11V7a1 1 0 011-1zm0 8a1 1 0 110 2 1 1 0 010-2z"
+                                                                                        />
+                                                                                    </svg>
+                                                                                    <svg
+                                                                                        v-else-if="line.type === 'fix'"
+                                                                                        class="codeLineNoIcon codeLineNoIcon--fix"
+                                                                                        viewBox="0 0 20 20"
+                                                                                        focusable="false"
+                                                                                        aria-hidden="true"
+                                                                                    >
+                                                                                        <path
+                                                                                            d="M17.898 2.102a1 1 0 00-1.517.127l-2.156 2.873-1.21-.403a1 1 0 00-1.043.24l-4.95 4.95a1 1 0 000 1.414l1.775 1.775-5.189 5.189a1 1 0 001.414 1.414l5.189-5.189 1.775 1.775a1 1 0 001.414 0l4.95-4.95a1 1 0 00.24-1.043l-.403-1.21 2.873-2.156a1 1 0 00.127-1.517l-.489-.489z"
+                                                                                        />
+                                                                                    </svg>
+                                                                                </span>
+                                                                                <span
+                                                                                    class="codeLineContent"
+                                                                                    :class="{
+                                                                                        'codeLineContent--issueHighlight':
+                                                                                            line.type === 'code' && line.hasIssue,
+                                                                                        'codeLineContent--issues': line.type === 'issues',
+                                                                                        'codeLineContent--fix': line.type === 'fix'
+                                                                                    }"
+                                                                                    v-html="line.html"
+                                                                                ></span>
+                                                                            </div>
+                                                                        </div>
                                                                     </div>
                                                                 </div>
+                                                                <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
                                                             </div>
                                                         </div>
                                                         <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
-                                                    </template>
-                                                    <p v-else class="reportIssuesEmpty">此報告不支援結構化檢視。</p>
-                                                </template>
-                                                <template v-else-if="reportIssuesViewMode === 'raw'">
-                                                    <div v-if="activeReportRawText.trim().length" class="reportRow">
-                                                        <pre class="reportRowContent codeScroll themed-scrollbar">{{ activeReportRawText }}</pre>
                                                     </div>
-                                                    <p v-else class="reportIssuesEmpty">尚未取得原始報告內容。</p>
-                                                </template>
-                                            </div>
-                                        </section>
-                                        <p v-else class="reportIssuesEmpty">未檢測到任何問題。</p>
+                                                    <div v-else-if="reportIssuesViewMode === 'static'">
+                                                        <div v-if="activeReportStaticRawText.trim().length" class="reportRow">
+                                                            <div v-if="canExportActiveReportStaticRaw" class="reportRowActions">
+                                                                <button
+                                                                    type="button"
+                                                                    class="reportRowActionButton"
+                                                                    :disabled="isExportingReportJsonExcel"
+                                                                    @click="exportActiveReportJsonToExcel('static')"
+                                                                >
+                                                                    <span v-if="isExportingReportJsonExcel">匯出中…</span>
+                                                                    <span v-else>匯出 Excel</span>
+                                                                </button>
+                                                            </div>
+                                                            <pre class="reportRowContent codeScroll themed-scrollbar">
+                                                                {{ activeReportStaticRawText }}
+                                                            </pre>
+                                                            <p v-if="!canExportActiveReportStaticRaw" class="reportRowNotice">
+                                                                靜態分析器 JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
+                                                            </p>
+                                                        </div>
+                                                        <p v-else class="reportIssuesEmpty">尚未取得靜態分析器報告內容。</p>
+                                                    </div>
+                                                    <div v-else-if="reportIssuesViewMode === 'dify'">
+                                                        <div v-if="activeReportDifyRawText.trim().length" class="reportRow">
+                                                            <div v-if="canExportActiveReportDifyRaw" class="reportRowActions">
+                                                                <button
+                                                                    type="button"
+                                                                    class="reportRowActionButton"
+                                                                    :disabled="isExportingReportJsonExcel"
+                                                                    @click="exportActiveReportJsonToExcel('dify')"
+                                                                >
+                                                                    <span v-if="isExportingReportJsonExcel">匯出中…</span>
+                                                                    <span v-else>匯出 Excel</span>
+                                                                </button>
+                                                            </div>
+                                                            <pre class="reportRowContent codeScroll themed-scrollbar">
+                                                                {{ activeReportDifyRawText }}
+                                                            </pre>
+                                                            <p v-if="!canExportActiveReportDifyRaw" class="reportRowNotice">
+                                                                Dify JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
+                                                            </p>
+                                                        </div>
+                                                        <p v-else class="reportIssuesEmpty">尚未取得 Dify 報告內容。</p>
+                                                    </div>
+                                                    <p v-else class="reportIssuesEmpty">此報告不支援結構化檢視。</p>
+                                                </div>
+                                            </section>
+                                            <section
+                                                v-else
+                                                class="reportIssuesSection reportIssuesSection--empty"
+                                            >
+                                                <p class="reportIssuesEmpty">未檢測到任何問題。</p>
+                                            </section>
 
                                     </div>
                                     <pre v-else class="reportBody codeScroll themed-scrollbar">{{ activeReport.state.report }}</pre>
@@ -2894,7 +4525,7 @@ body,
     flex-direction: column;
     gap: 12px;
     min-height: 0;
-    overflow: hidden;
+    overflow: auto;
     background: #191919;
     border: 1px solid #323232;
     border-radius: 0;
@@ -2969,10 +4600,40 @@ body,
     min-height: 0;
 }
 
+.reportStructuredToggle {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.reportStructuredToggleButton {
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.14);
+    color: #e2e8f0;
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.reportStructuredToggleButton.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.28), rgba(14, 165, 233, 0.28));
+    border-color: rgba(59, 130, 246, 0.5);
+    color: #f8fafc;
+}
+
+.reportStructuredToggleButton:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 .reportSummaryGrid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 12px;
+    width: 100%;
 }
 
 .reportSummaryCard {
@@ -2983,6 +4644,8 @@ body,
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-width: 0;
+    word-break: break-word;
 }
 
 .reportSummaryCard--total {
@@ -2991,7 +4654,7 @@ body,
 }
 
 .reportSummaryCard--span {
-    grid-column: span 2;
+    grid-column: 1 / -1;
 }
 
 @media (max-width: 720px) {
@@ -3042,13 +4705,231 @@ body,
     color: #cbd5f5;
 }
 
+.reportSummarySources {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportSummarySource {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: rgba(30, 41, 59, 0.32);
+}
+
+.reportSummarySourceHeading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.reportSummarySourceStatus {
+    font-size: 12px;
+    font-weight: 600;
+    color: #38bdf8;
+    text-transform: uppercase;
+}
+
+.reportSummarySourceMetrics {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    font-size: 13px;
+    color: #e2e8f0;
+    word-break: break-word;
+}
+
+.reportSummarySourceMetrics li {
+    display: flex;
+    gap: 6px;
+}
+
+.reportSummarySourceError {
+    margin: 0;
+    font-size: 12px;
+    color: #f87171;
+}
+
+.reportStaticSection {
+    margin-top: 24px;
+    padding: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 8px;
+    background: rgba(30, 41, 59, 0.32);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportStaticHeader {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.reportStaticHeader h4 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #f8fafc;
+}
+
+.reportStaticEngine {
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportStaticBlock {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.reportStaticBlock h5 {
+    margin: 0;
+    font-size: 13px;
+    color: #cbd5f5;
+    text-transform: none;
+    letter-spacing: 0.02em;
+}
+
+.reportStaticList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    color: #e2e8f0;
+}
+
+.reportStaticItemLabel {
+    font-weight: 600;
+    margin-right: 6px;
+}
+
+.reportStaticItemValue {
+    color: #cbd5f5;
+}
+
+.reportDmlSection {
+    margin-top: 24px;
+    padding: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.4);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportDmlHeader {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.reportDmlHeader h4 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #f8fafc;
+}
+
+.reportDmlStatus {
+    font-size: 12px;
+    font-weight: 600;
+    color: #22d3ee;
+    text-transform: uppercase;
+}
+
+.reportDmlTimestamp {
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportDmlError {
+    margin: 0;
+    color: #f87171;
+    font-size: 13px;
+}
+
+.reportDmlSegments {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.reportDmlSegment {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.35);
+}
+
+.reportDmlSegment summary {
+    cursor: pointer;
+    padding: 8px 12px;
+    font-weight: 600;
+    color: #e2e8f0;
+}
+
+.reportDmlSegment pre {
+    margin: 0;
+    padding: 12px;
+    font-size: 13px;
+}
+
+.reportDmlSql {
+    background: rgba(15, 23, 42, 0.55);
+    color: #e0f2fe;
+}
+
+.reportDmlAnalysis {
+    background: rgba(8, 47, 73, 0.55);
+    color: #fef9c3;
+}
+
+.reportDmlSummary {
+    margin: 0;
+    font-size: 13px;
+    background: rgba(15, 23, 42, 0.65);
+    color: #cbd5f5;
+    border-radius: 6px;
+    padding: 12px;
+}
+
+.reportDmlEmpty {
+    margin: 0;
+    font-size: 13px;
+    color: #94a3b8;
+}
+
 
 .reportIssuesSection {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     min-height: 0;
+    align-self: stretch;
+}
+
+.reportIssuesSection--empty {
+    padding-top: 12px;
 }
 
 
@@ -3056,6 +4937,7 @@ body,
     display: flex;
     align-items: center;
     gap: 12px;
+    flex-wrap: wrap;
 }
 
 .reportIssuesHeaderInfo {
@@ -3070,6 +4952,7 @@ body,
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
 }
 
 .reportIssuesToggleButton {
@@ -3126,17 +5009,9 @@ body,
     color: #fda4af;
 }
 
-.reportIssuesBox {
-    flex: 1 1 auto;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-}
-
-.reportIssuesBox .codeScroll {
-    flex: 1 1 auto;
-    max-height: none;
-    overflow: auto;
+.reportIssuesNotice--warning {
+    background: rgba(250, 204, 21, 0.12);
+    color: #facc15;
 }
 
 .reportRow {
@@ -3147,6 +5022,35 @@ body,
     background: #1b1b1b;
     display: flex;
     flex-direction: column;
+}
+
+.reportRowActions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 12px 16px 0;
+    gap: 8px;
+}
+
+.reportRowActionButton {
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.14);
+    color: #e2e8f0;
+    font-size: 12px;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.reportRowActionButton:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.5);
+    color: #f8fafc;
+}
+
+.reportRowActionButton:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .reportRowContent {
@@ -3160,18 +5064,40 @@ body,
     background: transparent;
     white-space: pre-wrap;
     word-break: break-word;
+    min-height: 800px;
 }
 
-.reportIssuesBox .codeEditor {
+.reportRowContent.codeScroll {
+    overflow: visible;
+    max-height: none;
+}
+
+.reportRowNotice {
+    margin: 0;
+    padding: 0 16px 12px;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportIssuesRow .reportRowContent {
+    padding: 0;
+}
+
+.reportIssuesRow .reportRowContent.codeScroll {
+    display: flex;
+    flex-direction: column;
+}
+
+.reportIssuesRow .codeEditor {
     padding: 4px 0;
 }
 
-.reportIssuesBox .codeLine {
+.reportIssuesRow .codeLine {
     border-left: 3px solid transparent;
     padding: 2px 0;
 }
 
-.reportIssuesBox .codeLine--issue {
+.reportIssuesRow .codeLine--issue {
     background: rgba(248, 113, 113, 0.12);
     border-left-color: rgba(248, 113, 113, 0.65);
 }
@@ -3185,17 +5111,17 @@ body,
     background: rgba(248, 113, 113, 0.08);
 }
 
-.reportIssuesBox .codeLine--meta {
+.reportIssuesRow .codeLine--meta {
     background: rgba(15, 23, 42, 0.92);
     border-left-color: rgba(148, 163, 184, 0.4);
 }
 
-.reportIssuesBox .codeLine--issuesMeta {
+.reportIssuesRow .codeLine--issuesMeta {
     background: rgba(251, 146, 60, 0.18);
     border-left-color: rgba(251, 146, 60, 0.55);
 }
 
-.reportIssuesBox .codeLine--fixMeta {
+.reportIssuesRow .codeLine--fixMeta {
     background: rgba(56, 189, 248, 0.14);
     border-left-color: rgba(56, 189, 248, 0.5);
 }
@@ -3500,6 +5426,12 @@ body,
 .pvBox.codeBox {
     padding: 12px;
     overflow: hidden;
+}
+
+.pvBox.codeBox.reportIssuesBox,
+.pvBox.codeBox.reportIssuesBox .codeScroll {
+    overflow: visible;
+    max-height: none;
 }
 
 .codeScroll {
