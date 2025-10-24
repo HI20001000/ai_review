@@ -7,6 +7,10 @@ const props = defineProps({
         type: Array,
         default: () => []
     },
+    panelTitle: {
+        type: String,
+        default: ""
+    },
     normaliseProjectId: {
         type: Function,
         required: true
@@ -54,6 +58,22 @@ const props = defineProps({
     activeTarget: {
         type: Object,
         default: null
+    },
+    showProjectActions: {
+        type: Boolean,
+        default: true
+    },
+    showIssueBadge: {
+        type: Boolean,
+        default: true
+    },
+    showFileActions: {
+        type: Boolean,
+        default: true
+    },
+    allowSelectWithoutReport: {
+        type: Boolean,
+        default: false
     }
 });
 
@@ -149,14 +169,17 @@ const projectBatchProgress = (projectId) => {
                         </button>
                         <span class="projName" :title="entry.project.name">{{ entry.project.name }}</span>
                         <span
-                            v-if="projectIssueCount(entry.project.id) !== null"
+                            v-if="showIssueBadge && projectIssueCount(entry.project.id) !== null"
                             class="projectIssueBadge"
                         >
                             問題 {{ projectIssueCount(entry.project.id) }}
                         </span>
-                        <div class="projectActions">
+                        <div
+                            v-if="showProjectActions || entry.cache.error"
+                            class="projectActions"
+                        >
                             <button
-                                v-if="!entry.cache.error"
+                                v-if="showProjectActions && !entry.cache.error"
                                 type="button"
                                 class="reportBatchBtn"
                                 :disabled="entry.cache.loading || projectBatchRunning(entry.project.id)"
@@ -168,7 +191,7 @@ const projectBatchProgress = (projectId) => {
                                 <span v-else>一鍵生成</span>
                             </button>
                             <button
-                                v-else
+                                v-else-if="entry.cache.error"
                                 type="button"
                                 class="reportRetryBtn"
                                 @click.stop="onReloadProject(entry.project.id)"
@@ -176,7 +199,7 @@ const projectBatchProgress = (projectId) => {
                                 重新載入
                             </button>
                             <span
-                                v-if="!entry.cache.error && entry.cache.loading"
+                                v-if="showProjectActions && !entry.cache.error && entry.cache.loading"
                                 class="reportMeta"
                             >
                                 載入中…
@@ -202,6 +225,8 @@ const projectBatchProgress = (projectId) => {
                                     :on-select="onSelect"
                                     :get-status-label="getStatusLabel"
                                     :active-target="activeTarget"
+                                    :show-file-actions="showFileActions"
+                                    :allow-select-without-report="allowSelectWithoutReport"
                                 />
                             </ul>
                         </div>
