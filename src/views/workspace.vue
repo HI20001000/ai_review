@@ -1599,6 +1599,7 @@ function findCategoryKey(items) {
                 info.priority = -Infinity;
             }
         }
+        return rows;
     }
 
     const candidates = [];
@@ -4006,7 +4007,10 @@ onBeforeUnmount(() => {
                                                     {{ activeReportDetails.dmlReport.reportText }}
                                                 </pre>
                                             </section>
-                                            <section v-if="shouldShowReportIssuesSection" class="reportIssuesSection">
+                                            <section
+                                                v-if="shouldShowReportIssuesSection"
+                                                class="reportIssuesSection"
+                                            >
                                                 <div class="reportIssuesHeader">
                                                     <div class="reportIssuesHeaderInfo">
                                                         <h4>問題清單</h4>
@@ -4203,7 +4207,12 @@ onBeforeUnmount(() => {
                                                     <p v-else class="reportIssuesEmpty">此報告不支援結構化檢視。</p>
                                                 </div>
                                             </section>
-                                            <p v-else class="reportIssuesEmpty">未檢測到任何問題。</p>
+                                            <section
+                                                v-else
+                                                class="reportIssuesSection reportIssuesSection--empty"
+                                            >
+                                                <p class="reportIssuesEmpty">未檢測到任何問題。</p>
+                                            </section>
 
                                     </div>
                                     <pre v-else class="reportBody codeScroll themed-scrollbar">{{ activeReport.state.report }}</pre>
@@ -4984,6 +4993,10 @@ body,
     flex: 0 0 auto;
     min-height: 0;
     align-self: stretch;
+}
+
+.reportIssuesSection--empty {
+    padding-top: 12px;
 }
 
 
