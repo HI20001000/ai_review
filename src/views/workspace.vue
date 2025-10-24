@@ -4006,133 +4006,131 @@ onBeforeUnmount(() => {
                                                     {{ activeReportDetails.dmlReport.reportText }}
                                                 </pre>
                                             </section>
-                                            <template v-if="shouldShowReportIssuesSection">
-                                                <section class="reportIssuesSection">
-                                                    <div class="reportIssuesHeader">
-                                                        <div class="reportIssuesHeaderInfo">
-                                                            <h4>問題清單</h4>
-                                                            <span class="reportIssuesTotal">
-                                                                <template v-if="activeReportIssueCount !== null">
-                                                                    共 {{ activeReportIssueCount }} 項
-                                                                </template>
-                                                                <template v-else>—</template>
-                                                            </span>
-                                                        </div>
-                                                        <div class="reportIssuesToggle" role="group" aria-label="檢視模式">
-                                                            <button
-                                                                type="button"
-                                                                class="reportIssuesToggleButton"
-                                                                :class="{ active: reportIssuesViewMode === 'code' }"
-                                                                :disabled="!canShowCodeIssues"
-                                                                @click="setReportIssuesViewMode('code')"
-                                                            >
-                                                                報告預覽
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                class="reportIssuesToggleButton"
-                                                                :class="{ active: reportIssuesViewMode === 'static' }"
-                                                                :disabled="!canShowStaticReportJson"
-                                                                @click="setReportIssuesViewMode('static')"
-                                                            >
-                                                                靜態分析器 JSON
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                class="reportIssuesToggleButton"
-                                                                :class="{ active: reportIssuesViewMode === 'dify' }"
-                                                                :disabled="!canShowDifyReportJson"
-                                                                @click="setReportIssuesViewMode('dify')"
-                                                            >
-                                                                Dify JSON
-                                                            </button>
-                                                        </div>
+                                            <section v-if="shouldShowReportIssuesSection" class="reportIssuesSection">
+                                                <div class="reportIssuesHeader">
+                                                    <div class="reportIssuesHeaderInfo">
+                                                        <h4>問題清單</h4>
+                                                        <span class="reportIssuesTotal">
+                                                            <template v-if="activeReportIssueCount !== null">
+                                                                共 {{ activeReportIssueCount }} 項
+                                                            </template>
+                                                            <template v-else>—</template>
+                                                        </span>
                                                     </div>
-                                                    <div class="reportIssuesContent">
-                                                        <template v-if="reportIssuesViewMode === 'code'">
-                                                            <template v-if="activeReportDetails">
+                                                    <div class="reportIssuesToggle" role="group" aria-label="檢視模式">
+                                                        <button
+                                                            type="button"
+                                                            class="reportIssuesToggleButton"
+                                                            :class="{ active: reportIssuesViewMode === 'code' }"
+                                                            :disabled="!canShowCodeIssues"
+                                                            @click="setReportIssuesViewMode('code')"
+                                                        >
+                                                            報告預覽
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="reportIssuesToggleButton"
+                                                            :class="{ active: reportIssuesViewMode === 'static' }"
+                                                            :disabled="!canShowStaticReportJson"
+                                                            @click="setReportIssuesViewMode('static')"
+                                                        >
+                                                            靜態分析器 JSON
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="reportIssuesToggleButton"
+                                                            :class="{ active: reportIssuesViewMode === 'dify' }"
+                                                            :disabled="!canShowDifyReportJson"
+                                                            @click="setReportIssuesViewMode('dify')"
+                                                        >
+                                                            Dify JSON
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div class="reportIssuesContent">
+                                                    <div v-if="reportIssuesViewMode === 'code'">
+                                                        <div v-if="activeReportDetails">
+                                                            <div
+                                                                v-if="activeReport.state.sourceLoading"
+                                                                class="reportIssuesNotice"
+                                                            >
+                                                                正在載入原始碼…
+                                                            </div>
+                                                            <div
+                                                                v-else-if="activeReport.state.sourceError"
+                                                                class="reportIssuesNotice reportIssuesNotice--error"
+                                                            >
+                                                                無法載入檔案內容：{{ activeReport.state.sourceError }}
+                                                            </div>
+                                                            <div v-else>
                                                                 <div
-                                                                    v-if="activeReport.state.sourceLoading"
-                                                                    class="reportIssuesNotice"
+                                                                    v-if="shouldShowDifyUnavailableNotice"
+                                                                    class="reportIssuesNotice reportIssuesNotice--warning"
                                                                 >
-                                                                    正在載入原始碼…
+                                                                    {{ reportDifyUnavailableNotice }}
                                                                 </div>
                                                                 <div
-                                                                    v-else-if="activeReport.state.sourceError"
-                                                                    class="reportIssuesNotice reportIssuesNotice--error"
+                                                                    v-if="hasReportIssueLines"
+                                                                    class="reportRow reportIssuesRow"
                                                                 >
-                                                                    無法載入檔案內容：{{ activeReport.state.sourceError }}
-                                                                </div>
-                                                                <template v-else>
-                                                                    <div
-                                                                        v-if="shouldShowDifyUnavailableNotice"
-                                                                        class="reportIssuesNotice reportIssuesNotice--warning"
-                                                                    >
-                                                                        {{ reportDifyUnavailableNotice }}
-                                                                    </div>
-                                                                    <div
-                                                                        v-if="hasReportIssueLines"
-                                                                        class="reportRow reportIssuesRow"
-                                                                    >
-                                                                        <div class="reportRowContent codeScroll themed-scrollbar">
-                                                                            <div class="codeEditor">
-                                                                                <div
-                                                                                    v-for="line in reportIssueLines"
-                                                                                    :key="line.key"
-                                                                                    class="codeLine"
+                                                                    <div class="reportRowContent codeScroll themed-scrollbar">
+                                                                        <div class="codeEditor">
+                                                                            <div
+                                                                                v-for="line in reportIssueLines"
+                                                                                :key="line.key"
+                                                                                class="codeLine"
+                                                                                :class="{
+                                                                                    'codeLine--issue': line.type === 'code' && line.hasIssue,
+                                                                                    'codeLine--meta': line.type !== 'code',
+                                                                                    'codeLine--issuesMeta': line.type === 'issues',
+                                                                                    'codeLine--fixMeta': line.type === 'fix'
+                                                                                }"
+                                                                            >
+                                                                                <span
+                                                                                    class="codeLineNo"
                                                                                     :class="{
-                                                                                        'codeLine--issue': line.type === 'code' && line.hasIssue,
-                                                                                        'codeLine--meta': line.type !== 'code',
-                                                                                        'codeLine--issuesMeta': line.type === 'issues',
-                                                                                        'codeLine--fixMeta': line.type === 'fix'
+                                                                                        'codeLineNo--issue': line.type === 'code' && line.hasIssue,
+                                                                                        'codeLineNo--meta': line.type !== 'code',
+                                                                                        'codeLineNo--issues': line.type === 'issues',
+                                                                                        'codeLineNo--fix': line.type === 'fix'
                                                                                     }"
+                                                                                    :data-line="line.displayNumber"
+                                                                                    :aria-label="line.type !== 'code' ? line.iconLabel : null"
+                                                                                    :aria-hidden="line.type === 'code'"
                                                                                 >
-                                                                                    <span
-                                                                                        class="codeLineNo"
-                                                                                        :class="{
-                                                                                            'codeLineNo--issue': line.type === 'code' && line.hasIssue,
-                                                                                            'codeLineNo--meta': line.type !== 'code',
-                                                                                            'codeLineNo--issues': line.type === 'issues',
-                                                                                            'codeLineNo--fix': line.type === 'fix'
-                                                                                        }"
-                                                                                        :data-line="line.displayNumber"
-                                                                                        :aria-label="line.type !== 'code' ? line.iconLabel : null"
-                                                                                        :aria-hidden="line.type === 'code'"
+                                                                                    <svg
+                                                                                        v-if="line.type === 'issues'"
+                                                                                        class="codeLineNoIcon codeLineNoIcon--warning"
+                                                                                        viewBox="0 0 20 20"
+                                                                                        focusable="false"
+                                                                                        aria-hidden="true"
                                                                                     >
-                                                                                        <svg
-                                                                                            v-if="line.type === 'issues'"
-                                                                                            class="codeLineNoIcon codeLineNoIcon--warning"
-                                                                                            viewBox="0 0 20 20"
-                                                                                            focusable="false"
-                                                                                            aria-hidden="true"
-                                                                                        >
-                                                                                            <path
-                                                                                                d="M10.447 2.105a1 1 0 00-1.894 0l-7 14A1 1 0 002.447 18h15.106a1 1 0 00.894-1.447l-7-14zM10 6a1 1 0 01.993.883L11 7v4a1 1 0 01-1.993.117L9 11V7a1 1 0 011-1zm0 8a1 1 0 110 2 1 1 0 010-2z"
-                                                                                            />
-                                                                                        </svg>
-                                                                                        <svg
-                                                                                            v-else-if="line.type === 'fix'"
-                                                                                            class="codeLineNoIcon codeLineNoIcon--fix"
-                                                                                            viewBox="0 0 20 20"
-                                                                                            focusable="false"
-                                                                                            aria-hidden="true"
-                                                                                        >
-                                                                                            <path
-                                                                                                d="M17.898 2.102a1 1 0 00-1.517.127l-2.156 2.873-1.21-.403a1 1 0 00-1.043.24l-4.95 4.95a1 1 0 000 1.414l1.775 1.775-5.189 5.189a1 1 0 001.414 1.414l5.189-5.189 1.775 1.775a1 1 0 001.414 0l4.95-4.95a1 1 0 00.24-1.043l-.403-1.21 2.873-2.156a1 1 0 00.127-1.517l-.489-.489z"
-                                                                                            />
-                                                                                        </svg>
-                                                                                    </span>
-                                                                                    <span
-                                                                                        class="codeLineContent"
-                                                                                        :class="{
-                                                                                            'codeLineContent--issueHighlight':
-                                                                                                line.type === 'code' && line.hasIssue,
-                                                                                            'codeLineContent--issues': line.type === 'issues',
-                                                                                            'codeLineContent--fix': line.type === 'fix'
-                                                                                        }"
-                                                                                        v-html="line.html"
-                                                                                    ></span>
-                                                                                </div>
+                                                                                        <path
+                                                                                            d="M10.447 2.105a1 1 0 00-1.894 0l-7 14A1 1 0 002.447 18h15.106a1 1 0 00.894-1.447l-7-14zM10 6a1 1 0 01.993.883L11 7v4a1 1 0 01-1.993.117L9 11V7a1 1 0 011-1zm0 8a1 1 0 110 2 1 1 0 010-2z"
+                                                                                        />
+                                                                                    </svg>
+                                                                                    <svg
+                                                                                        v-else-if="line.type === 'fix'"
+                                                                                        class="codeLineNoIcon codeLineNoIcon--fix"
+                                                                                        viewBox="0 0 20 20"
+                                                                                        focusable="false"
+                                                                                        aria-hidden="true"
+                                                                                    >
+                                                                                        <path
+                                                                                            d="M17.898 2.102a1 1 0 00-1.517.127l-2.156 2.873-1.21-.403a1 1 0 00-1.043.24l-4.95 4.95a1 1 0 000 1.414l1.775 1.775-5.189 5.189a1 1 0 001.414 1.414l5.189-5.189 1.775 1.775a1 1 0 001.414 0l4.95-4.95a1 1 0 00.24-1.043l-.403-1.21 2.873-2.156a1 1 0 00.127-1.517l-.489-.489z"
+                                                                                        />
+                                                                                    </svg>
+                                                                                </span>
+                                                                                <span
+                                                                                    class="codeLineContent"
+                                                                                    :class="{
+                                                                                        'codeLineContent--issueHighlight':
+                                                                                            line.type === 'code' && line.hasIssue,
+                                                                                        'codeLineContent--issues': line.type === 'issues',
+                                                                                        'codeLineContent--fix': line.type === 'fix'
+                                                                                    }"
+                                                                                    v-html="line.html"
+                                                                                ></span>
                                                                             </div>
                                                                         </div>
                                                                     </div>
@@ -4153,44 +4151,59 @@ onBeforeUnmount(() => {
                                                                         <span v-else>匯出 Excel</span>
                                                                     </button>
                                                                 </div>
-                                                                <pre class="reportRowContent codeScroll themed-scrollbar">
-                                                                    {{ activeReportStaticRawText }}
-                                                                </pre>
-                                                                <p v-if="!canExportActiveReportStaticRaw" class="reportRowNotice">
-                                                                    靜態分析器 JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
-                                                                </p>
+                                                                <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
                                                             </div>
-                                                            <p v-else class="reportIssuesEmpty">尚未取得靜態分析器報告內容。</p>
-                                                        </template>
-                                                        <template v-else-if="reportIssuesViewMode === 'dify'">
-                                                            <div v-if="activeReportDifyRawText.trim().length" class="reportRow">
-                                                                <div v-if="canExportActiveReportDifyRaw" class="reportRowActions">
-                                                                    <button
-                                                                        type="button"
-                                                                        class="reportRowActionButton"
-                                                                        :disabled="isExportingReportJsonExcel"
-                                                                        @click="exportActiveReportJsonToExcel('dify')"
-                                                                    >
-                                                                        <span v-if="isExportingReportJsonExcel">匯出中…</span>
-                                                                        <span v-else>匯出 Excel</span>
-                                                                    </button>
-                                                                </div>
-                                                                <pre class="reportRowContent codeScroll themed-scrollbar">
-                                                                    {{ activeReportDifyRawText }}
-                                                                </pre>
-                                                                <p v-if="!canExportActiveReportDifyRaw" class="reportRowNotice">
-                                                                    Dify JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
-                                                                </p>
-                                                            </div>
-                                                            <p v-else class="reportIssuesEmpty">尚未取得 Dify 報告內容。</p>
-                                                        </template>
-                                                        <p v-else class="reportIssuesEmpty">此報告不支援結構化檢視。</p>
+                                                        </div>
+                                                        <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
                                                     </div>
-                                                </section>
-                                            </template>
-                                            <template v-else>
-                                                <p class="reportIssuesEmpty">未檢測到任何問題。</p>
-                                            </template>
+                                                    <div v-else-if="reportIssuesViewMode === 'static'">
+                                                        <div v-if="activeReportStaticRawText.trim().length" class="reportRow">
+                                                            <div v-if="canExportActiveReportStaticRaw" class="reportRowActions">
+                                                                <button
+                                                                    type="button"
+                                                                    class="reportRowActionButton"
+                                                                    :disabled="isExportingReportJsonExcel"
+                                                                    @click="exportActiveReportJsonToExcel('static')"
+                                                                >
+                                                                    <span v-if="isExportingReportJsonExcel">匯出中…</span>
+                                                                    <span v-else>匯出 Excel</span>
+                                                                </button>
+                                                            </div>
+                                                            <pre class="reportRowContent codeScroll themed-scrollbar">
+                                                                {{ activeReportStaticRawText }}
+                                                            </pre>
+                                                            <p v-if="!canExportActiveReportStaticRaw" class="reportRowNotice">
+                                                                靜態分析器 JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
+                                                            </p>
+                                                        </div>
+                                                        <p v-else class="reportIssuesEmpty">尚未取得靜態分析器報告內容。</p>
+                                                    </div>
+                                                    <div v-else-if="reportIssuesViewMode === 'dify'">
+                                                        <div v-if="activeReportDifyRawText.trim().length" class="reportRow">
+                                                            <div v-if="canExportActiveReportDifyRaw" class="reportRowActions">
+                                                                <button
+                                                                    type="button"
+                                                                    class="reportRowActionButton"
+                                                                    :disabled="isExportingReportJsonExcel"
+                                                                    @click="exportActiveReportJsonToExcel('dify')"
+                                                                >
+                                                                    <span v-if="isExportingReportJsonExcel">匯出中…</span>
+                                                                    <span v-else>匯出 Excel</span>
+                                                                </button>
+                                                            </div>
+                                                            <pre class="reportRowContent codeScroll themed-scrollbar">
+                                                                {{ activeReportDifyRawText }}
+                                                            </pre>
+                                                            <p v-if="!canExportActiveReportDifyRaw" class="reportRowNotice">
+                                                                Dify JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
+                                                            </p>
+                                                        </div>
+                                                        <p v-else class="reportIssuesEmpty">尚未取得 Dify 報告內容。</p>
+                                                    </div>
+                                                    <p v-else class="reportIssuesEmpty">此報告不支援結構化檢視。</p>
+                                                </div>
+                                            </section>
+                                            <p v-else class="reportIssuesEmpty">未檢測到任何問題。</p>
 
                                     </div>
                                     <pre v-else class="reportBody codeScroll themed-scrollbar">{{ activeReport.state.report }}</pre>
