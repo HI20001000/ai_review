@@ -13,7 +13,9 @@ const props = defineProps({
     onGenerate: { type: Function, required: true },
     onSelect: { type: Function, required: true },
     getStatusLabel: { type: Function, required: true },
-    activeTarget: { type: Object, default: null }
+    activeTarget: { type: Object, default: null },
+    showFileActions: { type: Boolean, default: true },
+    allowSelectWithoutReport: { type: Boolean, default: false }
 });
 
 const isDirectory = computed(() => props.node.type === "dir");
@@ -126,6 +128,12 @@ const isProcessing = computed(() => fileState.value?.status === "processing");
 const isReady = computed(() => fileState.value?.status === "ready");
 const isError = computed(() => fileState.value?.status === "error");
 const isViewable = computed(() => isReady.value || isError.value);
+const allowSelect = computed(() => {
+    if (!isFile.value) return false;
+    if (props.allowSelectWithoutReport) return true;
+    return isViewable.value;
+});
+const showActions = computed(() => Boolean(props.showFileActions));
 
 function handleToggle() {
     if (!isDirectory.value) return;
@@ -137,7 +145,7 @@ function handleRowClick() {
         handleToggle();
         return;
     }
-    if (isViewable.value) {
+    if (allowSelect.value) {
         props.onSelect(props.projectId, props.node.path);
     }
 }
@@ -149,7 +157,9 @@ function handleGenerate(event) {
 
 function handleSelect(event) {
     event?.stopPropagation?.();
-    props.onSelect(props.projectId, props.node.path);
+    if (allowSelect.value) {
+        props.onSelect(props.projectId, props.node.path);
+    }
 }
 </script>
 
@@ -183,6 +193,7 @@ function handleSelect(event) {
                     {{ statusLabel }}
                 </span>
                 <button
+                    v-if="showActions"
                     type="button"
                     class="reportActionBtn"
                     :disabled="isProcessing"
@@ -193,7 +204,7 @@ function handleSelect(event) {
                     <span v-else>生成報告</span>
                 </button>
                 <button
-                    v-if="isViewable"
+                    v-if="showActions && allowSelect"
                     type="button"
                     class="reportViewBtn"
                     @click="handleSelect"
