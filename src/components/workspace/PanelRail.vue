@@ -1,6 +1,5 @@
 <script setup>
 import { computed, ref, useSlots } from "vue";
-import TreeNode from "./TreeNode.vue";
 import ReportPanel from "../reports/ReportPanel.vue";
 
 const props = defineProps({
@@ -71,48 +70,30 @@ const isReportsMode = computed(() => props.mode === "reports");
 const hasCustomContent = computed(() => !!slots.default);
 
 const hasProjects = computed(() => (props.projects || []).length > 0);
-const hasSelectedProject = computed(
-    () => props.selectedProjectId !== null && props.selectedProjectId !== undefined
-);
-const hasTreeNodes = computed(() => Array.isArray(props.tree) && props.tree.length > 0);
-const shouldShowTreeList = computed(
-    () =>
-        isProjectsMode.value &&
-        hasSelectedProject.value &&
-        !props.isTreeCollapsed &&
-        hasTreeNodes.value &&
-        !props.isLoadingTree
-);
-const shouldShowTreeLoading = computed(
-    () =>
-        isProjectsMode.value &&
-        hasSelectedProject.value &&
-        !props.isTreeCollapsed &&
-        props.isLoadingTree
-);
-const shouldShowEmptyTree = computed(
-    () =>
-        isProjectsMode.value &&
-        hasSelectedProject.value &&
-        !props.isTreeCollapsed &&
-        !props.isLoadingTree &&
-        !hasTreeNodes.value
-);
-
 const isHoveringResizeEdge = ref(false);
 
 const EDGE_THRESHOLD = 8;
 
 const reportPanelProps = computed(() => {
-    if (!isReportsMode.value) {
-        return null;
-    }
     const config = props.reportConfig;
     if (!config || typeof config !== "object") {
         return null;
     }
     return { ...config };
 });
+
+const treeHeaderLabel = computed(() => {
+    if (configHasTitle(props.reportConfig)) {
+        return props.reportConfig.panelTitle;
+    }
+    return isProjectsMode.value ? "Project Files" : "代碼審查";
+});
+
+const showReportTree = computed(() => Boolean(reportPanelProps.value));
+
+function configHasTitle(config) {
+    return Boolean(config && typeof config === "object" && config.panelTitle);
+}
 
 function updateResizeHoverState(event) {
     const panel = event.currentTarget;
@@ -181,36 +162,26 @@ function handlePointerDown(event) {
                 </div>
 
                 <div
-                    v-if="hasSelectedProject"
                     class="treeArea"
                     :class="{ collapsed: isTreeCollapsed }"
                 >
-                    <div class="panelHeader">Project Files</div>
-                    <div v-if="isTreeCollapsed" class="collapsedNotice">檔案樹已折疊，點擊專案可再次展開。</div>
-                    <div v-else-if="shouldShowTreeLoading" class="loading">Loading...</div>
-                    <ul v-else-if="shouldShowTreeList" class="treeRoot themed-scrollbar">
-                        <TreeNode
-                            v-for="n in tree"
-                            :key="n.path"
-                            :node="n"
-                            :active-path="activeTreePath"
-                            @open="openNode"
-                            @select="selectTreeNode"
-                        />
-                    </ul>
-                    <p v-else-if="shouldShowEmptyTree" class="emptyTree">尚未載入任何檔案。</p>
-                </div>
-
-                <div v-else class="treePlaceholder">
-                    <div class="panelHeader">Project Files</div>
-                    <p class="emptyTree">請先選擇左側的專案以載入檔案。</p>
+                    <div class="panelHeader">{{ treeHeaderLabel }}</div>
+                    <div v-if="isTreeCollapsed" class="collapsedNotice">
+                        檔案樹已折疊，點擊專案可再次展開。
+                    </div>
+                    <div v-else>
+                        <div v-if="showReportTree" class="reportPanelWrapper">
+                            <ReportPanel v-bind="reportPanelProps" />
+                        </div>
+                        <div v-else class="emptyTree">尚未載入任何報告專案。</div>
+                    </div>
                 </div>
             </template>
             <template v-else-if="isReportsMode">
                 <div class="projectPanel projectPanel--reports">
-                    <div class="panelHeader">代碼審查</div>
+                    <div class="panelHeader">{{ treeHeaderLabel }}</div>
                     <div class="reportPanelWrapper">
-                        <ReportPanel v-if="reportPanelProps" v-bind="reportPanelProps" />
+                        <ReportPanel v-if="showReportTree" v-bind="reportPanelProps" />
                         <div v-else class="emptyTree">尚未載入任何報告專案。</div>
                     </div>
                 </div>
@@ -314,7 +285,7 @@ function handlePointerDown(event) {
 
 .projectItem.active {
     border-color: var(--panel-border-strong);
-    background: rgba(148, 163, 184, 0.18);
+    background: rgba(82, 82, 91, 0.32);
 }
 
 .projectHeader {
