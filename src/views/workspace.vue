@@ -3867,9 +3867,9 @@ onBeforeUnmount(() => {
                                                                 </div>
                                                                 <div
                                                                     v-if="hasReportIssueLines"
-                                                                    class="pvBox codeBox reportIssuesBox"
+                                                                    class="reportRow reportIssuesRow"
                                                                 >
-                                                                    <div class="codeScroll themed-scrollbar reportIssueCodeScroll">
+                                                                    <div class="reportRowContent codeScroll themed-scrollbar">
                                                                         <div class="codeEditor">
                                                                         <div
                                                                             v-for="line in reportIssueLines"
@@ -4814,19 +4814,6 @@ body,
     color: #facc15;
 }
 
-.reportIssuesBox {
-    flex: 1 1 auto;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-}
-
-.reportIssuesBox .codeScroll {
-    flex: 1 1 auto;
-    max-height: none;
-    overflow: auto;
-}
-
 .reportRow {
     flex: 1 1 auto;
     min-height: 0;
@@ -4887,16 +4874,25 @@ body,
     color: #94a3b8;
 }
 
-.reportIssuesBox .codeEditor {
+.reportIssuesRow .reportRowContent {
+    padding: 0;
+}
+
+.reportIssuesRow .reportRowContent.codeScroll {
+    display: flex;
+    flex-direction: column;
+}
+
+.reportIssuesRow .codeEditor {
     padding: 4px 0;
 }
 
-.reportIssuesBox .codeLine {
+.reportIssuesRow .codeLine {
     border-left: 3px solid transparent;
     padding: 2px 0;
 }
 
-.reportIssuesBox .codeLine--issue {
+.reportIssuesRow .codeLine--issue {
     background: rgba(248, 113, 113, 0.12);
     border-left-color: rgba(248, 113, 113, 0.65);
 }
@@ -4910,17 +4906,17 @@ body,
     background: rgba(248, 113, 113, 0.08);
 }
 
-.reportIssuesBox .codeLine--meta {
+.reportIssuesRow .codeLine--meta {
     background: rgba(15, 23, 42, 0.92);
     border-left-color: rgba(148, 163, 184, 0.4);
 }
 
-.reportIssuesBox .codeLine--issuesMeta {
+.reportIssuesRow .codeLine--issuesMeta {
     background: rgba(251, 146, 60, 0.18);
     border-left-color: rgba(251, 146, 60, 0.55);
 }
 
-.reportIssuesBox .codeLine--fixMeta {
+.reportIssuesRow .codeLine--fixMeta {
     background: rgba(56, 189, 248, 0.14);
     border-left-color: rgba(56, 189, 248, 0.5);
 }
