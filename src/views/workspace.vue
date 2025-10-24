@@ -7268,8 +7268,8 @@ onBeforeUnmount(() => {
                                                     </div>
                                                 </div>
                                                 <div class="reportIssuesContent">
-                                                    <div v-if="reportIssuesViewMode === 'code'">
-                                                        <div v-if="activeReportDetails">
+                                                    <template v-if="reportIssuesViewMode === 'code'">
+                                                        <template v-if="activeReportDetails">
                                                             <div
                                                                 v-if="activeReport.state.sourceLoading"
                                                                 class="reportIssuesNotice"
@@ -7344,8 +7344,7 @@ onBeforeUnmount(() => {
                                                                                 <span
                                                                                     class="codeLineContent"
                                                                                     :class="{
-                                                                                        'codeLineContent--issueHighlight':
-                                                                                            line.type === 'code' && line.hasIssue,
+                                                                                        'codeLineContent--issueHighlight': line.type === 'code' && line.hasIssue,
                                                                                         'codeLineContent--issues': line.type === 'issues',
                                                                                         'codeLineContent--fix': line.type === 'fix'
                                                                                     }"
@@ -7354,29 +7353,13 @@ onBeforeUnmount(() => {
                                                                             </div>
                                                                         </div>
                                                                     </div>
-                                                                </template>
-                                                            </template>
-                                                            <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
-                                                        </template>
-                                                        <template v-else-if="reportIssuesViewMode === 'static'">
-                                                            <div v-if="activeReportStaticRawText.trim().length" class="reportRow">
-                                                                <div v-if="canExportActiveReportStaticRaw" class="reportRowActions">
-                                                                    <button
-                                                                        type="button"
-                                                                        class="reportRowActionButton"
-                                                                        :disabled="isExportingReportJsonExcel"
-                                                                        @click="exportActiveReportJsonToExcel('static')"
-                                                                    >
-                                                                        <span v-if="isExportingReportJsonExcel">匯出中…</span>
-                                                                        <span v-else>匯出 Excel</span>
-                                                                    </button>
                                                                 </div>
                                                                 <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
                                                             </div>
-                                                        </div>
+                                                        </template>
                                                         <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
-                                                    </div>
-                                                    <div v-else-if="reportIssuesViewMode === 'static'">
+                                                    </template>
+                                                    <template v-else-if="reportIssuesViewMode === 'static'">
                                                         <div v-if="activeReportStaticRawText.trim().length" class="reportRow">
                                                             <div v-if="canExportActiveReportStaticRaw" class="reportRowActions">
                                                                 <button
@@ -7397,8 +7380,8 @@ onBeforeUnmount(() => {
                                                             </p>
                                                         </div>
                                                         <p v-else class="reportIssuesEmpty">尚未取得靜態分析器報告內容。</p>
-                                                    </div>
-                                                    <div v-else-if="reportIssuesViewMode === 'dify'">
+                                                    </template>
+                                                    <template v-else-if="reportIssuesViewMode === 'dify'">
                                                         <div v-if="activeReportDifyRawText.trim().length" class="reportRow">
                                                             <div v-if="canExportActiveReportDifyRaw" class="reportRowActions">
                                                                 <button
@@ -7419,7 +7402,7 @@ onBeforeUnmount(() => {
                                                             </p>
                                                         </div>
                                                         <p v-else class="reportIssuesEmpty">尚未取得 Dify 報告內容。</p>
-                                                    </div>
+                                                    </template>
                                                     <p v-else class="reportIssuesEmpty">此報告不支援結構化檢視。</p>
                                                 </div>
                                             </section>
