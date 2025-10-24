@@ -682,6 +682,68 @@ const activeReportDetails = computed(() => {
 
 
 const hasStructuredReport = computed(() => Boolean(activeReportDetails.value));
+const summarySourceItems = computed(() => {
+    const sources = activeReportDetails.value?.sourceSummaries;
+    return Array.isArray(sources) ? sources : [];
+});
+const combinedSummaryItems = computed(() => {
+    const items = activeReportDetails.value?.combinedSummaryDetails;
+    return Array.isArray(items) ? items : [];
+});
+const ruleBreakdownItems = computed(() => {
+    const items = activeReportDetails.value?.ruleBreakdown;
+    return Array.isArray(items) ? items : [];
+});
+const severityBreakdownItems = computed(() => {
+    const items = activeReportDetails.value?.severityBreakdown;
+    return Array.isArray(items) ? items : [];
+});
+const activeReportSummaryText = computed(() => {
+    const text = activeReportDetails.value?.summaryText;
+    return typeof text === "string" ? text : "";
+});
+const shouldShowNoIssueSummary = computed(() => {
+    const details = activeReportDetails.value;
+    return Boolean(details) && !activeReportSummaryText.value && details.totalIssues === 0;
+});
+const activeReportTotalIssuesDisplay = computed(() => {
+    const value = activeReportDetails.value?.totalIssues;
+    if (value === null || value === undefined) {
+        return "—";
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return String(value);
+    }
+    return String(value);
+});
+const staticSummaryDetailsItems = computed(() => {
+    const items = activeReportDetails.value?.staticSummaryDetails;
+    return Array.isArray(items) ? items : [];
+});
+const staticMetadataDetailsItems = computed(() => {
+    const items = activeReportDetails.value?.staticMetadataDetails;
+    return Array.isArray(items) ? items : [];
+});
+const hasStaticDetailContent = computed(
+    () => staticSummaryDetailsItems.value.length > 0 || staticMetadataDetailsItems.value.length > 0
+);
+const staticEngineName = computed(() => {
+    const engine = activeReportDetails.value?.staticMetadata?.engine;
+    return typeof engine === "string" ? engine : "";
+});
+const staticSourceName = computed(() => {
+    const source = activeReportDetails.value?.staticSummary?.analysis_source;
+    return typeof source === "string" ? source : "";
+});
+const dmlReportDetails = computed(() => {
+    const report = activeReportDetails.value?.dmlReport;
+    return report && typeof report === "object" ? report : null;
+});
+const dmlSegments = computed(() => {
+    const segments = dmlReportDetails.value?.segments;
+    return Array.isArray(segments) ? segments : [];
+});
+const hasDmlSegments = computed(() => dmlSegments.value.length > 0);
 const activeReportSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
@@ -1122,6 +1184,823 @@ watch(
     },
     { immediate: true }
 );
+
+watch(
+    [canShowStructuredSummary, canShowStructuredStatic, canShowStructuredDml],
+    () => {
+        ensureStructuredReportViewMode(structuredReportViewMode.value);
+    },
+    { immediate: true }
+);
+
+function getReportJsonValueForMode(mode) {
+    if (mode === "dify") {
+        return activeReportDifyRawValue.value;
+    }
+    return activeReportStaticRawValue.value;
+}
+
+function getReportJsonLabel(mode) {
+    if (mode === "dify") {
+        return "Dify JSON";
+    }
+    return "靜態分析器 JSON";
+}
+
+async function exportActiveReportJsonToExcel(mode) {
+    if (isExportingReportJsonExcel.value) return;
+    const raw = getReportJsonValueForMode(mode);
+    if (!raw.success) {
+        const label = getReportJsonLabel(mode);
+        alert(`${label} 不是有效的 JSON 格式，無法匯出 Excel。`);
+        return;
+    }
+
+    try {
+        isExportingReportJsonExcel.value = true;
+        const worksheet = buildWorksheetFromValue(raw.value);
+        const blob = await createExcelBlobFromWorksheet(worksheet);
+        const fileName = buildActiveReportExcelFileName(mode);
+        triggerBlobDownload(blob, fileName);
+    } catch (error) {
+        console.error("[reports] Failed to export report JSON to Excel", error);
+        const message = error?.message || String(error);
+        alert(`匯出 Excel 失敗：${message}`);
+    } finally {
+        isExportingReportJsonExcel.value = false;
+    }
+}
+
+function parseReportRawValue(rawText) {
+    if (typeof rawText !== "string") {
+        return { success: false, value: null };
+    }
+    let candidate = rawText.trim();
+    if (!candidate) {
+        return { success: false, value: null };
+    }
+
+    const maxDepth = 3;
+    for (let depth = 0; depth < maxDepth; depth += 1) {
+        try {
+            const parsed = JSON.parse(candidate);
+            if (typeof parsed === "string") {
+                const trimmed = parsed.trim();
+                if (trimmed && trimmed !== candidate && /^[\[{]/.test(trimmed)) {
+                    candidate = trimmed;
+                    continue;
+                }
+                return { success: true, value: parsed };
+            }
+            return { success: true, value: parsed };
+        } catch (error) {
+            break;
+        }
+    }
+
+    return { success: false, value: null };
+}
+
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function buildWorksheetFromValue(value) {
+    const hierarchical = buildHierarchicalWorksheet(value);
+    if (hierarchical) {
+        return hierarchical;
+    }
+
+    const categorized = buildCategorizedWorksheet(value);
+    if (categorized) {
+        return categorized;
+    }
+
+    const rows = buildGenericWorksheetRows(value);
+    return { rows, merges: [] };
+}
+
+function buildSummaryDetailList(source, options = {}) {
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+        return [];
+    }
+
+    const omit = new Set(options.omitKeys || []);
+    const details = [];
+
+    for (const [key, rawValue] of Object.entries(source)) {
+        if (omit.has(key)) continue;
+        if (rawValue === null || rawValue === undefined) continue;
+        if (typeof rawValue === "object") continue;
+
+        let value;
+        if (typeof rawValue === "boolean") {
+            value = rawValue ? "是" : "否";
+        } else {
+            value = String(rawValue);
+        }
+
+        const label = typeof key === "string" && key.trim() ? key : "-";
+        details.push({ label, value });
+    }
+
+    return details;
+}
+
+function buildHierarchicalWorksheet(value) {
+    if (!isPlainObject(value) && !Array.isArray(value)) {
+        return null;
+    }
+
+    const rootChildren = createTreeChildren(value);
+    if (rootChildren.length === 0) {
+        return null;
+    }
+
+    const root = { label: null, value: undefined, children: rootChildren };
+    assignTreeDepth(root, -1);
+    computeTreeRowSpan(root);
+    assignTreeStartRow(root, 1);
+
+    const leafRecords = [];
+    collectTreeLeafRows(root, [], leafRecords);
+    if (leafRecords.length === 0) {
+        return null;
+    }
+
+    const maxLabelCount = leafRecords.reduce(
+        (max, record) => Math.max(max, record.labels.length),
+        0
+    );
+    const totalColumns = maxLabelCount + 1;
+
+    const rows = leafRecords.map((record) => {
+        const cells = new Array(totalColumns);
+        for (let index = 0; index < totalColumns; index += 1) {
+            cells[index] = createSheetCell(null);
+        }
+
+        record.labels.forEach((label, index) => {
+            cells[index] = createSheetCell(label, { forceString: true });
+        });
+
+        const valueColumnIndex = record.labels.length;
+        cells[valueColumnIndex] = createSheetCell(record.value);
+
+        return cells;
+    });
+
+    const merges = [];
+    collectTreeMerges(root, merges);
+
+    return { rows, merges };
+}
+
+function createTreeChildren(value) {
+    if (isPlainObject(value)) {
+        const entries = Object.entries(value);
+        if (entries.length === 0) {
+            return [];
+        }
+        return entries.map(([key, childValue]) => createTreeNode(key, childValue));
+    }
+
+    if (Array.isArray(value)) {
+        if (value.length === 0) {
+            return [];
+        }
+        return value.map((item, index) => createTreeNode(deduceArrayItemLabel(item, index), item));
+    }
+
+    return [];
+}
+
+function createTreeNode(label, value) {
+    if (isPlainObject(value)) {
+        const children = createTreeChildren(value);
+        if (children.length === 0) {
+            return { label, value: "", children: [] };
+        }
+        return { label, value: undefined, children };
+    }
+
+    if (Array.isArray(value)) {
+        const children = createTreeChildren(value);
+        if (children.length === 0) {
+            return { label, value: "", children: [] };
+        }
+        return { label, value: undefined, children };
+    }
+
+    return { label, value, children: [] };
+}
+
+function deduceArrayItemLabel(item, index) {
+    if (isPlainObject(item)) {
+        const candidateKeys = ["name", "label", "key", "id", "title"];
+        for (const key of candidateKeys) {
+            const value = item[key];
+            if (typeof value === "string" && value.trim()) {
+                return value;
+            }
+            if (typeof value === "number" && Number.isFinite(value)) {
+                return String(value);
+            }
+        }
+    }
+
+    return `[${index}]`;
+}
+
+function assignTreeDepth(node, depth) {
+    node.depth = depth;
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    const nextDepth = depth + 1;
+    node.children.forEach((child) => assignTreeDepth(child, nextDepth));
+}
+
+function computeTreeRowSpan(node) {
+    if (!node.children || node.children.length === 0) {
+        node.rowSpan = 1;
+        return 1;
+    }
+
+    let total = 0;
+    node.children.forEach((child) => {
+        total += computeTreeRowSpan(child);
+    });
+
+    node.rowSpan = Math.max(total, 1);
+    return node.rowSpan;
+}
+
+function assignTreeStartRow(node, startRow) {
+    node.startRow = startRow;
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    let cursor = startRow;
+    node.children.forEach((child) => {
+        assignTreeStartRow(child, cursor);
+        cursor += child.rowSpan;
+    });
+}
+
+function collectTreeLeafRows(node, path, rows) {
+    const nextPath = node.label !== null && node.label !== undefined ? [...path, node] : path;
+
+    if (!node.children || node.children.length === 0) {
+        const labels = nextPath
+            .filter((entry) => entry.label !== null && entry.label !== undefined)
+            .map((entry) => entry.label);
+        rows.push({ labels, value: node.value });
+        return;
+    }
+
+    node.children.forEach((child) => {
+        collectTreeLeafRows(child, nextPath, rows);
+    });
+}
+
+function collectTreeMerges(node, merges) {
+    if (node.label !== null && node.label !== undefined && node.rowSpan > 1 && node.depth >= 0) {
+        merges.push({
+            startRow: node.startRow,
+            endRow: node.startRow + node.rowSpan - 1,
+            startColumn: node.depth,
+            endColumn: node.depth
+        });
+    }
+
+    if (!node.children || node.children.length === 0) {
+        return;
+    }
+
+    node.children.forEach((child) => collectTreeMerges(child, merges));
+}
+
+function buildCategorizedWorksheet(value) {
+    const fromMap = buildCategorizedWorksheetFromMap(value);
+    if (fromMap) {
+        return fromMap;
+    }
+
+    const fromArray = buildCategorizedWorksheetFromArray(value);
+    if (fromArray) {
+        return fromArray;
+    }
+
+    return null;
+}
+
+function buildCategorizedWorksheetFromMap(value) {
+    if (!isPlainObject(value)) {
+        return null;
+    }
+
+    const categoryEntries = Object.entries(value);
+    if (categoryEntries.length === 0) {
+        return null;
+    }
+
+    const normalized = categoryEntries.map(([categoryName, entries]) => ({
+        categoryName,
+        entries: Array.isArray(entries) ? entries.filter((item) => isPlainObject(item)) : []
+    }));
+
+    if (normalized.every(({ entries }) => entries.length === 0)) {
+        return null;
+    }
+
+    const columnKeys = [];
+    const seen = new Set();
+    for (const { entries } of normalized) {
+        for (const item of entries) {
+            for (const key of Object.keys(item)) {
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    columnKeys.push(key);
+                }
+            }
+        }
+    }
+
+    if (columnKeys.length === 0) {
+        return null;
+    }
+
+    const rows = [
+        [createSheetCell("分類", { forceString: true }), ...columnKeys.map((key) => createSheetCell(key, { forceString: true }))]
+    ];
+    const merges = [];
+    let rowCursor = 2;
+
+    for (const { categoryName, entries } of normalized) {
+        const safeEntries = entries.length > 0 ? entries : [{}];
+        const rowCount = safeEntries.length;
+
+        safeEntries.forEach((item, index) => {
+            const firstCell = index === 0 ? createSheetCell(categoryName, { forceString: true }) : createSheetCell(null);
+            const rowCells = [firstCell];
+            for (const key of columnKeys) {
+                rowCells.push(createSheetCell(item[key]));
+            }
+            rows.push(rowCells);
+        });
+
+        if (rowCount > 1) {
+            merges.push({ startRow: rowCursor, endRow: rowCursor + rowCount - 1, startColumn: 0, endColumn: 0 });
+        }
+        rowCursor += rowCount;
+    }
+
+    return { rows, merges };
+}
+
+function buildCategorizedWorksheetFromArray(value) {
+    if (!Array.isArray(value) || value.length === 0) {
+        return null;
+    }
+
+    const items = value.filter((item) => isPlainObject(item));
+    if (items.length === 0) {
+        return null;
+    }
+
+    const categoryKey = findCategoryKey(items);
+    if (!categoryKey) {
+        return null;
+    }
+
+    const columnKeys = [];
+    const seen = new Set();
+    for (const item of items) {
+        for (const key of Object.keys(item)) {
+            if (key === categoryKey) continue;
+            if (!seen.has(key)) {
+                seen.add(key);
+                columnKeys.push(key);
+            }
+        }
+    }
+
+    if (columnKeys.length === 0) {
+        return null;
+    }
+
+    const groups = [];
+    const groupMap = new Map();
+    for (const item of items) {
+        const label = formatCategoryLabel(item[categoryKey]);
+        if (!groupMap.has(label)) {
+            const container = { label, rows: [] };
+            groupMap.set(label, container);
+            groups.push(container);
+        }
+        groupMap.get(label).rows.push(item);
+    }
+
+    const rows = [
+        [createSheetCell("分類", { forceString: true }), ...columnKeys.map((key) => createSheetCell(key, { forceString: true }))]
+    ];
+    const merges = [];
+    let rowCursor = 2;
+
+    for (const { label, rows: groupRows } of groups) {
+        const rowCount = groupRows.length;
+        groupRows.forEach((item, index) => {
+            const firstCell = index === 0 ? createSheetCell(label, { forceString: true }) : createSheetCell(null);
+            const rowCells = [firstCell];
+            for (const key of columnKeys) {
+                rowCells.push(createSheetCell(item[key]));
+            }
+            rows.push(rowCells);
+        });
+
+        if (rowCount > 1) {
+            merges.push({ startRow: rowCursor, endRow: rowCursor + rowCount - 1, startColumn: 0, endColumn: 0 });
+        }
+        rowCursor += rowCount;
+    }
+
+    return { rows, merges };
+}
+
+function findCategoryKey(items) {
+    const keyInfo = new Map();
+    const priorityPattern = /(category|分類|分類別|類別|類型|类型|group|分組|分组|module|模組|模块|section|type)/iu;
+
+    for (const item of items) {
+        for (const key of Object.keys(item)) {
+            const value = item[key];
+            if (value === undefined) {
+                continue;
+            }
+            let info = keyInfo.get(key);
+            if (!info) {
+                info = {
+                    values: new Set(),
+                    total: 0,
+                    stringLike: 0,
+                    priority: priorityPattern.test(key) ? 1 : 0
+                };
+                keyInfo.set(key, info);
+            }
+            info.total += 1;
+            if (typeof value === "string" || typeof value === "number") {
+                info.stringLike += 1;
+                info.values.add(String(value));
+            } else if (value === null) {
+                info.stringLike += 1;
+                info.values.add("");
+            } else {
+                info.priority = -Infinity;
+            }
+        }
+    }
+
+    const candidates = [];
+    keyInfo.forEach((info, key) => {
+        if (info.priority === -Infinity) return;
+        if (info.stringLike === 0) return;
+        if (info.values.size === info.total) return;
+        candidates.push({ key, priority: info.priority, diversity: info.values.size });
+    });
+
+    if (candidates.length === 0) {
+        return null;
+    }
+
+    candidates.sort((a, b) => {
+        if (b.priority !== a.priority) {
+            return b.priority - a.priority;
+        }
+        return a.diversity - b.diversity;
+    });
+
+    return candidates[0].key;
+}
+
+function formatCategoryLabel(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    return String(value);
+}
+
+function buildGenericWorksheetRows(value) {
+    if (Array.isArray(value)) {
+        const rows = [];
+        const allPlainObjects = value.every((item) => isPlainObject(item));
+        if (allPlainObjects && value.length > 0) {
+            const keySet = new Set();
+            for (const item of value) {
+                for (const key of Object.keys(item)) {
+                    keySet.add(key);
+                }
+            }
+            const headers = keySet.size > 0 ? Array.from(keySet) : [];
+            if (headers.length > 0) {
+                rows.push(headers.map((key) => createSheetCell(key, { forceString: true })));
+                for (const item of value) {
+                    rows.push(headers.map((key) => createSheetCell(item[key])));
+                }
+                return rows;
+            }
+        }
+
+        const header = [createSheetCell("index", { forceString: true }), createSheetCell("value", { forceString: true })];
+        rows.push(header);
+        if (value.length > 0) {
+            value.forEach((item, index) => {
+                rows.push([createSheetCell(index), createSheetCell(item)]);
+            });
+        }
+        return rows;
+    }
+
+    if (isPlainObject(value)) {
+        const rows = [
+            [createSheetCell("key", { forceString: true }), createSheetCell("value", { forceString: true })]
+        ];
+        const entries = Object.entries(value);
+        if (entries.length > 0) {
+            for (const [key, entryValue] of entries) {
+                rows.push([createSheetCell(key, { forceString: true }), createSheetCell(entryValue)]);
+            }
+        }
+        return rows;
+    }
+
+    return [
+        [createSheetCell("value", { forceString: true })],
+        [createSheetCell(value)]
+    ];
+}
+
+function createSheetCell(value, { forceString = false } = {}) {
+    if (forceString) {
+        return { type: "string", text: value === null || value === undefined ? "" : String(value) };
+    }
+    if (value === null || value === undefined) {
+        return { type: "empty", text: "" };
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return { type: "number", text: String(value) };
+    }
+    if (typeof value === "boolean") {
+        return { type: "boolean", text: value ? "1" : "0" };
+    }
+    if (value instanceof Date) {
+        return { type: "string", text: value.toISOString() };
+    }
+    if (typeof value === "string") {
+        return { type: "string", text: value };
+    }
+    try {
+        return { type: "string", text: JSON.stringify(value) };
+    } catch (error) {
+        return { type: "string", text: String(value) };
+    }
+}
+
+async function createExcelBlobFromWorksheet(worksheet) {
+    const sheetXml = buildSheetXml(worksheet.rows, worksheet.merges);
+
+    const zip = new JSZip();
+    zip.file("[Content_Types].xml", CONTENT_TYPES_XML);
+    zip.folder("_rels").file(".rels", ROOT_RELS_XML);
+    const xlFolder = zip.folder("xl");
+    xlFolder.file("workbook.xml", WORKBOOK_XML);
+    xlFolder.file("styles.xml", STYLES_XML);
+    xlFolder.folder("_rels").file("workbook.xml.rels", WORKBOOK_RELS_XML);
+    xlFolder.folder("worksheets").file("sheet1.xml", sheetXml);
+
+    return zip.generateAsync({ type: "blob" });
+}
+
+const MIN_COLUMN_WIDTH = 6;
+const MAX_COLUMN_WIDTH = 80;
+const COLUMN_WIDTH_PADDING = 2;
+
+function buildSheetXml(rows, merges = []) {
+    const rowXml = [];
+    let maxColumnCount = 0;
+    const columnWidths = [];
+
+    rows.forEach((cells, rowIndex) => {
+        if (!Array.isArray(cells) || cells.length === 0) {
+            return;
+        }
+        const cellXml = cells
+            .map((cell, cellIndex) => {
+                if (!cell) return "";
+                const column = columnLetter(cellIndex);
+                const cellRef = `${column}${rowIndex + 1}`;
+                const cellWidth = deduceCellWidth(cell);
+                if (cellWidth > (columnWidths[cellIndex] ?? 0)) {
+                    columnWidths[cellIndex] = cellWidth;
+                }
+                switch (cell.type) {
+                    case "number":
+                        return `<c r="${cellRef}"><v>${cell.text}</v></c>`;
+                    case "boolean":
+                        return `<c r="${cellRef}" t="b"><v>${cell.text}</v></c>`;
+                    case "string": {
+                        const needsPreserve = /(^\s)|([\s]$)|([\r\n])/u.test(cell.text);
+                        const preserveAttr = needsPreserve ? ' xml:space="preserve"' : "";
+                        return `<c r="${cellRef}" t="inlineStr"><is><t${preserveAttr}>${escapeXml(
+                            cell.text
+                        )}</t></is></c>`;
+                    }
+                    default:
+                        return `<c r="${cellRef}"/>`;
+                }
+            })
+            .join("");
+
+        rowXml.push(`<row r="${rowIndex + 1}">${cellXml}</row>`);
+        if (cells.length > maxColumnCount) {
+            maxColumnCount = cells.length;
+        }
+    });
+
+    if (maxColumnCount > 0) {
+        for (let index = 0; index < maxColumnCount; index += 1) {
+            if (columnWidths[index] === undefined) {
+                columnWidths[index] = 0;
+            }
+        }
+    }
+
+    const colsXml =
+        columnWidths.length > 0
+            ? `<cols>${columnWidths
+                  .map((width, index) => {
+                      const adjusted = Math.min(
+                          MAX_COLUMN_WIDTH,
+                          Math.max(MIN_COLUMN_WIDTH, Math.ceil(width + COLUMN_WIDTH_PADDING))
+                      );
+                      return `<col min="${index + 1}" max="${index + 1}" width="${adjusted}" customWidth="1"/>`;
+                  })
+                  .join("")}</cols>`
+            : "";
+
+    const dimension =
+        rows.length > 0 && maxColumnCount > 0
+            ? `<dimension ref="A1:${columnLetter(maxColumnCount - 1)}${rows.length}"/>`
+            : "";
+
+    const mergeXml =
+        Array.isArray(merges) && merges.length > 0
+            ? `<mergeCells count="${merges.length}">${merges
+                  .map(({ startRow, endRow, startColumn, endColumn }) => {
+                      const startCell = `${columnLetter(startColumn)}${startRow}`;
+                      const endCell = `${columnLetter(endColumn ?? startColumn)}${endRow ?? startRow}`;
+                      return `<mergeCell ref="${startCell}:${endCell}"/>`;
+                  })
+                  .join("")}</mergeCells>`
+            : "";
+
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${dimension}${colsXml}<sheetData>${rowXml.join(
+        ""
+    )}</sheetData>${mergeXml}</worksheet>`;
+}
+
+function columnLetter(index) {
+    let result = "";
+    let current = index;
+    while (current >= 0) {
+        result = String.fromCharCode((current % 26) + 65) + result;
+        current = Math.floor(current / 26) - 1;
+    }
+    return result || "A";
+}
+
+function deduceCellWidth(cell) {
+    if (!cell || typeof cell.text !== "string") {
+        if (cell?.type === "number" || cell?.type === "boolean") {
+            return String(cell.text ?? "").length;
+        }
+        return 0;
+    }
+    if (!cell.text) {
+        return 0;
+    }
+    return cell.text
+        .split(/\r?\n/)
+        .reduce((max, line) => Math.max(max, line.length), 0);
+}
+
+function escapeXml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
+
+function triggerBlobDownload(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+function buildActiveReportExcelFileName(mode = "raw") {
+    const report = activeReport.value;
+    const parts = [];
+    if (report?.project?.name) {
+        parts.push(report.project.name);
+    }
+    if (report?.path) {
+        const segments = report.path.split(/[/\\]+/);
+        const last = segments[segments.length - 1];
+        if (last) {
+            parts.push(last);
+        }
+    }
+    const base = parts.join("_") || "report";
+    const safe = base.replace(/[\\/:*?"<>|]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+    const finalName = safe || "report";
+
+    let suffix = "raw";
+    if (mode === "static") {
+        suffix = "static";
+    } else if (mode === "dify") {
+        suffix = "dify";
+    }
+
+    return `${finalName}_${suffix}.xlsx`;
+}
+
+const CONTENT_TYPES_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+    '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+    "</Types>";
+
+const ROOT_RELS_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+    "</Relationships>";
+
+const WORKBOOK_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    '<sheets><sheet name="Report" sheetId="1" r:id="rId1"/></sheets>' +
+    "</workbook>";
+
+const WORKBOOK_RELS_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+    '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+    "</Relationships>";
+
+const STYLES_XML =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<fonts count="1"><font/></fonts>' +
+    '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>' +
+    '<borders count="1"><border/></borders>' +
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+    '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center"/></xf></cellXfs>' +
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+    '<dxfs count="0"/>' +
+    '<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>' +
+    "</styleSheet>";
+
+const middlePaneStyle = computed(() => {
+    const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
+    const width = hasActiveTool ? middlePaneWidth.value : 0;
+    return {
+        flex: `0 0 ${width}px`,
+        width: `${width}px`
+    };
+});
+
+const chatWindowStyle = computed(() => ({
+    width: `${chatWindowState.width}px`,
+    height: `${chatWindowState.height}px`,
+    left: `${chatWindowState.x}px`,
+    top: `${chatWindowState.y}px`
+}));
 
 watch(
     [canShowStructuredSummary, canShowStructuredStatic, canShowStructuredDml],
@@ -3739,13 +4618,13 @@ onBeforeUnmount(() => {
                                             class="reportSummaryGrid"
                                         >
                                             <div
-                                                v-if="activeReportDetails?.sourceSummaries?.length"
+                                                v-if="summarySourceItems.length"
                                                 class="reportSummaryCard reportSummaryCard--span"
                                             >
                                                 <span class="reportSummaryLabel">來源摘要</span>
                                                 <ul class="reportSummarySources">
                                                     <li
-                                                        v-for="item in activeReportDetails.sourceSummaries"
+                                                        v-for="item in summarySourceItems"
                                                         :key="item.key"
                                                         class="reportSummarySource"
                                                     >
@@ -3780,13 +4659,13 @@ onBeforeUnmount(() => {
                                                 </ul>
                                             </div>
                                             <div
-                                                v-if="activeReportDetails?.combinedSummaryDetails?.length"
+                                                v-if="combinedSummaryItems.length"
                                                 class="reportSummaryCard reportSummaryCard--span"
                                             >
                                                 <span class="reportSummaryLabel">整合摘要</span>
                                                 <ul class="reportSummaryList">
                                                     <li
-                                                        v-for="item in activeReportDetails.combinedSummaryDetails"
+                                                        v-for="item in combinedSummaryItems"
                                                         :key="`combined-${item.label}-${item.value}`"
                                                     >
                                                         <span class="reportSummaryItemLabel">{{ item.label }}</span>
@@ -3796,88 +4675,46 @@ onBeforeUnmount(() => {
                                             </div>
                                             <div class="reportSummaryCard reportSummaryCard--total">
                                                 <span class="reportSummaryLabel">問題</span>
-                                                <span class="reportSummaryValue">
-                                                    {{
-                                                        activeReportDetails?.totalIssues === null
-                                                            ? "—"
-                                                            : activeReportDetails.totalIssues
-                                                    }}
-                                                </span>
+                                                <span class="reportSummaryValue">{{ activeReportTotalIssuesDisplay }}</span>
                                             </div>
                                             <div
-                                                v-if="activeReportDetails?.summaryText"
+                                                v-if="activeReportSummaryText"
                                                 class="reportSummaryCard reportSummaryCard--span"
                                             >
                                                 <span class="reportSummaryLabel">摘要</span>
-                                                <p class="reportSummaryText">{{ activeReportDetails.summaryText }}</p>
+                                                <p class="reportSummaryText">{{ activeReportSummaryText }}</p>
                                             </div>
                                             <div
-                                                v-else-if="activeReportDetails && activeReportDetails.totalIssues === 0"
+                                                v-else-if="shouldShowNoIssueSummary"
                                                 class="reportSummaryCard reportSummaryCard--span"
                                             >
                                                 <span class="reportSummaryLabel">摘要</span>
                                                 <p class="reportSummaryText">未檢測到問題。</p>
                                             </div>
                                             <div
-                                                v-if="activeReportDetails?.ruleBreakdown?.length"
+                                                v-if="ruleBreakdownItems.length"
                                                 class="reportSummaryCard"
                                             >
-                                                <div class="reportStaticHeader">
-                                                    <h4>靜態分析器</h4>
-                                                    <span
-                                                        v-if="activeReportDetails?.staticMetadata?.engine"
-                                                        class="reportStaticEngine"
+                                                <span class="reportSummaryLabel">規則分佈</span>
+                                                <ul class="reportSummaryList">
+                                                    <li
+                                                        v-for="item in ruleBreakdownItems"
+                                                        :key="`${item.label}-${item.count}`"
                                                     >
-                                                        引擎：{{ activeReportDetails.staticMetadata.engine }}
-                                                    </span>
-                                                    <span
-                                                        v-else-if="activeReportDetails?.staticSummary?.analysis_source"
-                                                        class="reportStaticEngine"
-                                                    >
-                                                        來源：{{ activeReportDetails.staticSummary.analysis_source }}
-                                                    </span>
-                                                </div>
-                                                <div
-                                                    v-if="activeReportDetails?.staticSummaryDetails?.length"
-                                                    class="reportStaticBlock"
-                                                >
-                                                    <h5>摘要資訊</h5>
-                                                    <ul class="reportStaticList">
-                                                        <li
-                                                            v-for="item in activeReportDetails.staticSummaryDetails"
-                                                            :key="`static-summary-${item.label}-${item.value}`"
-                                                        >
-                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
-                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
-                                                        </li>
-                                                    </ul>
-                                                </div>
-                                                <div
-                                                    v-if="activeReportDetails?.staticMetadataDetails?.length"
-                                                    class="reportStaticBlock"
-                                                >
-                                                    <h5>中繼資料</h5>
-                                                    <ul class="reportStaticList">
-                                                        <li
-                                                            v-for="item in activeReportDetails.staticMetadataDetails"
-                                                            :key="`static-metadata-${item.label}-${item.value}`"
-                                                        >
-                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
-                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
-                                                        </li>
-                                                    </ul>
-                                                </div>
-                                            </section>
-
-                                            <section
-                                                v-if="activeReportDetails?.dmlReport"
-                                                class="reportDmlSection"
+                                                        <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                                                        <span class="reportSummaryItemValue">{{ item.count }}</span>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <div
+                                                v-if="severityBreakdownItems.length"
+                                                class="reportSummaryCard"
                                             >
-                                                <div class="reportDmlHeader">
-                                                    <h4>DML 提示詞分析</h4>
-                                                    <span
-                                                        v-if="activeReportDetails.dmlReport.status"
-                                                        class="reportDmlStatus"
+                                                <span class="reportSummaryLabel">嚴重度</span>
+                                                <ul class="reportSummaryList">
+                                                    <li
+                                                        v-for="item in severityBreakdownItems"
+                                                        :key="`${item.label}-${item.count}`"
                                                     >
                                                         <span class="reportSummaryItemLabel">{{ item.label }}</span>
                                                         <span class="reportSummaryItemValue">{{ item.count }}</span>
@@ -3886,127 +4723,100 @@ onBeforeUnmount(() => {
                                             </div>
                                         </section>
 
-                                            <section
-                                                v-if="
-                                                    structuredReportViewMode === 'static' &&
-                                                    (
-                                                        activeReportDetails?.staticSummaryDetails?.length ||
-                                                        activeReportDetails?.staticMetadataDetails?.length
-                                                    )
-                                                "
-                                                class="reportStaticSection"
+                                        <section
+                                            v-if="structuredReportViewMode === 'static' && hasStaticDetailContent"
+                                            class="reportStaticSection"
+                                        >
+                                            <div class="reportStaticHeader">
+                                                <h4>靜態分析器</h4>
+                                                <span v-if="staticEngineName" class="reportStaticEngine">
+                                                    引擎：{{ staticEngineName }}
+                                                </span>
+                                                <span v-else-if="staticSourceName" class="reportStaticEngine">
+                                                    來源：{{ staticSourceName }}
+                                                </span>
+                                            </div>
+                                            <div
+                                                v-if="staticSummaryDetailsItems.length"
+                                                class="reportStaticBlock"
                                             >
-                                                <div class="reportStaticHeader">
-                                                    <h4>靜態分析器</h4>
-                                                    <span
-                                                        v-if="activeReportDetails?.staticMetadata?.engine"
-                                                        class="reportStaticEngine"
+                                                <h5>摘要資訊</h5>
+                                                <ul class="reportStaticList">
+                                                    <li
+                                                        v-for="item in staticSummaryDetailsItems"
+                                                        :key="`static-summary-${item.label}-${item.value}`"
                                                     >
-                                                        引擎：{{ activeReportDetails.staticMetadata.engine }}
-                                                    </span>
-                                                    <span
-                                                        v-else-if="activeReportDetails?.staticSummary?.analysis_source"
-                                                        class="reportStaticEngine"
+                                                        <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                        <span class="reportStaticItemValue">{{ item.value }}</span>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <div
+                                                v-if="staticMetadataDetailsItems.length"
+                                                class="reportStaticBlock"
+                                            >
+                                                <h5>中繼資料</h5>
+                                                <ul class="reportStaticList">
+                                                    <li
+                                                        v-for="item in staticMetadataDetailsItems"
+                                                        :key="`static-metadata-${item.label}-${item.value}`"
                                                     >
-                                                        來源：{{ activeReportDetails.staticSummary.analysis_source }}
-                                                    </span>
-                                                </div>
-                                                <div
-                                                    v-if="activeReportDetails?.staticSummaryDetails?.length"
-                                                    class="reportStaticBlock"
-                                                >
-                                                    <h5>摘要資訊</h5>
-                                                    <ul class="reportStaticList">
-                                                        <li
-                                                            v-for="item in activeReportDetails.staticSummaryDetails"
-                                                            :key="`static-summary-${item.label}-${item.value}`"
-                                                        >
-                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
-                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
-                                                        </li>
-                                                    </ul>
-                                                </div>
-                                                <div
-                                                    v-if="activeReportDetails?.staticMetadataDetails?.length"
-                                                    class="reportStaticBlock"
-                                                >
-                                                    <h5>中繼資料</h5>
-                                                    <ul class="reportStaticList">
-                                                        <li
-                                                            v-for="item in activeReportDetails.staticMetadataDetails"
-                                                            :key="`static-metadata-${item.label}-${item.value}`"
-                                                        >
-                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
-                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
-                                                        </li>
-                                                    </ul>
-                                                </div>
-                                            </section>
+                                                        <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                        <span class="reportStaticItemValue">{{ item.value }}</span>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                        </section>
 
-                                            <section
-                                                v-if="
-                                                    structuredReportViewMode === 'dml' &&
-                                                    activeReportDetails?.dmlReport
-                                                "
-                                                class="reportDmlSection"
+                                        <section
+                                            v-if="structuredReportViewMode === 'dml' && dmlReportDetails"
+                                            class="reportDmlSection"
+                                        >
+                                            <div class="reportDmlHeader">
+                                                <h4>DML 提示詞分析</h4>
+                                                <span v-if="dmlReportDetails.status" class="reportDmlStatus">
+                                                    {{ dmlReportDetails.status }}
+                                                </span>
+                                                <span v-if="dmlReportDetails.generatedAt" class="reportDmlTimestamp">
+                                                    產生於 {{ dmlReportDetails.generatedAt }}
+                                                </span>
+                                            </div>
+                                            <p v-if="dmlReportDetails.error" class="reportDmlError">
+                                                {{ dmlReportDetails.error }}
+                                            </p>
+                                            <div v-if="hasDmlSegments" class="reportDmlSegments">
+                                                <details
+                                                    v-for="segment in dmlSegments"
+                                                    :key="segment.key"
+                                                    class="reportDmlSegment"
+                                                >
+                                                    <summary>
+                                                        第 {{ segment.index }} 段
+                                                        <span v-if="segment.startLine">
+                                                            （第 {{ segment.startLine }} 行起
+                                                            <span v-if="segment.endLine">，至第 {{ segment.endLine }} 行止</span>
+                                                            ）
+                                                        </span>
+                                                    </summary>
+                                                    <pre class="reportDmlSql codeScroll themed-scrollbar">
+                                                        {{ segment.sql }}
+                                                    </pre>
+                                                    <pre
+                                                        v-if="segment.analysis"
+                                                        class="reportDmlAnalysis codeScroll themed-scrollbar"
+                                                    >
+                                                        {{ segment.analysis }}
+                                                    </pre>
+                                                </details>
+                                            </div>
+                                            <p v-else class="reportDmlEmpty">尚未取得 DML 拆分結果。</p>
+                                            <pre
+                                                v-if="dmlReportDetails.reportText"
+                                                class="reportDmlSummary codeScroll themed-scrollbar"
                                             >
-                                                <div class="reportDmlHeader">
-                                                    <h4>DML 提示詞分析</h4>
-                                                    <span
-                                                        v-if="activeReportDetails.dmlReport.status"
-                                                        class="reportDmlStatus"
-                                                    >
-                                                        {{ activeReportDetails.dmlReport.status }}
-                                                    </span>
-                                                    <span
-                                                        v-if="activeReportDetails.dmlReport.generatedAt"
-                                                        class="reportDmlTimestamp"
-                                                    >
-                                                        產生於 {{ activeReportDetails.dmlReport.generatedAt }}
-                                                    </span>
-                                                </div>
-                                                <p
-                                                    v-if="activeReportDetails.dmlReport.error"
-                                                    class="reportDmlError"
-                                                >
-                                                    {{ activeReportDetails.dmlReport.error }}
-                                                </p>
-                                                <div
-                                                    v-if="activeReportDetails.dmlReport.segments?.length"
-                                                    class="reportDmlSegments"
-                                                >
-                                                    <details
-                                                        v-for="segment in activeReportDetails.dmlReport.segments"
-                                                        :key="segment.key"
-                                                        class="reportDmlSegment"
-                                                    >
-                                                        <summary>
-                                                            第 {{ segment.index }} 段
-                                                            <span v-if="segment.startLine">
-                                                                （第 {{ segment.startLine }} 行起
-                                                                <span v-if="segment.endLine">，至第 {{ segment.endLine }} 行止</span>
-                                                                ）
-                                                            </span>
-                                                        </summary>
-                                                        <pre class="reportDmlSql codeScroll themed-scrollbar">
-                                                            {{ segment.sql }}
-                                                        </pre>
-                                                        <pre
-                                                            v-if="segment.analysis"
-                                                            class="reportDmlAnalysis codeScroll themed-scrollbar"
-                                                        >
-                                                            {{ segment.analysis }}
-                                                        </pre>
-                                                    </details>
-                                                </div>
-                                                <p v-else class="reportDmlEmpty">尚未取得 DML 拆分結果。</p>
-                                                <pre
-                                                    v-if="activeReportDetails.dmlReport.reportText"
-                                                    class="reportDmlSummary codeScroll themed-scrollbar"
-                                                >
-                                                    {{ activeReportDetails.dmlReport.reportText }}
-                                                </pre>
-                                            </section>
+                                                {{ dmlReportDetails.reportText }}
+                                            </pre>
+                                        </section>
                                             <section
                                                 v-if="shouldShowReportIssuesSection"
                                                 class="reportIssuesSection"
@@ -4665,6 +5475,35 @@ body,
     flex-direction: column;
     gap: 20px;
     min-height: 0;
+}
+
+.reportStructuredToggle {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.reportStructuredToggleButton {
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.14);
+    color: #e2e8f0;
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.reportStructuredToggleButton.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.28), rgba(14, 165, 233, 0.28));
+    border-color: rgba(59, 130, 246, 0.5);
+    color: #f8fafc;
+}
+
+.reportStructuredToggleButton:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 .reportStructuredToggle {
