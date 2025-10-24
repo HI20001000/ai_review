@@ -4,12 +4,105 @@ import { dirname, resolve } from "node:path";
 import {
     getDifyConfigSummary,
     partitionContent,
-    requestDifyJsonEnrichment
+    requestDifyJsonEnrichment,
+    requestDifyReport
 } from "./difyClient.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const SCRIPT_PATH = resolve(__dirname, "sql_rule_engine.py");
+
+function replaceRangeWithSpaces(text, start, end) {
+    if (!text || start >= end) return text;
+    const replacement = text
+        .slice(start, end)
+        .split("")
+        .map((ch) => (ch === "\n" ? "\n" : " "))
+        .join("");
+    return `${text.slice(0, start)}${replacement}${text.slice(end)}`;
+}
+
+function maskBlockComments(sqlText) {
+    if (!sqlText) return "";
+    const blockRegex = /\/\*[\s\S]*?\*\//g;
+    let masked = sqlText;
+    let match;
+    while ((match = blockRegex.exec(sqlText)) !== null) {
+        masked = replaceRangeWithSpaces(masked, match.index, match.index + match[0].length);
+    }
+    return masked;
+}
+
+function maskCommentsAndStrings(sqlText) {
+    if (!sqlText) return "";
+    let masked = maskBlockComments(sqlText);
+    const lineRegex = /--.*?$/gm;
+    let match;
+    while ((match = lineRegex.exec(masked)) !== null) {
+        masked = replaceRangeWithSpaces(masked, match.index, match.index + match[0].length);
+    }
+
+    const stringPatterns = [
+        /'(?:''|[^'])*'/gs,
+        /"(?:""|[^"])*"/gs
+    ];
+    for (const pattern of stringPatterns) {
+        while ((match = pattern.exec(masked)) !== null) {
+            masked = replaceRangeWithSpaces(masked, match.index, match.index + match[0].length);
+        }
+    }
+
+    return masked;
+}
+
+function findStatementTerminator(maskedSql, startIndex) {
+    if (!maskedSql || startIndex >= maskedSql.length) {
+        return maskedSql ? maskedSql.length : 0;
+    }
+    for (let index = startIndex; index < maskedSql.length; index += 1) {
+        if (maskedSql[index] === ";") {
+            return index + 1;
+        }
+    }
+    return maskedSql.length;
+}
+
+function indexToLineCol(text, index) {
+    const prior = text.slice(0, index);
+    const line = prior.split("\n").length;
+    const lastNewline = prior.lastIndexOf("\n");
+    const column = index - (lastNewline === -1 ? 0 : lastNewline + 1) + 1;
+    return { line, column };
+}
+
+function extractDmlStatements(sqlText) {
+    if (typeof sqlText !== "string" || !sqlText.trim()) {
+        return [];
+    }
+    const masked = maskCommentsAndStrings(sqlText);
+    const regex = /\b(INSERT|UPDATE|DELETE)\b/gi;
+    const segments = [];
+    let match;
+    while ((match = regex.exec(masked)) !== null) {
+        const start = match.index;
+        const end = findStatementTerminator(masked, start);
+        const snippet = sqlText.slice(start, end).trim();
+        if (!snippet) continue;
+        const startMeta = indexToLineCol(sqlText, start);
+        const endMeta = indexToLineCol(sqlText, end);
+        segments.push({
+            index: segments.length + 1,
+            text: snippet,
+            start,
+            end,
+            startLine: startMeta.line,
+            startColumn: startMeta.column,
+            endLine: endMeta.line,
+            endColumn: endMeta.column
+        });
+    }
+    return segments;
+}
 
 function parseCommand(command) {
     if (!command || typeof command !== "string") {
@@ -235,13 +328,146 @@ function normaliseDifyOutput(dify, rawReport) {
     };
 }
 
+function parseStaticReport(rawReport) {
+    if (typeof rawReport !== "string") {
+        return null;
+    }
+    let candidate = rawReport.trim();
+    if (!candidate) {
+        return null;
+    }
+    for (let depth = 0; depth < 3; depth += 1) {
+        try {
+            const parsed = JSON.parse(candidate);
+            if (typeof parsed === "string") {
+                const trimmed = parsed.trim();
+                if (trimmed && trimmed !== candidate) {
+                    candidate = trimmed;
+                    continue;
+                }
+                break;
+            }
+            if (parsed && typeof parsed === "object") {
+                return parsed;
+            }
+            break;
+        } catch (error) {
+            break;
+        }
+    }
+    return null;
+}
+
+function normaliseStaticMetadata(metadata) {
+    const base = metadata && typeof metadata === "object" ? { ...metadata } : {};
+    if (!base.analysis_source) {
+        base.analysis_source = "static_analyzer";
+    }
+    if (!base.engine) {
+        base.engine = "sql_rule_engine";
+    }
+    return base;
+}
+
+function normaliseStaticSummary(summary, fallbackExtension = ".sql") {
+    const source = summary && typeof summary === "object" ? summary : {};
+    const normalised = { ...source };
+    const byRule = normalised.by_rule || normalised.byRule;
+    if (byRule && typeof byRule === "object" && !Array.isArray(byRule)) {
+        normalised.by_rule = { ...byRule };
+    } else if (!normalised.by_rule) {
+        normalised.by_rule = {};
+    }
+    if (typeof normalised.file_extension !== "string" && typeof normalised.fileExtension === "string") {
+        normalised.file_extension = normalised.fileExtension;
+    }
+    if (typeof normalised.file_extension !== "string" && fallbackExtension) {
+        normalised.file_extension = fallbackExtension;
+    }
+    const totalCandidate = normalised.total_issues ?? normalised.totalIssues;
+    const numericTotal = Number(totalCandidate);
+    if (Number.isFinite(numericTotal)) {
+        normalised.total_issues = numericTotal;
+    }
+    if (!normalised.analysis_source) {
+        normalised.analysis_source = "static_analyzer";
+    }
+    return normalised;
+}
+
+function normaliseDmlSummary(segments, dmlPrompt, dmlError) {
+    const totalSegments = Array.isArray(segments) ? segments.length : 0;
+    const chunkCount = Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks.length : 0;
+    const hasReport = typeof dmlPrompt?.report === "string" && dmlPrompt.report.trim().length > 0;
+    const summary = {
+        analysis_source: "dml_prompt",
+        total_segments: totalSegments,
+        analyzed_segments: chunkCount || (hasReport ? totalSegments : 0),
+        generated_at: dmlPrompt?.generatedAt || null
+    };
+
+    let status = "idle";
+    if (totalSegments === 0) {
+        status = "idle";
+    } else if (dmlPrompt) {
+        status = "succeeded";
+    } else if (dmlError) {
+        status = "failed";
+    } else {
+        status = "pending";
+    }
+    summary.status = status;
+
+    const errorMessage = dmlError?.message || (typeof dmlError === "string" ? dmlError : "");
+    if (errorMessage) {
+        summary.error_message = errorMessage;
+    }
+
+    return summary;
+}
+
+function buildCompositeSummary(staticSummary, dmlSummary) {
+    const byRule = staticSummary?.by_rule && typeof staticSummary.by_rule === "object" && !Array.isArray(staticSummary.by_rule)
+        ? { ...staticSummary.by_rule }
+        : {};
+    const fileExtension = typeof staticSummary?.file_extension === "string"
+        ? staticSummary.file_extension
+        : typeof staticSummary?.fileExtension === "string"
+        ? staticSummary.fileExtension
+        : ".sql";
+    const totalCandidate = staticSummary?.total_issues ?? staticSummary?.totalIssues;
+    const numericTotal = Number(totalCandidate);
+    const totalIssues = Number.isFinite(numericTotal) ? numericTotal : 0;
+    const composite = {
+        total_issues: totalIssues,
+        by_rule: byRule,
+        file_extension: fileExtension,
+        analysis_source: "composite",
+        sources: {
+            static_analyzer: staticSummary,
+            dml_prompt: dmlSummary
+        }
+    };
+    if (typeof staticSummary?.message === "string" && staticSummary.message.trim()) {
+        composite.message = staticSummary.message.trim();
+    }
+    return composite;
+}
+
 export async function analyseSqlToReport(sqlText, options = {}) {
     const analysis = await executeSqlAnalysis(sqlText);
     const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
     const trimmedReport = rawReport.trim();
+    const dmlSegments = extractDmlStatements(sqlText);
 
     if (!trimmedReport) {
-        return { analysis, dify: null, difyError: null };
+        return {
+            analysis,
+            dify: null,
+            difyError: null,
+            dml: { segments: dmlSegments, dify: null },
+            dmlError: null
+        };
     }
 
     const {
@@ -258,6 +484,33 @@ export async function analyseSqlToReport(sqlText, options = {}) {
     const segments = partitionContent(trimmedReport);
     const summary = getDifyConfigSummary();
 
+    let dmlPrompt = null;
+    let dmlError = null;
+    if (dmlSegments.length) {
+        const segmentTexts = dmlSegments.map((segment) => segment.text);
+        const dmlFilePath = path ? `${path}.dml.txt` : "analysis.dml.txt";
+        try {
+            console.log(
+                `[sql+dml] Running prompt analysis project=${projectId || resolvedProjectName} path=${dmlFilePath} segments=${segmentTexts.length}`
+            );
+            dmlPrompt = await requestDifyReport({
+                projectName: resolvedProjectName,
+                filePath: dmlFilePath,
+                content: segmentTexts.join("\n\n"),
+                userId: resolvedUserId,
+                segments: segmentTexts,
+                files
+            });
+        } catch (error) {
+            dmlError = error;
+            const message = error?.message || String(error);
+            console.warn(
+                `[sql+dml] Failed to analyse DML segments project=${projectId || resolvedProjectName} path=${dmlFilePath} :: ${message}`,
+                error
+            );
+        }
+    }
+
     console.log(
         `[sql+dify] Enriching SQL analysis project=${projectId || resolvedProjectName} path=${path || analysisFilePath} ` +
             `segments=${segments.length} maxSegmentChars=${summary.maxSegmentChars}`
@@ -273,7 +526,7 @@ export async function analyseSqlToReport(sqlText, options = {}) {
             files
         });
         const dify = normaliseDifyOutput(difyRaw, trimmedReport);
-        return { analysis, dify, difyError: null };
+        return { analysis, dify, difyError: null, dml: { segments: dmlSegments, dify: dmlPrompt }, dmlError };
     } catch (error) {
         const message = error?.message || String(error);
         const locationLabel = path || analysisFilePath;
@@ -281,11 +534,11 @@ export async function analyseSqlToReport(sqlText, options = {}) {
             `[sql+dify] Falling back to static SQL analysis project=${projectId || resolvedProjectName} path=${locationLabel} :: ${message}`,
             error
         );
-        return { analysis, dify: null, difyError: error };
+        return { analysis, dify: null, difyError: error, dml: { segments: dmlSegments, dify: dmlPrompt }, dmlError };
     }
 }
 
-export function buildSqlReportPayload({ analysis, content, dify, difyError }) {
+export function buildSqlReportPayload({ analysis, content, dify, difyError, dml, dmlError }) {
     const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
     const difyReport = typeof dify?.report === "string" && dify.report.trim().length
         ? dify.report
@@ -310,16 +563,71 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError }) {
     const segments = dify?.segments && Array.isArray(dify.segments) && dify.segments.length
         ? dify.segments
         : [rawReport || content || ""];
-    let finalReport = difyReport;
+
+    const parsedStaticReport = parseStaticReport(rawReport) || {};
+    const staticSummary = normaliseStaticSummary(parsedStaticReport.summary, ".sql");
+    const staticIssues = Array.isArray(parsedStaticReport.issues) ? parsedStaticReport.issues : [];
+    const staticMetadata = normaliseStaticMetadata(parsedStaticReport.metadata);
+    const staticReportPayload = {
+        ...parsedStaticReport,
+        summary: staticSummary,
+        issues: staticIssues,
+        metadata: staticMetadata
+    };
+
+    const dmlSegments = Array.isArray(dml?.segments)
+        ? dml.segments.map((segment, index) => ({
+              ...segment,
+              index: Number.isFinite(Number(segment?.index)) ? segment.index : index + 1
+          }))
+        : [];
+    const dmlPrompt = dml?.dify || null;
+    const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError);
+    const dmlChunks = Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks : [];
+    const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
+    const dmlConversationId = typeof dmlPrompt?.conversationId === "string" ? dmlPrompt.conversationId : "";
+    const dmlGeneratedAt = dmlPrompt?.generatedAt || null;
+    const dmlErrorMessage = dmlSummary.error_message || (dmlPrompt?.error ? String(dmlPrompt.error) : "");
+    const dmlReportPayload = {
+        type: "dml_prompt",
+        summary: dmlSummary,
+        segments: dmlSegments,
+        report: dmlReportText,
+        chunks: dmlChunks,
+        conversationId: dmlConversationId,
+        generatedAt: dmlGeneratedAt,
+        metadata: { analysis_source: "dml_prompt" }
+    };
+
+    const compositeSummary = buildCompositeSummary(staticSummary, dmlSummary);
+    const finalPayload = {
+        summary: compositeSummary,
+        issues: staticIssues,
+        reports: {
+            static_analyzer: staticReportPayload,
+            dml_prompt: dmlReportPayload
+        },
+        metadata: {
+            analysis_source: "composite",
+            components: ["static_analyzer", dmlSegments.length ? "dml_prompt" : null].filter(Boolean)
+        }
+    };
+
+    let finalReport = difyReport && difyReport.trim() ? difyReport : rawReport;
+    let parsedDify;
     if (finalReport && finalReport.trim()) {
         try {
-            JSON.parse(finalReport);
-        } catch (_error) {
-            finalReport = rawReport;
+            parsedDify = JSON.parse(finalReport);
+        } catch (error) {
+            parsedDify = null;
         }
-    } else {
-        finalReport = rawReport;
     }
+    if (parsedDify && typeof parsedDify === "object") {
+        finalPayload.reports.static_analyzer.enrichment = parsedDify;
+    }
+
+    finalReport = JSON.stringify(finalPayload, null, 2);
+
     const generatedAt = dify?.generatedAt || new Date().toISOString();
     const difyErrorMessage = difyError ? difyError.message || String(difyError) : "";
     const enrichmentStatus = dify ? "succeeded" : "failed";
@@ -335,20 +643,37 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError }) {
         if (rawReport && typeof analysisPayload.rawReport !== "string") {
             analysisPayload.rawReport = rawReport;
         }
-        if (finalReport && finalReport.trim()) {
-            analysisPayload.result = finalReport;
-        } else if (!analysisPayload.result && rawReport) {
-            analysisPayload.result = rawReport;
-        }
+        analysisPayload.result = finalReport;
         analysisPayload.enriched = Boolean(dify);
         if (!analysisPayload.enrichmentStatus) {
             analysisPayload.enrichmentStatus = enrichmentStatus;
+        }
+        analysisPayload.staticReport = staticReportPayload;
+        analysisPayload.dmlReport = dmlReportPayload;
+        analysisPayload.dmlSegments = dmlSegments;
+        analysisPayload.dmlSummary = dmlSummary;
+        if (dmlErrorMessage) {
+            analysisPayload.dmlErrorMessage = dmlErrorMessage;
+        }
+        if (dmlConversationId) {
+            analysisPayload.dmlConversationId = dmlConversationId;
+        }
+        if (dmlGeneratedAt) {
+            analysisPayload.dmlGeneratedAt = dmlGeneratedAt;
         }
         if (difyErrorMessage) {
             analysisPayload.difyErrorMessage = difyErrorMessage;
         } else if (!dify) {
             analysisPayload.difyErrorMessage = "";
         }
+    }
+
+    const sourceLabels = ["sql-rule-engine"];
+    if (dmlSegments.length) {
+        sourceLabels.push(dmlPrompt ? "dml-dify" : "dml");
+    }
+    if (dify) {
+        sourceLabels.push("dify");
     }
 
     return {
@@ -360,9 +685,11 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError }) {
         analysis: analysisPayload,
         rawReport,
         dify: dify || null,
-        source: dify ? "sql-rule-engine+dify" : "sql-rule-engine",
+        dml: dmlReportPayload,
+        source: sourceLabels.join("+"),
         enrichmentStatus,
-        difyErrorMessage: difyErrorMessage || undefined
+        difyErrorMessage: difyErrorMessage || undefined,
+        dmlErrorMessage: dmlErrorMessage || undefined
     };
 }
 
