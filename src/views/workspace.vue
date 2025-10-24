@@ -3981,11 +3981,11 @@ onBeforeUnmount(() => {
                                                     >
                                                         <summary>
                                                             第 {{ segment.index }} 段
-                                                            <template v-if="segment.startLine">
+                                                            <span v-if="segment.startLine">
                                                                 （第 {{ segment.startLine }} 行起
-                                                                <template v-if="segment.endLine">，至第 {{ segment.endLine }} 行止</template>
+                                                                <span v-if="segment.endLine">，至第 {{ segment.endLine }} 行止</span>
                                                                 ）
-                                                            </template>
+                                                            </span>
                                                         </summary>
                                                         <pre class="reportDmlSql codeScroll themed-scrollbar">
                                                             {{ segment.sql }}
