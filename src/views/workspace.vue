@@ -771,6 +771,75 @@ const reportIssueLines = computed(() => {
 const hasReportIssueLines = computed(() => reportIssueLines.value.length > 0);
 
 const reportIssuesViewMode = ref("code");
+const structuredReportViewMode = ref("combined");
+
+const canShowStructuredSummary = computed(() => Boolean(activeReportDetails.value));
+
+const canShowStructuredStatic = computed(() => {
+    const details = activeReportDetails.value;
+    if (!details) return false;
+
+    if (details.staticReport && typeof details.staticReport === "object") {
+        if (Object.keys(details.staticReport).length > 0) {
+            return true;
+        }
+    }
+
+    if (Array.isArray(details.staticSummaryDetails) && details.staticSummaryDetails.length) {
+        return true;
+    }
+
+    if (Array.isArray(details.staticMetadataDetails) && details.staticMetadataDetails.length) {
+        return true;
+    }
+
+    if (details.staticSummary) {
+        if (typeof details.staticSummary === "string") {
+            if (details.staticSummary.trim().length) return true;
+        } else if (typeof details.staticSummary === "object") {
+            if (Object.keys(details.staticSummary).length) return true;
+        }
+    }
+
+    if (details.staticMetadata && typeof details.staticMetadata === "object") {
+        if (Object.keys(details.staticMetadata).length) {
+            return true;
+        }
+    }
+
+    return false;
+});
+
+const canShowStructuredDml = computed(() => {
+    const report = activeReportDetails.value?.dmlReport;
+    if (!report) return false;
+
+    if (Array.isArray(report.segments) && report.segments.length) {
+        return true;
+    }
+
+    if (typeof report.reportText === "string" && report.reportText.trim().length) {
+        return true;
+    }
+
+    if (typeof report.error === "string" && report.error.trim().length) {
+        return true;
+    }
+
+    if (typeof report.status === "string" && report.status.trim().length) {
+        return true;
+    }
+
+    if (report.generatedAt) {
+        return true;
+    }
+
+    return false;
+});
+
+const hasStructuredReportToggle = computed(
+    () => canShowStructuredSummary.value || canShowStructuredStatic.value || canShowStructuredDml.value
+);
 
 const activeReportStaticRawSourceText = computed(() => {
     const report = activeReport.value;
@@ -960,6 +1029,16 @@ function setReportIssuesViewMode(mode) {
     reportIssuesViewMode.value = mode;
 }
 
+function setStructuredReportViewMode(mode) {
+    if (!mode) return;
+    if (mode !== "combined" && mode !== "static" && mode !== "dml") return;
+    if (mode === structuredReportViewMode.value) return;
+    if (mode === "combined" && !canShowStructuredSummary.value) return;
+    if (mode === "static" && !canShowStructuredStatic.value) return;
+    if (mode === "dml" && !canShowStructuredDml.value) return;
+    structuredReportViewMode.value = mode;
+}
+
 function ensureReportIssuesViewMode(preferred) {
     const order = [];
     if (preferred) {
@@ -993,18 +1072,61 @@ function ensureReportIssuesViewMode(preferred) {
     }
 }
 
+function ensureStructuredReportViewMode(preferred) {
+    const order = [];
+    if (preferred) {
+        order.push(preferred);
+    }
+    order.push("combined", "static", "dml");
+
+    for (const mode of order) {
+        if (mode === "combined" && canShowStructuredSummary.value) {
+            if (structuredReportViewMode.value !== "combined") {
+                structuredReportViewMode.value = "combined";
+            }
+            return;
+        }
+        if (mode === "static" && canShowStructuredStatic.value) {
+            if (structuredReportViewMode.value !== "static") {
+                structuredReportViewMode.value = "static";
+            }
+            return;
+        }
+        if (mode === "dml" && canShowStructuredDml.value) {
+            if (structuredReportViewMode.value !== "dml") {
+                structuredReportViewMode.value = "dml";
+            }
+            return;
+        }
+    }
+
+    if (structuredReportViewMode.value !== "combined") {
+        structuredReportViewMode.value = "combined";
+    }
+}
+
 watch(activeReport, (report) => {
     if (!report) {
         reportIssuesViewMode.value = "code";
+        structuredReportViewMode.value = "combined";
         return;
     }
     ensureReportIssuesViewMode("code");
+    ensureStructuredReportViewMode("combined");
 });
 
 watch(
     [canShowCodeIssues, canShowStaticReportJson, canShowDifyReportJson],
     () => {
         ensureReportIssuesViewMode(reportIssuesViewMode.value);
+    },
+    { immediate: true }
+);
+
+watch(
+    [canShowStructuredSummary, canShowStructuredStatic, canShowStructuredDml],
+    () => {
+        ensureStructuredReportViewMode(structuredReportViewMode.value);
     },
     { immediate: true }
 );
@@ -3577,123 +3699,199 @@ onBeforeUnmount(() => {
                                 </div>
                                 <template v-else>
                                     <div v-if="hasStructuredReport" class="reportStructured">
-                                            <section class="reportSummaryGrid">
-    <div
-        v-if="activeReportDetails?.sourceSummaries?.length"
-        class="reportSummaryCard reportSummaryCard--span"
-    >
-        <span class="reportSummaryLabel">來源摘要</span>
-        <ul class="reportSummarySources">
-            <li
-                v-for="item in activeReportDetails.sourceSummaries"
-                :key="item.key"
-                class="reportSummarySource"
-            >
-                <div class="reportSummarySourceHeading">
-                    <span class="reportSummaryItemLabel">{{ item.label }}</span>
-                    <span
-                        v-if="item.status"
-                        class="reportSummarySourceStatus"
-                    >
-                        {{ item.status }}
-                    </span>
-                </div>
-                <ul
-                    v-if="item.metrics?.length"
-                    class="reportSummarySourceMetrics"
-                >
-                    <li
-                        v-for="metric in item.metrics"
-                        :key="`${item.key}-${metric.label}`"
-                    >
-                        <span class="reportSummaryItemLabel">{{ metric.label }}</span>
-                        <span class="reportSummaryItemValue">{{ metric.value }}</span>
-                    </li>
-                </ul>
-                <p
-                    v-if="item.errorMessage"
-                    class="reportSummarySourceError"
-                >
-                    {{ item.errorMessage }}
-                </p>
-            </li>
-        </ul>
-    </div>
-    <div
-        v-if="activeReportDetails?.combinedSummaryDetails?.length"
-        class="reportSummaryCard reportSummaryCard--span"
-    >
-        <span class="reportSummaryLabel">整合摘要</span>
-        <ul class="reportSummaryList">
-            <li
-                v-for="item in activeReportDetails.combinedSummaryDetails"
-                :key="`combined-${item.label}-${item.value}`"
-            >
-                <span class="reportSummaryItemLabel">{{ item.label }}</span>
-                <span class="reportSummaryItemValue">{{ item.value }}</span>
-            </li>
-        </ul>
-    </div>
-    <div class="reportSummaryCard reportSummaryCard--total">
-        <span class="reportSummaryLabel">問題</span>
-        <span class="reportSummaryValue">
-            {{
-                activeReportDetails?.totalIssues === null
-                    ? "—"
-                    : activeReportDetails.totalIssues
-            }}
-        </span>
-    </div>
-    <div
-        v-if="activeReportDetails?.summaryText"
-        class="reportSummaryCard reportSummaryCard--span"
-    >
-        <span class="reportSummaryLabel">摘要</span>
-        <p class="reportSummaryText">{{ activeReportDetails.summaryText }}</p>
-    </div>
-    <div
-        v-else-if="activeReportDetails && activeReportDetails.totalIssues === 0"
-        class="reportSummaryCard reportSummaryCard--span"
-    >
-        <span class="reportSummaryLabel">摘要</span>
-        <p class="reportSummaryText">未檢測到問題。</p>
-    </div>
-    <div
-        v-if="activeReportDetails?.ruleBreakdown?.length"
-        class="reportSummaryCard"
-    >
-        <span class="reportSummaryLabel">規則分佈</span>
-        <ul class="reportSummaryList">
-            <li
-                v-for="item in activeReportDetails.ruleBreakdown"
-                :key="`${item.label}-${item.count}`"
-            >
-                <span class="reportSummaryItemLabel">{{ item.label }}</span>
-                <span class="reportSummaryItemValue">{{ item.count }}</span>
-            </li>
-        </ul>
-    </div>
-    <div
-        v-if="activeReportDetails?.severityBreakdown?.length"
-        class="reportSummaryCard"
-    >
-        <span class="reportSummaryLabel">嚴重度</span>
-        <ul class="reportSummaryList">
-            <li
-                v-for="item in activeReportDetails.severityBreakdown"
-                :key="`${item.label}-${item.count}`"
-            >
-                <span class="reportSummaryItemLabel">{{ item.label }}</span>
-                <span class="reportSummaryItemValue">{{ item.count }}</span>
-            </li>
-        </ul>
-    </div>
-</section>
+                                        <div
+                                            v-if="hasStructuredReportToggle"
+                                            class="reportStructuredToggle"
+                                            role="group"
+                                            aria-label="報告來源"
+                                        >
+                                            <button
+                                                type="button"
+                                                class="reportStructuredToggleButton"
+                                                :class="{ active: structuredReportViewMode === 'combined' }"
+                                                :disabled="!canShowStructuredSummary"
+                                                @click="setStructuredReportViewMode('combined')"
+                                            >
+                                                總報告
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="reportStructuredToggleButton"
+                                                :class="{ active: structuredReportViewMode === 'static' }"
+                                                :disabled="!canShowStructuredStatic"
+                                                @click="setStructuredReportViewMode('static')"
+                                            >
+                                                靜態分析器
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="reportStructuredToggleButton"
+                                                :class="{ active: structuredReportViewMode === 'dml' }"
+                                                :disabled="!canShowStructuredDml"
+                                                @click="setStructuredReportViewMode('dml')"
+                                            >
+                                                DML 語句分析
+                                            </button>
+                                        </div>
+                                        <section
+                                            v-if="structuredReportViewMode === 'combined' && canShowStructuredSummary"
+                                            class="reportSummaryGrid"
+                                        >
+                                            <div
+                                                v-if="activeReportDetails?.sourceSummaries?.length"
+                                                class="reportSummaryCard reportSummaryCard--span"
+                                            >
+                                                <span class="reportSummaryLabel">來源摘要</span>
+                                                <ul class="reportSummarySources">
+                                                    <li
+                                                        v-for="item in activeReportDetails.sourceSummaries"
+                                                        :key="item.key"
+                                                        class="reportSummarySource"
+                                                    >
+                                                        <div class="reportSummarySourceHeading">
+                                                            <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                                                            <span
+                                                                v-if="item.status"
+                                                                class="reportSummarySourceStatus"
+                                                            >
+                                                                {{ item.status }}
+                                                            </span>
+                                                        </div>
+                                                        <ul
+                                                            v-if="item.metrics?.length"
+                                                            class="reportSummarySourceMetrics"
+                                                        >
+                                                            <li
+                                                                v-for="metric in item.metrics"
+                                                                :key="`${item.key}-${metric.label}`"
+                                                            >
+                                                                <span class="reportSummaryItemLabel">{{ metric.label }}</span>
+                                                                <span class="reportSummaryItemValue">{{ metric.value }}</span>
+                                                            </li>
+                                                        </ul>
+                                                        <p
+                                                            v-if="item.errorMessage"
+                                                            class="reportSummarySourceError"
+                                                        >
+                                                            {{ item.errorMessage }}
+                                                        </p>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <div
+                                                v-if="activeReportDetails?.combinedSummaryDetails?.length"
+                                                class="reportSummaryCard reportSummaryCard--span"
+                                            >
+                                                <span class="reportSummaryLabel">整合摘要</span>
+                                                <ul class="reportSummaryList">
+                                                    <li
+                                                        v-for="item in activeReportDetails.combinedSummaryDetails"
+                                                        :key="`combined-${item.label}-${item.value}`"
+                                                    >
+                                                        <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                                                        <span class="reportSummaryItemValue">{{ item.value }}</span>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <div class="reportSummaryCard reportSummaryCard--total">
+                                                <span class="reportSummaryLabel">問題</span>
+                                                <span class="reportSummaryValue">
+                                                    {{
+                                                        activeReportDetails?.totalIssues === null
+                                                            ? "—"
+                                                            : activeReportDetails.totalIssues
+                                                    }}
+                                                </span>
+                                            </div>
+                                            <div
+                                                v-if="activeReportDetails?.summaryText"
+                                                class="reportSummaryCard reportSummaryCard--span"
+                                            >
+                                                <span class="reportSummaryLabel">摘要</span>
+                                                <p class="reportSummaryText">{{ activeReportDetails.summaryText }}</p>
+                                            </div>
+                                            <div
+                                                v-else-if="activeReportDetails && activeReportDetails.totalIssues === 0"
+                                                class="reportSummaryCard reportSummaryCard--span"
+                                            >
+                                                <span class="reportSummaryLabel">摘要</span>
+                                                <p class="reportSummaryText">未檢測到問題。</p>
+                                            </div>
+                                            <div
+                                                v-if="activeReportDetails?.ruleBreakdown?.length"
+                                                class="reportSummaryCard"
+                                            >
+                                                <div class="reportStaticHeader">
+                                                    <h4>靜態分析器</h4>
+                                                    <span
+                                                        v-if="activeReportDetails?.staticMetadata?.engine"
+                                                        class="reportStaticEngine"
+                                                    >
+                                                        引擎：{{ activeReportDetails.staticMetadata.engine }}
+                                                    </span>
+                                                    <span
+                                                        v-else-if="activeReportDetails?.staticSummary?.analysis_source"
+                                                        class="reportStaticEngine"
+                                                    >
+                                                        來源：{{ activeReportDetails.staticSummary.analysis_source }}
+                                                    </span>
+                                                </div>
+                                                <div
+                                                    v-if="activeReportDetails?.staticSummaryDetails?.length"
+                                                    class="reportStaticBlock"
+                                                >
+                                                    <h5>摘要資訊</h5>
+                                                    <ul class="reportStaticList">
+                                                        <li
+                                                            v-for="item in activeReportDetails.staticSummaryDetails"
+                                                            :key="`static-summary-${item.label}-${item.value}`"
+                                                        >
+                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
+                                                        </li>
+                                                    </ul>
+                                                </div>
+                                                <div
+                                                    v-if="activeReportDetails?.staticMetadataDetails?.length"
+                                                    class="reportStaticBlock"
+                                                >
+                                                    <h5>中繼資料</h5>
+                                                    <ul class="reportStaticList">
+                                                        <li
+                                                            v-for="item in activeReportDetails.staticMetadataDetails"
+                                                            :key="`static-metadata-${item.label}-${item.value}`"
+                                                        >
+                                                            <span class="reportStaticItemLabel">{{ item.label }}</span>
+                                                            <span class="reportStaticItemValue">{{ item.value }}</span>
+                                                        </li>
+                                                    </ul>
+                                                </div>
+                                            </section>
+
+                                            <section
+                                                v-if="activeReportDetails?.dmlReport"
+                                                class="reportDmlSection"
+                                            >
+                                                <div class="reportDmlHeader">
+                                                    <h4>DML 提示詞分析</h4>
+                                                    <span
+                                                        v-if="activeReportDetails.dmlReport.status"
+                                                        class="reportDmlStatus"
+                                                    >
+                                                        <span class="reportSummaryItemLabel">{{ item.label }}</span>
+                                                        <span class="reportSummaryItemValue">{{ item.count }}</span>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                        </section>
 
                                             <section
                                                 v-if="
-                                                    activeReportDetails?.staticSummaryDetails?.length ||
-                                                    activeReportDetails?.staticMetadataDetails?.length
+                                                    structuredReportViewMode === 'static' &&
+                                                    (
+                                                        activeReportDetails?.staticSummaryDetails?.length ||
+                                                        activeReportDetails?.staticMetadataDetails?.length
+                                                    )
                                                 "
                                                 class="reportStaticSection"
                                             >
@@ -3745,7 +3943,10 @@ onBeforeUnmount(() => {
                                             </section>
 
                                             <section
-                                                v-if="activeReportDetails?.dmlReport"
+                                                v-if="
+                                                    structuredReportViewMode === 'dml' &&
+                                                    activeReportDetails?.dmlReport
+                                                "
                                                 class="reportDmlSection"
                                             >
                                                 <div class="reportDmlHeader">
@@ -4433,6 +4634,35 @@ body,
     min-height: 0;
 }
 
+.reportStructuredToggle {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.reportStructuredToggleButton {
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.14);
+    color: #e2e8f0;
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.reportStructuredToggleButton.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.28), rgba(14, 165, 233, 0.28));
+    border-color: rgba(59, 130, 246, 0.5);
+    color: #f8fafc;
+}
+
+.reportStructuredToggleButton:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 .reportSummaryGrid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -4867,6 +5097,11 @@ body,
     min-height: 800px;
 }
 
+.reportRowContent.codeScroll {
+    overflow: visible;
+    max-height: none;
+}
+
 .reportRowNotice {
     margin: 0;
     padding: 0 16px 12px;
@@ -5221,6 +5456,12 @@ body,
 .pvBox.codeBox {
     padding: 12px;
     overflow: hidden;
+}
+
+.pvBox.codeBox.reportIssuesBox,
+.pvBox.codeBox.reportIssuesBox .codeScroll {
+    overflow: visible;
+    max-height: none;
 }
 
 .codeScroll {
