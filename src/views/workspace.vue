@@ -3646,7 +3646,9 @@ onBeforeUnmount(() => {
     <div class="page">
         <div class="topBar">
             <div class="topBar_left">
-                <h1 class="topBar_title">Workspace</h1>
+                <h1 class="topBar_title">
+                    <img src="@">
+                </h1>
             </div>
             <div class="topBar_spacer"></div>
             <div class="topBar_right">
