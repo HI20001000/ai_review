@@ -1,0 +1,22 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Workspace placeholder background">
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="45%" stop-color="#111827" />
+      <stop offset="100%" stop-color="#1f2937" />
+    </linearGradient>
+    <radialGradient id="accentGradient" cx="0.5" cy="0.4" r="0.75">
+      <stop offset="0%" stop-color="rgba(59,130,246,0.4)" />
+      <stop offset="50%" stop-color="rgba(14,165,233,0.18)" />
+      <stop offset="100%" stop-color="rgba(17,24,39,0)" />
+    </radialGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bgGradient)" />
+  <ellipse cx="1200" cy="200" rx="520" ry="420" fill="url(#accentGradient)" />
+  <ellipse cx="400" cy="700" rx="480" ry="360" fill="url(#accentGradient)" transform="rotate(-12 400 700)" />
+  <path d="M200 620 C420 500 640 540 820 420 C1000 300 1220 320 1400 200" stroke="rgba(96,165,250,0.25)" stroke-width="4" stroke-linecap="round" fill="none" />
+  <path d="M160 700 C360 580 620 600 780 500 C960 380 1180 420 1360 320" stroke="rgba(14,165,233,0.25)" stroke-width="2" stroke-linecap="round" fill="none" />
+  <circle cx="300" cy="240" r="60" fill="rgba(59,130,246,0.35)" />
+  <circle cx="1320" cy="640" r="80" fill="rgba(14,165,233,0.25)" />
+  <circle cx="1000" cy="260" r="48" fill="rgba(59,130,246,0.22)" />
+</svg>

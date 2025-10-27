@@ -395,7 +395,7 @@ function normaliseStaticSummary(summary, fallbackExtension = ".sql") {
     return normalised;
 }
 
-function normaliseDmlSummary(segments, dmlPrompt, dmlError) {
+function normaliseDmlSummary(segments, dmlPrompt, dmlError, dmlReportJson, dmlIssues) {
     const totalSegments = Array.isArray(segments) ? segments.length : 0;
     const chunkCount = Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks.length : 0;
     const hasReport = typeof dmlPrompt?.report === "string" && dmlPrompt.report.trim().length > 0;
@@ -423,6 +423,41 @@ function normaliseDmlSummary(segments, dmlPrompt, dmlError) {
         summary.error_message = errorMessage;
     }
 
+    const issues = Array.isArray(dmlIssues) ? dmlIssues : [];
+    summary.total_issues = issues.length;
+
+    const byRule = {};
+    for (const issue of issues) {
+        const ruleCandidates = [];
+        if (Array.isArray(issue?.rule_ids)) {
+            ruleCandidates.push(...issue.rule_ids);
+        }
+        if (issue?.rule_id) {
+            ruleCandidates.push(issue.rule_id);
+        }
+        if (issue?.ruleId) {
+            ruleCandidates.push(issue.ruleId);
+        }
+        if (ruleCandidates.length === 0) {
+            ruleCandidates.push("未標示");
+        }
+        for (const rule of ruleCandidates) {
+            const key = typeof rule === "string" ? rule.trim() : String(rule ?? "").trim();
+            const label = key || "未標示";
+            byRule[label] = (byRule[label] || 0) + 1;
+        }
+    }
+    if (Object.keys(byRule).length) {
+        summary.by_rule = byRule;
+    }
+
+    if (dmlReportJson && typeof dmlReportJson === "object") {
+        const nestedSummary = dmlReportJson.summary;
+        if (nestedSummary && typeof nestedSummary === "object") {
+            summary.nested_summary = nestedSummary;
+        }
+    }
+
     return summary;
 }
 
@@ -435,9 +470,22 @@ function buildCompositeSummary(staticSummary, dmlSummary) {
         : typeof staticSummary?.fileExtension === "string"
         ? staticSummary.fileExtension
         : ".sql";
-    const totalCandidate = staticSummary?.total_issues ?? staticSummary?.totalIssues;
-    const numericTotal = Number(totalCandidate);
-    const totalIssues = Number.isFinite(numericTotal) ? numericTotal : 0;
+    const staticTotalCandidate = staticSummary?.total_issues ?? staticSummary?.totalIssues;
+    const staticTotal = Number.isFinite(Number(staticTotalCandidate)) ? Number(staticTotalCandidate) : 0;
+    const dmlTotalCandidate = dmlSummary?.total_issues ?? dmlSummary?.totalIssues;
+    const dmlTotal = Number.isFinite(Number(dmlTotalCandidate)) ? Number(dmlTotalCandidate) : 0;
+    const totalIssues = staticTotal + dmlTotal;
+
+    const dmlByRule = dmlSummary?.by_rule && typeof dmlSummary.by_rule === "object" && !Array.isArray(dmlSummary.by_rule)
+        ? dmlSummary.by_rule
+        : {};
+    for (const [rule, count] of Object.entries(dmlByRule)) {
+        const key = typeof rule === "string" && rule.trim() ? rule.trim() : "未標示";
+        const numeric = Number(count);
+        if (!Number.isFinite(numeric)) continue;
+        byRule[key] = (byRule[key] || 0) + numeric;
+    }
+
     const composite = {
         total_issues: totalIssues,
         by_rule: byRule,
@@ -450,6 +498,9 @@ function buildCompositeSummary(staticSummary, dmlSummary) {
     };
     if (typeof staticSummary?.message === "string" && staticSummary.message.trim()) {
         composite.message = staticSummary.message.trim();
+    }
+    if (typeof dmlSummary?.message === "string" && dmlSummary.message.trim()) {
+        composite.sources.dml_prompt.message = dmlSummary.message.trim();
     }
     return composite;
 }
@@ -582,17 +633,50 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
           }))
         : [];
     const dmlPrompt = dml?.dify || null;
-    const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError);
     const dmlChunks = Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks : [];
+    const dmlReportCandidates = [];
     const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
+    if (dmlReportText) {
+        dmlReportCandidates.push(dmlReportText);
+    }
+    for (const chunk of dmlChunks) {
+        if (typeof chunk?.answer === "string" && chunk.answer.trim()) {
+            dmlReportCandidates.push(chunk.answer);
+        }
+    }
+    let dmlReportJsonString = "";
+    let dmlReportJson = null;
+    for (const candidate of dmlReportCandidates) {
+        const extracted = extractJsonFromText(candidate);
+        if (!extracted) continue;
+        try {
+            const parsed = JSON.parse(extracted);
+            dmlReportJson = parsed;
+            dmlReportJsonString = JSON.stringify(parsed);
+            break;
+        } catch (_error) {
+            continue;
+        }
+    }
+    const dmlIssues = Array.isArray(dmlReportJson?.issues) ? dmlReportJson.issues : [];
+    const normalisedDmlIssues = dmlIssues.map((issue, index) => ({
+        ...issue,
+        index: Number.isFinite(Number(issue?.index)) ? Number(issue.index) : index + 1,
+        source: typeof issue?.source === "string" ? issue.source : "dml_prompt"
+    }));
+    const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError, dmlReportJson, normalisedDmlIssues);
     const dmlConversationId = typeof dmlPrompt?.conversationId === "string" ? dmlPrompt.conversationId : "";
     const dmlGeneratedAt = dmlPrompt?.generatedAt || null;
     const dmlErrorMessage = dmlSummary.error_message || (dmlPrompt?.error ? String(dmlPrompt.error) : "");
+    const dmlAggregatedReport = dmlReportJsonString || dmlReportText;
     const dmlReportPayload = {
         type: "dml_prompt",
         summary: dmlSummary,
         segments: dmlSegments,
-        report: dmlReportText,
+        report: dmlAggregatedReport,
+        json: dmlReportJson || null,
+        issues: normalisedDmlIssues,
+        originalReport: dmlReportText,
         chunks: dmlChunks,
         conversationId: dmlConversationId,
         generatedAt: dmlGeneratedAt,
@@ -600,9 +684,10 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     };
 
     const compositeSummary = buildCompositeSummary(staticSummary, dmlSummary);
+    const combinedIssues = [...staticIssues.map((issue) => ({ ...issue, source: "static_analyzer" })), ...normalisedDmlIssues];
     const finalPayload = {
         summary: compositeSummary,
-        issues: staticIssues,
+        issues: combinedIssues,
         reports: {
             static_analyzer: staticReportPayload,
             dml_prompt: dmlReportPayload
@@ -652,6 +737,12 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         analysisPayload.dmlReport = dmlReportPayload;
         analysisPayload.dmlSegments = dmlSegments;
         analysisPayload.dmlSummary = dmlSummary;
+        if (normalisedDmlIssues.length) {
+            analysisPayload.dmlIssues = normalisedDmlIssues;
+        }
+        if (dmlReportJson && typeof dmlReportJson === "object") {
+            analysisPayload.dmlReportJson = dmlReportJson;
+        }
         if (dmlErrorMessage) {
             analysisPayload.dmlErrorMessage = dmlErrorMessage;
         }
