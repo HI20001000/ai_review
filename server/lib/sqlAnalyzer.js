@@ -423,34 +423,184 @@ function normaliseDmlSummary(segments, dmlPrompt, dmlError) {
         summary.error_message = errorMessage;
     }
 
+    const aggregated = dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
+    if (aggregated) {
+        const aggregatedIssueCount = Array.isArray(aggregated.issues) ? aggregated.issues.length : 0;
+        const aggregatedTotalCandidate = Number(aggregated.total_issues ?? aggregated.totalIssues);
+        if (Number.isFinite(aggregatedTotalCandidate)) {
+            summary.total_issues = aggregatedTotalCandidate;
+        } else if (aggregatedIssueCount) {
+            summary.total_issues = aggregatedIssueCount;
+        }
+
+        const aggregatedSeverity =
+            aggregated.by_severity && typeof aggregated.by_severity === "object" && !Array.isArray(aggregated.by_severity)
+                ? aggregated.by_severity
+                : aggregated.bySeverity && typeof aggregated.bySeverity === "object" && !Array.isArray(aggregated.bySeverity)
+                ? aggregated.bySeverity
+                : null;
+        if (aggregatedSeverity) {
+            summary.by_severity = { ...aggregatedSeverity };
+        }
+
+        const aggregatedRules =
+            aggregated.by_rule && typeof aggregated.by_rule === "object" && !Array.isArray(aggregated.by_rule)
+                ? aggregated.by_rule
+                : aggregated.byRule && typeof aggregated.byRule === "object" && !Array.isArray(aggregated.byRule)
+                ? aggregated.byRule
+                : null;
+        if (aggregatedRules) {
+            summary.by_rule = { ...aggregatedRules };
+        }
+
+        const messages = Array.isArray(aggregated.messages)
+            ? aggregated.messages
+                  .map((item) => (typeof item === "string" ? item.trim() : ""))
+                  .filter((item) => item.length)
+            : [];
+        const messageText = typeof aggregated.message === "string" ? aggregated.message.trim() : "";
+        if (messageText) {
+            summary.message = messageText;
+        } else if (messages.length) {
+            summary.message = messages.join(" ");
+        }
+        if (messages.length) {
+            summary.messages = messages;
+        }
+    }
+
     return summary;
 }
 
-function buildCompositeSummary(staticSummary, dmlSummary) {
-    const byRule = staticSummary?.by_rule && typeof staticSummary.by_rule === "object" && !Array.isArray(staticSummary.by_rule)
-        ? { ...staticSummary.by_rule }
-        : {};
+function collectRuleCountsFromIssues(issues) {
+    const result = {};
+    if (!Array.isArray(issues)) {
+        return result;
+    }
+
+    for (const issue of issues) {
+        if (!issue || typeof issue !== "object") continue;
+
+        const ruleValues = [];
+        if (Array.isArray(issue.rule_ids)) {
+            ruleValues.push(...issue.rule_ids);
+        }
+        if (Array.isArray(issue.ruleIds)) {
+            ruleValues.push(...issue.ruleIds);
+        }
+        ruleValues.push(issue.rule_id, issue.ruleId, issue.rule);
+
+        const uniqueRules = new Set();
+        for (const value of ruleValues) {
+            if (value === null || value === undefined) continue;
+            const stringValue = typeof value === "string" ? value : String(value);
+            const trimmed = stringValue.trim();
+            if (!trimmed) continue;
+            uniqueRules.add(trimmed);
+        }
+
+        if (!uniqueRules.size) continue;
+
+        for (const rule of uniqueRules) {
+            result[rule] = (result[rule] || 0) + 1;
+        }
+    }
+
+    return result;
+}
+
+function annotateIssueSource(issue, source) {
+    if (!issue || typeof issue !== "object") {
+        return issue;
+    }
+    if (issue.source || issue.analysis_source) {
+        return issue;
+    }
+    return { ...issue, source };
+}
+
+function normaliseDifySummary(summarySource, issueCount = 0) {
+    if (!summarySource || typeof summarySource !== "object") {
+        return null;
+    }
+
+    const rawSummary = summarySource.summary;
+    if (rawSummary && typeof rawSummary === "object" && !Array.isArray(rawSummary)) {
+        const summary = { ...rawSummary };
+        if (!summary.analysis_source && !summary.analysisSource) {
+            summary.analysis_source = "dify_workflow";
+        }
+        if (
+            summary.total_issues === undefined &&
+            summary.totalIssues === undefined &&
+            Number.isFinite(issueCount)
+        ) {
+            summary.total_issues = issueCount;
+        }
+        return summary;
+    }
+
+    const message = typeof rawSummary === "string" ? rawSummary.trim() : "";
+    const totalCandidate = Number(summarySource.total_issues ?? summarySource.totalIssues);
+    const totalIssues = Number.isFinite(totalCandidate) ? totalCandidate : issueCount;
+    const summary = {
+        analysis_source: "dify_workflow",
+        total_issues: Number.isFinite(totalIssues) ? totalIssues : 0
+    };
+    if (message) {
+        summary.message = message;
+    }
+    return summary;
+}
+
+function buildCompositeSummary(staticSummary, dmlSummary, difySummary, issues) {
+    const ruleCounts = collectRuleCountsFromIssues(issues);
+    const hasRuleCounts = Object.keys(ruleCounts).length > 0;
+    const staticByRule =
+        staticSummary?.by_rule && typeof staticSummary.by_rule === "object" && !Array.isArray(staticSummary.by_rule)
+            ? { ...staticSummary.by_rule }
+            : {};
+
+    const byRule = hasRuleCounts ? ruleCounts : staticByRule;
+
     const fileExtension = typeof staticSummary?.file_extension === "string"
         ? staticSummary.file_extension
         : typeof staticSummary?.fileExtension === "string"
         ? staticSummary.fileExtension
         : ".sql";
-    const totalCandidate = staticSummary?.total_issues ?? staticSummary?.totalIssues;
-    const numericTotal = Number(totalCandidate);
-    const totalIssues = Number.isFinite(numericTotal) ? numericTotal : 0;
+
+    const totalIssues = Array.isArray(issues) ? issues.length : 0;
+
+    const sources = {};
+    if (staticSummary) {
+        sources.static_analyzer = staticSummary;
+    }
+    if (dmlSummary) {
+        sources.dml_prompt = dmlSummary;
+    }
+    if (difySummary) {
+        sources.dify_workflow = difySummary;
+    }
+
     const composite = {
         total_issues: totalIssues,
         by_rule: byRule,
         file_extension: fileExtension,
         analysis_source: "composite",
-        sources: {
-            static_analyzer: staticSummary,
-            dml_prompt: dmlSummary
-        }
+        sources
     };
+
+    const messages = [];
     if (typeof staticSummary?.message === "string" && staticSummary.message.trim()) {
-        composite.message = staticSummary.message.trim();
+        messages.push(staticSummary.message.trim());
     }
+    if (typeof difySummary?.message === "string" && difySummary.message.trim()) {
+        messages.push(difySummary.message.trim());
+    }
+    if (messages.length) {
+        composite.message = messages.join(" ");
+    }
+
     return composite;
 }
 
@@ -567,6 +717,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const parsedStaticReport = parseStaticReport(rawReport) || {};
     const staticSummary = normaliseStaticSummary(parsedStaticReport.summary, ".sql");
     const staticIssues = Array.isArray(parsedStaticReport.issues) ? parsedStaticReport.issues : [];
+    const staticIssuesWithSource = staticIssues.map((issue) => annotateIssueSource(issue, "static_analyzer"));
     const staticMetadata = normaliseStaticMetadata(parsedStaticReport.metadata);
     const staticReportPayload = {
         ...parsedStaticReport,
@@ -584,7 +735,11 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const dmlPrompt = dml?.dify || null;
     const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError);
     const dmlChunks = Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks : [];
+    const dmlAggregated = dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
+    const dmlIssues = Array.isArray(dmlAggregated?.issues) ? dmlAggregated.issues : [];
+    const dmlIssuesWithSource = dmlIssues.map((issue) => annotateIssueSource(issue, "dml_prompt"));
     const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
+    const dmlReportTextHuman = typeof dmlPrompt?.textReport === "string" ? dmlPrompt.textReport : "";
     const dmlConversationId = typeof dmlPrompt?.conversationId === "string" ? dmlPrompt.conversationId : "";
     const dmlGeneratedAt = dmlPrompt?.generatedAt || null;
     const dmlErrorMessage = dmlSummary.error_message || (dmlPrompt?.error ? String(dmlPrompt.error) : "");
@@ -593,24 +748,13 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         summary: dmlSummary,
         segments: dmlSegments,
         report: dmlReportText,
+        reportText: dmlReportTextHuman || undefined,
         chunks: dmlChunks,
+        issues: dmlIssues,
+        aggregated: dmlAggregated || undefined,
         conversationId: dmlConversationId,
         generatedAt: dmlGeneratedAt,
         metadata: { analysis_source: "dml_prompt" }
-    };
-
-    const compositeSummary = buildCompositeSummary(staticSummary, dmlSummary);
-    const finalPayload = {
-        summary: compositeSummary,
-        issues: staticIssues,
-        reports: {
-            static_analyzer: staticReportPayload,
-            dml_prompt: dmlReportPayload
-        },
-        metadata: {
-            analysis_source: "composite",
-            components: ["static_analyzer", dmlSegments.length ? "dml_prompt" : null].filter(Boolean)
-        }
     };
 
     let finalReport = difyReport && difyReport.trim() ? difyReport : rawReport;
@@ -622,8 +766,49 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             parsedDify = null;
         }
     }
+
+    const difyIssuesRaw =
+        parsedDify && typeof parsedDify === "object" && Array.isArray(parsedDify.issues) ? parsedDify.issues : [];
+    const difyIssuesWithSource = difyIssuesRaw.map((issue) => annotateIssueSource(issue, "dify_workflow"));
+    const combinedIssues = [...staticIssuesWithSource, ...difyIssuesWithSource, ...dmlIssuesWithSource];
+    const difySummary = parsedDify && typeof parsedDify === "object"
+        ? normaliseDifySummary(parsedDify, difyIssuesRaw.length)
+        : null;
+
+    const compositeSummary = buildCompositeSummary(staticSummary, dmlSummary, difySummary, combinedIssues);
+    const finalPayload = {
+        summary: compositeSummary,
+        issues: combinedIssues,
+        reports: {
+            static_analyzer: staticReportPayload,
+            dml_prompt: dmlReportPayload
+        },
+        metadata: {
+            analysis_source: "composite",
+            components: [
+                "static_analyzer",
+                dmlSegments.length ? "dml_prompt" : null,
+                difySummary ? "dify_workflow" : null
+            ].filter(Boolean)
+        }
+    };
+
     if (parsedDify && typeof parsedDify === "object") {
         finalPayload.reports.static_analyzer.enrichment = parsedDify;
+        finalPayload.reports.dify_workflow = {
+            type: "dify_workflow",
+            summary: difySummary,
+            issues: difyIssuesRaw,
+            metadata: { analysis_source: "dify_workflow" },
+            raw: parsedDify
+        };
+    }
+
+    if (dmlAggregated) {
+        finalPayload.reports.dml_prompt.aggregated = dmlAggregated;
+        if (!finalPayload.reports.dml_prompt.issues) {
+            finalPayload.reports.dml_prompt.issues = dmlIssues;
+        }
     }
 
     finalReport = JSON.stringify(finalPayload, null, 2);
@@ -652,6 +837,17 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         analysisPayload.dmlReport = dmlReportPayload;
         analysisPayload.dmlSegments = dmlSegments;
         analysisPayload.dmlSummary = dmlSummary;
+        analysisPayload.dmlIssues = dmlIssues;
+        if (dmlAggregated) {
+            analysisPayload.dmlAggregated = dmlAggregated;
+        }
+        analysisPayload.combinedSummary = compositeSummary;
+        analysisPayload.combinedIssues = combinedIssues;
+        if (parsedDify && typeof parsedDify === "object") {
+            analysisPayload.difyReport = parsedDify;
+            analysisPayload.difySummary = difySummary;
+            analysisPayload.difyIssues = difyIssuesRaw;
+        }
         if (dmlErrorMessage) {
             analysisPayload.dmlErrorMessage = dmlErrorMessage;
         }

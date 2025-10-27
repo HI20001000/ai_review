@@ -10,6 +10,12 @@ import { generateReportViaDify, fetchProjectReports } from "../scripts/services/
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
 
+const workspaceLogoModules = import.meta.glob("../assets/InfoMacro_logo.jpg", {
+    eager: true,
+    import: "default"
+});
+const workspaceLogoSrc = Object.values(workspaceLogoModules)[0] ?? "";
+
 const preview = usePreview();
 
 const projectsStore = useProjectsStore({
@@ -266,16 +272,16 @@ const activeReportDetails = computed(() => {
     const staticReport = reports?.static_analyzer || reports?.staticAnalyzer || null;
     const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
 
-    const issues = Array.isArray(staticReport?.issues)
-        ? staticReport.issues
-        : Array.isArray(parsed.issues)
+    const issues = Array.isArray(parsed.issues)
         ? parsed.issues
+        : Array.isArray(staticReport?.issues)
+        ? staticReport.issues
         : [];
     const rawStaticSummary =
         staticReport && typeof staticReport === "object" && staticReport.summary !== undefined
             ? staticReport.summary
             : null;
-    const summary = (rawStaticSummary ?? parsed.summary) ?? null;
+    const summary = (parsed.summary ?? rawStaticSummary) ?? null;
 
     let total = report.state.issueSummary?.totalIssues;
     if (!Number.isFinite(total)) {
@@ -582,6 +588,8 @@ const activeReportDetails = computed(() => {
                 label = "靜態分析器";
             } else if (keyLower === "dml_prompt" || keyLower === "dmlprompt") {
                 label = "DML 提示詞分析";
+            } else if (keyLower === "dify_workflow" || keyLower === "difyworkflow") {
+                label = "Dify 工作流";
             }
             const metrics = [];
             if (value.total_issues !== undefined || value.totalIssues !== undefined) {
@@ -636,6 +644,12 @@ const activeReportDetails = computed(() => {
               })
             : [];
         const aggregatedText = typeof dmlReport.report === "string" ? dmlReport.report.trim() : "";
+        const humanReadableText = typeof dmlReport.reportText === "string" ? dmlReport.reportText.trim() : "";
+        const aggregatedIssues = Array.isArray(dmlReport.issues) ? dmlReport.issues : [];
+        const aggregatedObject =
+            dmlReport.aggregated && typeof dmlReport.aggregated === "object"
+                ? dmlReport.aggregated
+                : null;
         const errorMessage =
             typeof dmlReport.error === "string"
                 ? dmlReport.error
@@ -651,7 +665,10 @@ const activeReportDetails = computed(() => {
         dmlDetails = {
             summary: dmlSummary,
             segments: dmlSegments,
-            reportText: aggregatedText,
+            reportText: humanReadableText || aggregatedText,
+            aggregatedText: aggregatedText,
+            aggregated: aggregatedObject,
+            issues: aggregatedIssues,
             error: errorMessage,
             status,
             generatedAt,
@@ -880,6 +897,20 @@ const canShowStructuredDml = computed(() => {
         return true;
     }
 
+    if (Array.isArray(report.issues) && report.issues.length) {
+        return true;
+    }
+
+    if (typeof report.aggregatedText === "string" && report.aggregatedText.trim().length) {
+        return true;
+    }
+
+    if (report.aggregated && typeof report.aggregated === "object") {
+        if (Object.keys(report.aggregated).length) {
+            return true;
+        }
+    }
+
     if (typeof report.reportText === "string" && report.reportText.trim().length) {
         return true;
     }
@@ -902,6 +933,23 @@ const canShowStructuredDml = computed(() => {
 const hasStructuredReportToggle = computed(
     () => canShowStructuredSummary.value || canShowStructuredStatic.value || canShowStructuredDml.value
 );
+
+const activeReportCombinedRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report) return "";
+
+    const direct = report.state?.report;
+    if (typeof direct === "string" && direct.trim()) {
+        return direct;
+    }
+
+    const analysisResult = report.state?.analysis?.result;
+    if (typeof analysisResult === "string" && analysisResult.trim()) {
+        return analysisResult;
+    }
+
+    return "";
+});
 
 const activeReportStaticRawSourceText = computed(() => {
     const report = activeReport.value;
@@ -1008,6 +1056,14 @@ function formatReportRawText(rawText) {
     return candidate;
 }
 
+const activeReportCombinedRawText = computed(() =>
+    formatReportRawText(activeReportCombinedRawSourceText.value)
+);
+const activeReportCombinedRawValue = computed(() =>
+    parseReportRawValue(activeReportCombinedRawSourceText.value)
+);
+const canExportActiveReportCombinedRaw = computed(() => activeReportCombinedRawValue.value.success);
+
 const activeReportStaticRawText = computed(() => formatReportRawText(activeReportStaticRawSourceText.value));
 const activeReportStaticRawValue = computed(() => parseReportRawValue(activeReportStaticRawSourceText.value));
 const canExportActiveReportStaticRaw = computed(() => activeReportStaticRawValue.value.success);
@@ -1027,6 +1083,7 @@ const canShowCodeIssues = computed(() => {
     return hasReportIssueLines.value;
 });
 
+const canShowCombinedReportJson = computed(() => activeReportCombinedRawText.value.trim().length > 0);
 const canShowStaticReportJson = computed(() => activeReportStaticRawText.value.trim().length > 0);
 const canShowDifyReportJson = computed(() => activeReportDifyRawText.value.trim().length > 0);
 
@@ -1069,6 +1126,7 @@ const reportDifyUnavailableNotice = computed(() => {
 const shouldShowReportIssuesSection = computed(
     () =>
         Boolean(activeReportDetails.value) ||
+        canShowCombinedReportJson.value ||
         canShowStaticReportJson.value ||
         canShowDifyReportJson.value
 );
@@ -1083,9 +1141,10 @@ const activeReportIssueCount = computed(() => {
 
 function setReportIssuesViewMode(mode) {
     if (!mode) return;
-    if (mode !== "code" && mode !== "static" && mode !== "dify") return;
+    if (mode !== "code" && mode !== "combined" && mode !== "static" && mode !== "dify") return;
     if (mode === reportIssuesViewMode.value) return;
     if (mode === "code" && !canShowCodeIssues.value) return;
+    if (mode === "combined" && !canShowCombinedReportJson.value) return;
     if (mode === "static" && !canShowStaticReportJson.value) return;
     if (mode === "dify" && !canShowDifyReportJson.value) return;
     reportIssuesViewMode.value = mode;
@@ -1106,12 +1165,18 @@ function ensureReportIssuesViewMode(preferred) {
     if (preferred) {
         order.push(preferred);
     }
-    order.push("code", "static", "dify");
+    order.push("code", "combined", "static", "dify");
 
     for (const mode of order) {
         if (mode === "code" && canShowCodeIssues.value) {
             if (reportIssuesViewMode.value !== "code") {
                 reportIssuesViewMode.value = "code";
+            }
+            return;
+        }
+        if (mode === "combined" && canShowCombinedReportJson.value) {
+            if (reportIssuesViewMode.value !== "combined") {
+                reportIssuesViewMode.value = "combined";
             }
             return;
         }
@@ -1178,7 +1243,7 @@ watch(activeReport, (report) => {
 });
 
 watch(
-    [canShowCodeIssues, canShowStaticReportJson, canShowDifyReportJson],
+    [canShowCodeIssues, canShowCombinedReportJson, canShowStaticReportJson, canShowDifyReportJson],
     () => {
         ensureReportIssuesViewMode(reportIssuesViewMode.value);
     },
@@ -1197,10 +1262,16 @@ function getReportJsonValueForMode(mode) {
     if (mode === "dify") {
         return activeReportDifyRawValue.value;
     }
+    if (mode === "combined") {
+        return activeReportCombinedRawValue.value;
+    }
     return activeReportStaticRawValue.value;
 }
 
 function getReportJsonLabel(mode) {
+    if (mode === "combined") {
+        return "聚合報告 JSON";
+    }
     if (mode === "dify") {
         return "Dify JSON";
     }
@@ -3647,7 +3718,7 @@ onBeforeUnmount(() => {
         <div class="topBar">
             <div class="topBar_left">
                 <h1 class="topBar_title">
-                    <img src="@">
+                    <img :src="workspaceLogoSrc" alt="Workspace" class="topBar_logo" />
                 </h1>
             </div>
             <div class="topBar_spacer"></div>
@@ -4029,6 +4100,15 @@ onBeforeUnmount(() => {
                                                         <button
                                                             type="button"
                                                             class="reportIssuesToggleButton"
+                                                            :class="{ active: reportIssuesViewMode === 'combined' }"
+                                                            :disabled="!canShowCombinedReportJson"
+                                                            @click="setReportIssuesViewMode('combined')"
+                                                        >
+                                                            聚合報告 JSON
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="reportIssuesToggleButton"
                                                             :class="{ active: reportIssuesViewMode === 'static' }"
                                                             :disabled="!canShowStaticReportJson"
                                                             @click="setReportIssuesViewMode('static')"
@@ -4137,6 +4217,28 @@ onBeforeUnmount(() => {
                                                             </div>
                                                         </template>
                                                         <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
+                                                    </template>
+                                                    <template v-else-if="reportIssuesViewMode === 'combined'">
+                                                        <div v-if="activeReportCombinedRawText.trim().length" class="reportRow">
+                                                            <div v-if="canExportActiveReportCombinedRaw" class="reportRowActions">
+                                                                <button
+                                                                    type="button"
+                                                                    class="reportRowActionButton"
+                                                                    :disabled="isExportingReportJsonExcel"
+                                                                    @click="exportActiveReportJsonToExcel('combined')"
+                                                                >
+                                                                    <span v-if="isExportingReportJsonExcel">匯出中…</span>
+                                                                    <span v-else>匯出 Excel</span>
+                                                                </button>
+                                                            </div>
+                                                            <pre class="reportRowContent codeScroll themed-scrollbar">
+                                                                {{ activeReportCombinedRawText }}
+                                                            </pre>
+                                                            <p v-if="!canExportActiveReportCombinedRaw" class="reportRowNotice">
+                                                                聚合報告 JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
+                                                            </p>
+                                                        </div>
+                                                        <p v-else class="reportIssuesEmpty">尚未取得聚合後的報告內容。</p>
                                                     </template>
                                                     <template v-else-if="reportIssuesViewMode === 'static'">
                                                         <div v-if="activeReportStaticRawText.trim().length" class="reportRow">
@@ -4341,6 +4443,26 @@ body,
     display: flex;
     align-items: center;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.topBar_left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.topBar_title {
+    margin: 0;
+    padding: 0;
+    font-size: 0;
+    line-height: 1;
+}
+
+.topBar_logo {
+    display: block;
+    height: 36px;
+    width: auto;
+    object-fit: contain;
 }
 
 .topBar_spacer {

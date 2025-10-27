@@ -98,6 +98,233 @@ export function partitionContent(content) {
     return segments;
 }
 
+function extractJsonFromText(value) {
+    if (value == null) {
+        return "";
+    }
+    if (typeof value === "object") {
+        try {
+            return JSON.stringify(value);
+        } catch (_error) {
+            return "";
+        }
+    }
+    if (typeof value !== "string") {
+        return "";
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+
+    const candidates = [];
+
+    const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenceMatch && fenceMatch[1]) {
+        candidates.push(fenceMatch[1].trim());
+    }
+
+    const braceStart = trimmed.indexOf("{");
+    const braceEnd = trimmed.lastIndexOf("}");
+    if (braceStart !== -1 && braceEnd !== -1 && braceEnd > braceStart) {
+        candidates.push(trimmed.slice(braceStart, braceEnd + 1));
+    }
+
+    candidates.push(trimmed);
+
+    for (const candidate of candidates) {
+        try {
+            const parsed = JSON.parse(candidate);
+            return JSON.stringify(parsed);
+        } catch (_error) {
+            continue;
+        }
+    }
+
+    return "";
+}
+
+function parseDifyAnswer(answer) {
+    let text = "";
+    if (typeof answer === "string") {
+        text = answer;
+    } else if (answer != null) {
+        try {
+            text = JSON.stringify(answer);
+        } catch (_error) {
+            text = String(answer);
+        }
+    }
+
+    const jsonString = extractJsonFromText(text);
+    if (!jsonString) {
+        return { text, json: "", parsed: null };
+    }
+
+    try {
+        const parsed = JSON.parse(jsonString);
+        return { text, json: jsonString, parsed };
+    } catch (_error) {
+        return { text, json: "", parsed: null };
+    }
+}
+
+function gatherRuleIds(issue) {
+    const values = [];
+    if (!issue || typeof issue !== "object") {
+        return values;
+    }
+
+    const pushValue = (candidate) => {
+        if (candidate === null || candidate === undefined) return;
+        const normalised = typeof candidate === "string" ? candidate : String(candidate);
+        const trimmed = normalised.trim();
+        if (!trimmed) return;
+        values.push(trimmed);
+    };
+
+    if (Array.isArray(issue.rule_ids)) {
+        issue.rule_ids.forEach(pushValue);
+    }
+    if (Array.isArray(issue.ruleIds)) {
+        issue.ruleIds.forEach(pushValue);
+    }
+    pushValue(issue.rule_id);
+    pushValue(issue.ruleId);
+    pushValue(issue.rule);
+
+    return values;
+}
+
+function gatherSeverity(issue) {
+    if (!issue || typeof issue !== "object") {
+        return "";
+    }
+
+    const candidates = [];
+    if (Array.isArray(issue.severity_levels)) {
+        candidates.push(...issue.severity_levels);
+    }
+    candidates.push(issue.severity, issue.level);
+
+    for (const candidate of candidates) {
+        if (candidate === null || candidate === undefined) {
+            continue;
+        }
+        const stringValue = typeof candidate === "string" ? candidate : String(candidate);
+        const trimmed = stringValue.trim();
+        if (trimmed) {
+            return trimmed;
+        }
+    }
+
+    return "";
+}
+
+function aggregateDifyChunkResults(results) {
+    const aggregatedIssues = [];
+    const severityCounts = new Map();
+    const ruleCounts = new Map();
+    const messages = [];
+    const processedChunks = [];
+
+    let hasParsedChunk = false;
+
+    for (const item of results) {
+        const issues = Array.isArray(item.parsed?.issues) ? item.parsed.issues : [];
+        const issuesClone = issues.map((issue) =>
+            issue && typeof issue === "object" ? { ...issue } : issue
+        );
+
+        const annotatedIssues = issuesClone.map((issue) =>
+            issue && typeof issue === "object"
+                ? { ...issue, chunk_index: item.index }
+                : issue
+        );
+
+        aggregatedIssues.push(...annotatedIssues);
+
+        for (const issue of issuesClone) {
+            if (!issue || typeof issue !== "object") continue;
+            const severity = gatherSeverity(issue);
+            if (severity) {
+                severityCounts.set(severity, (severityCounts.get(severity) || 0) + 1);
+            }
+            const ruleIds = gatherRuleIds(issue);
+            for (const ruleId of ruleIds) {
+                ruleCounts.set(ruleId, (ruleCounts.get(ruleId) || 0) + 1);
+            }
+        }
+
+        if (item.parsed && typeof item.parsed === "object") {
+            hasParsedChunk = true;
+            if (typeof item.parsed.message === "string" && item.parsed.message.trim()) {
+                messages.push(item.parsed.message.trim());
+            }
+            if (Array.isArray(item.parsed.messages)) {
+                for (const entry of item.parsed.messages) {
+                    if (typeof entry === "string" && entry.trim()) {
+                        messages.push(entry.trim());
+                    }
+                }
+            }
+        }
+
+        processedChunks.push({
+            index: item.index,
+            total: item.total,
+            answer: item.text,
+            raw: item.raw,
+            json: item.json || undefined,
+            parsed: item.parsed || undefined,
+            issues: issuesClone.length ? issuesClone : undefined
+        });
+    }
+
+    if (!aggregatedIssues.length && !hasParsedChunk) {
+        return { aggregate: null, chunks: processedChunks };
+    }
+
+    const aggregate = {
+        issues: aggregatedIssues
+    };
+
+    if (aggregatedIssues.length) {
+        aggregate.total_issues = aggregatedIssues.length;
+    }
+
+    if (severityCounts.size) {
+        aggregate.by_severity = Object.fromEntries(severityCounts.entries());
+    }
+
+    if (ruleCounts.size) {
+        aggregate.by_rule = Object.fromEntries(ruleCounts.entries());
+    }
+
+    if (messages.length) {
+        aggregate.messages = messages;
+        aggregate.message = messages.join(" ");
+    }
+
+    aggregate.chunks = processedChunks.map((chunk) => {
+        const entry = { index: chunk.index, total: chunk.total };
+        if (Array.isArray(chunk.issues) && chunk.issues.length) {
+            entry.issues = chunk.issues;
+        }
+        const parsed = chunk.parsed && typeof chunk.parsed === "object" ? chunk.parsed : null;
+        if (parsed) {
+            const { issues, ...rest } = parsed;
+            if (Object.keys(rest).length) {
+                entry.summary = rest;
+            }
+        }
+        return entry;
+    });
+
+    return { aggregate, chunks: processedChunks };
+}
+
 function normaliseSelectionMeta(selection) {
     if (!selection || typeof selection !== "object") {
         return null;
@@ -335,23 +562,46 @@ export async function requestDifyReport({
         const payload = await response.json();
         conversationId = payload?.conversation_id || conversationId;
         const answer = payload?.answer || "";
+        const parsedAnswer = parseDifyAnswer(answer);
         results.push({
             index: chunkIndex,
             total: segments.length,
             answer,
+            text: parsedAnswer.text,
+            json: parsedAnswer.json,
+            parsed: parsedAnswer.parsed,
             raw: payload
         });
     }
-    const combinedReport = results.map((item) => {
-        if (segments.length === 1) {
-            return item.answer;
-        }
-        return [`### 第 ${item.index} 段審查`, item.answer].join("\n\n");
-    }).join("\n\n").trim();
+
+    const processedResults = results.map((item) => ({
+        index: item.index,
+        total: item.total,
+        text: item.text,
+        json: item.json,
+        parsed: item.parsed,
+        raw: item.raw
+    }));
+
+    const textReport = processedResults
+        .map((item) => {
+            if (segments.length === 1) {
+                return item.text;
+            }
+            return [`### 第 ${item.index} 段審查`, item.text].join("\n\n");
+        })
+        .join("\n\n")
+        .trim();
+
+    const { aggregate, chunks } = aggregateDifyChunkResults(processedResults);
+    const reportPayload = aggregate ? JSON.stringify(aggregate, null, 2) : textReport;
+
     return {
-        report: combinedReport,
+        report: reportPayload,
+        textReport: textReport || undefined,
+        aggregated: aggregate || undefined,
         conversationId,
-        chunks: results,
+        chunks,
         segments,
         generatedAt: new Date().toISOString(),
         selection: selectionMeta || undefined
