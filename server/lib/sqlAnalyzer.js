@@ -423,6 +423,52 @@ function normaliseDmlSummary(segments, dmlPrompt, dmlError) {
         summary.error_message = errorMessage;
     }
 
+    const aggregated = dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
+    if (aggregated) {
+        const aggregatedIssueCount = Array.isArray(aggregated.issues) ? aggregated.issues.length : 0;
+        const aggregatedTotalCandidate = Number(aggregated.total_issues ?? aggregated.totalIssues);
+        if (Number.isFinite(aggregatedTotalCandidate)) {
+            summary.total_issues = aggregatedTotalCandidate;
+        } else if (aggregatedIssueCount) {
+            summary.total_issues = aggregatedIssueCount;
+        }
+
+        const aggregatedSeverity =
+            aggregated.by_severity && typeof aggregated.by_severity === "object" && !Array.isArray(aggregated.by_severity)
+                ? aggregated.by_severity
+                : aggregated.bySeverity && typeof aggregated.bySeverity === "object" && !Array.isArray(aggregated.bySeverity)
+                ? aggregated.bySeverity
+                : null;
+        if (aggregatedSeverity) {
+            summary.by_severity = { ...aggregatedSeverity };
+        }
+
+        const aggregatedRules =
+            aggregated.by_rule && typeof aggregated.by_rule === "object" && !Array.isArray(aggregated.by_rule)
+                ? aggregated.by_rule
+                : aggregated.byRule && typeof aggregated.byRule === "object" && !Array.isArray(aggregated.byRule)
+                ? aggregated.byRule
+                : null;
+        if (aggregatedRules) {
+            summary.by_rule = { ...aggregatedRules };
+        }
+
+        const messages = Array.isArray(aggregated.messages)
+            ? aggregated.messages
+                  .map((item) => (typeof item === "string" ? item.trim() : ""))
+                  .filter((item) => item.length)
+            : [];
+        const messageText = typeof aggregated.message === "string" ? aggregated.message.trim() : "";
+        if (messageText) {
+            summary.message = messageText;
+        } else if (messages.length) {
+            summary.message = messages.join(" ");
+        }
+        if (messages.length) {
+            summary.messages = messages;
+        }
+    }
+
     return summary;
 }
 
@@ -689,7 +735,11 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const dmlPrompt = dml?.dify || null;
     const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError);
     const dmlChunks = Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks : [];
+    const dmlAggregated = dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
+    const dmlIssues = Array.isArray(dmlAggregated?.issues) ? dmlAggregated.issues : [];
+    const dmlIssuesWithSource = dmlIssues.map((issue) => annotateIssueSource(issue, "dml_prompt"));
     const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
+    const dmlReportTextHuman = typeof dmlPrompt?.textReport === "string" ? dmlPrompt.textReport : "";
     const dmlConversationId = typeof dmlPrompt?.conversationId === "string" ? dmlPrompt.conversationId : "";
     const dmlGeneratedAt = dmlPrompt?.generatedAt || null;
     const dmlErrorMessage = dmlSummary.error_message || (dmlPrompt?.error ? String(dmlPrompt.error) : "");
@@ -698,7 +748,10 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         summary: dmlSummary,
         segments: dmlSegments,
         report: dmlReportText,
+        reportText: dmlReportTextHuman || undefined,
         chunks: dmlChunks,
+        issues: dmlIssues,
+        aggregated: dmlAggregated || undefined,
         conversationId: dmlConversationId,
         generatedAt: dmlGeneratedAt,
         metadata: { analysis_source: "dml_prompt" }
@@ -717,7 +770,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const difyIssuesRaw =
         parsedDify && typeof parsedDify === "object" && Array.isArray(parsedDify.issues) ? parsedDify.issues : [];
     const difyIssuesWithSource = difyIssuesRaw.map((issue) => annotateIssueSource(issue, "dify_workflow"));
-    const combinedIssues = [...staticIssuesWithSource, ...difyIssuesWithSource];
+    const combinedIssues = [...staticIssuesWithSource, ...difyIssuesWithSource, ...dmlIssuesWithSource];
     const difySummary = parsedDify && typeof parsedDify === "object"
         ? normaliseDifySummary(parsedDify, difyIssuesRaw.length)
         : null;
@@ -751,6 +804,13 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         };
     }
 
+    if (dmlAggregated) {
+        finalPayload.reports.dml_prompt.aggregated = dmlAggregated;
+        if (!finalPayload.reports.dml_prompt.issues) {
+            finalPayload.reports.dml_prompt.issues = dmlIssues;
+        }
+    }
+
     finalReport = JSON.stringify(finalPayload, null, 2);
 
     const generatedAt = dify?.generatedAt || new Date().toISOString();
@@ -777,6 +837,10 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         analysisPayload.dmlReport = dmlReportPayload;
         analysisPayload.dmlSegments = dmlSegments;
         analysisPayload.dmlSummary = dmlSummary;
+        analysisPayload.dmlIssues = dmlIssues;
+        if (dmlAggregated) {
+            analysisPayload.dmlAggregated = dmlAggregated;
+        }
         analysisPayload.combinedSummary = compositeSummary;
         analysisPayload.combinedIssues = combinedIssues;
         if (parsedDify && typeof parsedDify === "object") {

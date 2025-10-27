@@ -644,6 +644,12 @@ const activeReportDetails = computed(() => {
               })
             : [];
         const aggregatedText = typeof dmlReport.report === "string" ? dmlReport.report.trim() : "";
+        const humanReadableText = typeof dmlReport.reportText === "string" ? dmlReport.reportText.trim() : "";
+        const aggregatedIssues = Array.isArray(dmlReport.issues) ? dmlReport.issues : [];
+        const aggregatedObject =
+            dmlReport.aggregated && typeof dmlReport.aggregated === "object"
+                ? dmlReport.aggregated
+                : null;
         const errorMessage =
             typeof dmlReport.error === "string"
                 ? dmlReport.error
@@ -659,7 +665,10 @@ const activeReportDetails = computed(() => {
         dmlDetails = {
             summary: dmlSummary,
             segments: dmlSegments,
-            reportText: aggregatedText,
+            reportText: humanReadableText || aggregatedText,
+            aggregatedText: aggregatedText,
+            aggregated: aggregatedObject,
+            issues: aggregatedIssues,
             error: errorMessage,
             status,
             generatedAt,
@@ -886,6 +895,20 @@ const canShowStructuredDml = computed(() => {
 
     if (Array.isArray(report.segments) && report.segments.length) {
         return true;
+    }
+
+    if (Array.isArray(report.issues) && report.issues.length) {
+        return true;
+    }
+
+    if (typeof report.aggregatedText === "string" && report.aggregatedText.trim().length) {
+        return true;
+    }
+
+    if (report.aggregated && typeof report.aggregated === "object") {
+        if (Object.keys(report.aggregated).length) {
+            return true;
+        }
     }
 
     if (typeof report.reportText === "string" && report.reportText.trim().length) {
