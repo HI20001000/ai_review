@@ -1143,16 +1143,328 @@ const hasStructuredReportToggle = computed(
     () => canShowStructuredSummary.value || canShowStructuredStatic.value || canShowStructuredDml.value
 );
 
+function normaliseReportSourceKey(value) {
+    if (typeof value !== "string") return "";
+    return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function findEntryBySourceKey(container, sourceKey) {
+    if (!container || typeof container !== "object") {
+        return null;
+    }
+    const target = normaliseReportSourceKey(sourceKey);
+    if (!target) return null;
+    for (const [key, value] of Object.entries(container)) {
+        if (normaliseReportSourceKey(key) === target) {
+            return value && typeof value === "object" ? value : null;
+        }
+    }
+    return null;
+}
+
+function cloneIssueWithSource(issue, sourceKey) {
+    if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
+        return issue;
+    }
+    if (issue.source || issue.analysis_source || issue.analysisSource) {
+        return issue;
+    }
+    return { ...issue, source: sourceKey };
+}
+
+function sortObjectKeys(value) {
+    if (!value || typeof value !== "object") {
+        return value;
+    }
+    if (Array.isArray(value)) {
+        return value.map((item) => sortObjectKeys(item));
+    }
+    const sorted = {};
+    Object.keys(value)
+        .sort()
+        .forEach((key) => {
+            sorted[key] = sortObjectKeys(value[key]);
+        });
+    return sorted;
+}
+
+function createIssueKey(issue) {
+    if (issue && typeof issue === "object") {
+        try {
+            return JSON.stringify(sortObjectKeys(issue));
+        } catch (_error) {
+            return String(issue);
+        }
+    }
+    if (typeof issue === "string") {
+        return issue;
+    }
+    return String(issue);
+}
+
+function dedupeIssues(list) {
+    const seen = new Set();
+    const result = [];
+    for (const issue of list || []) {
+        const key = createIssueKey(issue);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push(issue);
+    }
+    return result;
+}
+
+function collectIssuesForSource(state, sourceKeys) {
+    if (!state) return [];
+    const sources = Array.isArray(sourceKeys) ? sourceKeys : [sourceKeys];
+    const sourceSet = new Set(sources.map((key) => normaliseReportSourceKey(key)));
+    const results = [];
+
+    const pushIssue = (issue, fallbackSourceKey = null) => {
+        if (issue === null || issue === undefined) {
+            return;
+        }
+        let candidate = issue;
+        if (fallbackSourceKey) {
+            candidate = cloneIssueWithSource(candidate, fallbackSourceKey);
+        }
+        results.push(candidate);
+    };
+
+    const parsedIssues = state.parsedReport?.issues;
+    if (Array.isArray(parsedIssues)) {
+        parsedIssues.forEach((issue) => {
+            const sourceValue =
+                issue?.source || issue?.analysis_source || issue?.analysisSource || issue?.from;
+            const normalised = normaliseReportSourceKey(sourceValue);
+            if (normalised && sourceSet.has(normalised)) {
+                pushIssue(issue);
+            }
+        });
+    }
+
+    const reports = state.parsedReport?.reports;
+    if (reports && typeof reports === "object") {
+        sources.forEach((sourceKey) => {
+            const reportEntry = findEntryBySourceKey(reports, sourceKey);
+            if (reportEntry && Array.isArray(reportEntry.issues)) {
+                reportEntry.issues.forEach((issue) => pushIssue(issue, sourceKey));
+            }
+            const aggregated = reportEntry?.aggregated;
+            if (aggregated && typeof aggregated === "object" && Array.isArray(aggregated.issues)) {
+                aggregated.issues.forEach((issue) => pushIssue(issue, sourceKey));
+            }
+        });
+    }
+
+    sources.forEach((sourceKey) => {
+        const normalisedKey = normaliseReportSourceKey(sourceKey);
+        if (normalisedKey === normaliseReportSourceKey("dml_prompt")) {
+            const dmlState = state.dml && typeof state.dml === "object" ? state.dml : null;
+            if (Array.isArray(dmlState?.issues)) {
+                dmlState.issues.forEach((issue) => pushIssue(issue, sourceKey));
+            }
+            const aggregatedIssues =
+                dmlState?.aggregated && typeof dmlState.aggregated === "object"
+                    ? dmlState.aggregated.issues
+                    : null;
+            if (Array.isArray(aggregatedIssues)) {
+                aggregatedIssues.forEach((issue) => pushIssue(issue, sourceKey));
+            }
+        } else if (normalisedKey === normaliseReportSourceKey("static_analyzer")) {
+            const staticReport =
+                state.analysis && typeof state.analysis.staticReport === "object"
+                    ? state.analysis.staticReport
+                    : null;
+            if (Array.isArray(staticReport?.issues)) {
+                staticReport.issues.forEach((issue) => pushIssue(issue, sourceKey));
+            }
+        }
+    });
+
+    return dedupeIssues(results);
+}
+
+function extractSummaryCandidate(state, sourceKey) {
+    if (!state) return null;
+    const reports = state.parsedReport?.reports;
+    const reportEntry = findEntryBySourceKey(reports, sourceKey);
+    if (reportEntry && typeof reportEntry.summary === "object" && !Array.isArray(reportEntry.summary)) {
+        return reportEntry.summary;
+    }
+
+    const globalSummary = state.parsedReport?.summary;
+    const sourceSummaries =
+        globalSummary && typeof globalSummary.sources === "object" ? globalSummary.sources : null;
+    const sourceSummary = findEntryBySourceKey(sourceSummaries, sourceKey);
+    if (sourceSummary && typeof sourceSummary === "object" && !Array.isArray(sourceSummary)) {
+        return sourceSummary;
+    }
+
+    const normalisedKey = normaliseReportSourceKey(sourceKey);
+    if (normalisedKey === normaliseReportSourceKey("static_analyzer")) {
+        const staticSummary = state.analysis?.staticReport?.summary;
+        if (staticSummary && typeof staticSummary === "object" && !Array.isArray(staticSummary)) {
+            return staticSummary;
+        }
+    }
+    if (normalisedKey === normaliseReportSourceKey("dml_prompt")) {
+        const dmlSummary = state.analysis?.dmlReport?.summary;
+        if (dmlSummary && typeof dmlSummary === "object" && !Array.isArray(dmlSummary)) {
+            return dmlSummary;
+        }
+    }
+    if (normalisedKey === normaliseReportSourceKey("dify_workflow")) {
+        const difySummary = state.analysis?.dify?.summary;
+        if (difySummary && typeof difySummary === "object" && !Array.isArray(difySummary)) {
+            return difySummary;
+        }
+    }
+
+    return null;
+}
+
+function normaliseTimestampValue(value) {
+    if (!value) return null;
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : value.toISOString();
+    }
+    if (typeof value === "number") {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date.toISOString();
+    }
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        return trimmed || null;
+    }
+    return null;
+}
+
+function buildSummaryRecord(summarySource, options) {
+    const issues = Array.isArray(options.issues) ? options.issues : [];
+    const record = {
+        source: options.source,
+        label: options.label,
+        total_issues: issues.length
+    };
+
+    if (summarySource && typeof summarySource === "object" && !Array.isArray(summarySource)) {
+        const totalCandidate = Number(summarySource.total_issues ?? summarySource.totalIssues);
+        if (Number.isFinite(totalCandidate)) {
+            record.total_issues = totalCandidate;
+        }
+        const statusValue =
+            typeof summarySource.status === "string"
+                ? summarySource.status
+                : typeof summarySource.status_label === "string"
+                ? summarySource.status_label
+                : typeof summarySource.statusLabel === "string"
+                ? summarySource.statusLabel
+                : "";
+        if (statusValue && statusValue.trim()) {
+            record.status = statusValue.trim();
+        }
+        const generatedAtValue =
+            summarySource.generated_at ??
+            summarySource.generatedAt ??
+            summarySource.generated_at_display ??
+            summarySource.generatedAtDisplay ??
+            null;
+        const normalisedTimestamp = normaliseTimestampValue(generatedAtValue);
+        if (normalisedTimestamp) {
+            record.generated_at = normalisedTimestamp;
+        }
+        const errorValue =
+            typeof summarySource.error_message === "string"
+                ? summarySource.error_message
+                : typeof summarySource.errorMessage === "string"
+                ? summarySource.errorMessage
+                : "";
+        if (errorValue && errorValue.trim()) {
+            record.error_message = errorValue.trim();
+        }
+        const messageValue =
+            typeof summarySource.message === "string" ? summarySource.message : summarySource.note;
+        if (messageValue && typeof messageValue === "string" && messageValue.trim()) {
+            record.message = messageValue.trim();
+        }
+    } else if (typeof summarySource === "string") {
+        const trimmed = summarySource.trim();
+        if (trimmed) {
+            record.message = trimmed;
+        }
+    }
+
+    return record;
+}
+
+function buildSourceSummaryRecord(state, options) {
+    const summaryCandidate = extractSummaryCandidate(state, options.sourceKey);
+    return buildSummaryRecord(summaryCandidate, {
+        source: options.sourceKey,
+        label: options.label,
+        issues: options.issues
+    });
+}
+
+function buildCombinedSummaryRecord(state, options) {
+    const globalSummary = state?.parsedReport?.summary || null;
+    return buildSummaryRecord(globalSummary, {
+        source: "combined",
+        label: options.label || "聚合報告",
+        issues: options.issues
+    });
+}
+
+function buildAggregatedSummaryRecords(state, staticIssues, aiIssues) {
+    const records = [];
+    records.push(
+        buildSourceSummaryRecord(state, {
+            sourceKey: "static_analyzer",
+            label: "靜態分析器",
+            issues: staticIssues
+        })
+    );
+    records.push(
+        buildSourceSummaryRecord(state, {
+            sourceKey: "dml_prompt",
+            label: "AI審查",
+            issues: aiIssues
+        })
+    );
+    records.push(
+        buildCombinedSummaryRecord(state, {
+            label: "聚合報告",
+            issues: [...staticIssues, ...aiIssues]
+        })
+    );
+    return records;
+}
+
 const activeReportCombinedRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report) return "";
+    if (!report || !report.state?.parsedReport) {
+        return "";
+    }
 
-    const direct = report.state?.report;
+    const state = report.state;
+    const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
+    const aiIssues = collectIssuesForSource(state, ["dml_prompt"]);
+    const combined = [...staticIssues, ...aiIssues];
+    const summaryRecords = buildAggregatedSummaryRecords(state, staticIssues, aiIssues);
+
+    try {
+        return JSON.stringify({ summary: summaryRecords, issues: combined });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify aggregated report payload", error);
+    }
+
+    const direct = state?.report;
     if (typeof direct === "string" && direct.trim()) {
         return direct;
     }
 
-    const analysisResult = report.state?.analysis?.result;
+    const analysisResult = state?.analysis?.result;
     if (typeof analysisResult === "string" && analysisResult.trim()) {
         return analysisResult;
     }
@@ -1162,73 +1474,13 @@ const activeReportCombinedRawSourceText = computed(() => {
 
 const activeReportStaticRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report) return "";
+    if (!report || !report.state?.parsedReport) return "";
 
-    const enrichedStatic = report.state?.analysis?.staticReport?.enrichment;
-    if (typeof enrichedStatic === "string" && enrichedStatic.trim()) {
-        return enrichedStatic;
-    }
-    if (enrichedStatic && typeof enrichedStatic === "object") {
-        try {
-            return JSON.stringify(enrichedStatic);
-        } catch (error) {
-            console.warn("[reports] Failed to stringify static enrichment", error);
-        }
-    }
-
-    const parsedEnrichment =
-        report.state?.parsedReport?.reports?.static_analyzer?.enrichment ||
-        report.state?.parsedReport?.reports?.staticAnalyzer?.enrichment ||
-        null;
-    if (typeof parsedEnrichment === "string" && parsedEnrichment.trim()) {
-        return parsedEnrichment;
-    }
-    if (parsedEnrichment && typeof parsedEnrichment === "object") {
-        try {
-            return JSON.stringify(parsedEnrichment);
-        } catch (error) {
-            console.warn("[reports] Failed to stringify parsed static enrichment", error);
-        }
-    }
-
-    const direct = report.state?.rawReport;
-    if (typeof direct === "string" && direct.trim()) {
-        return direct;
-    }
-
-    const analysisRaw = report.state?.analysis?.rawReport;
-    if (typeof analysisRaw === "string" && analysisRaw.trim()) {
-        return analysisRaw;
-    }
-
-    const analysisOriginal = report.state?.analysis?.originalResult;
-    if (typeof analysisOriginal === "string" && analysisOriginal.trim()) {
-        return analysisOriginal;
-    }
-
-    const staticReportObject = report.state?.analysis?.staticReport;
-    if (staticReportObject && typeof staticReportObject === "object") {
-        try {
-            return JSON.stringify(staticReportObject);
-        } catch (error) {
-            console.warn("[reports] Failed to stringify static report", error);
-        }
-    }
-
-    const parsedReport = report.state?.parsedReport;
-    if (parsedReport && typeof parsedReport === "object") {
-        const reports =
-            parsedReport.reports && typeof parsedReport.reports === "object" ? parsedReport.reports : null;
-        if (reports) {
-            const staticReport = reports.static_analyzer || reports.staticAnalyzer;
-            if (staticReport && typeof staticReport === "object") {
-                try {
-                    return JSON.stringify(staticReport);
-                } catch (error) {
-                    console.warn("[reports] Failed to stringify parsed static report", error);
-                }
-            }
-        }
+    const issues = collectIssuesForSource(report.state, ["static_analyzer"]);
+    try {
+        return JSON.stringify({ issues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify static issue payload", error);
     }
 
     return "";
@@ -1236,103 +1488,13 @@ const activeReportStaticRawSourceText = computed(() => {
 
 const activeReportDifyRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report) return "";
+    if (!report || !report.state?.parsedReport) return "";
 
-    const normaliseJson = (value) => {
-        if (!value || typeof value !== "object") return "";
-        try {
-            return JSON.stringify(value);
-        } catch (error) {
-            console.warn("[reports] Failed to stringify AI review payload", error);
-            return "";
-        }
-    };
-
-    const analysisDmlReport = report.state?.analysis?.dmlReport;
-    if (analysisDmlReport && typeof analysisDmlReport === "object") {
-        const stringified = normaliseJson(analysisDmlReport);
-        if (stringified) return stringified;
-    }
-
-    const dmlState = report.state?.dml && typeof report.state.dml === "object" ? report.state.dml : null;
-    if (dmlState) {
-        const rawReport = typeof dmlState.report === "string" && dmlState.report.trim() ? dmlState.report : "";
-        if (rawReport) {
-            return rawReport;
-        }
-        const dmlObject = dmlState.aggregated && typeof dmlState.aggregated === "object" ? dmlState.aggregated : dmlState;
-        const stringified = normaliseJson(dmlObject);
-        if (stringified) {
-            return stringified;
-        }
-    }
-
-    const parsedReport = report.state?.parsedReport;
-    if (parsedReport && typeof parsedReport === "object") {
-        const reports = parsedReport.reports && typeof parsedReport.reports === "object" ? parsedReport.reports : null;
-        if (reports) {
-            const dmlPrompt = reports.dml_prompt || reports.dmlPrompt || null;
-            if (dmlPrompt && typeof dmlPrompt === "object") {
-                const raw = typeof dmlPrompt.report === "string" && dmlPrompt.report.trim() ? dmlPrompt.report : "";
-                if (raw) {
-                    return raw;
-                }
-                const promptObject =
-                    dmlPrompt.aggregated && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : dmlPrompt;
-                const stringified = normaliseJson(promptObject);
-                if (stringified) {
-                    return stringified;
-                }
-            }
-        }
-    }
-
-    const difyReport = report.state?.dify?.report;
-    if (typeof difyReport === "string" && difyReport.trim()) {
-        return difyReport;
-    }
-
-    const difyOriginal = report.state?.dify?.originalReport;
-    if (typeof difyOriginal === "string" && difyOriginal.trim()) {
-        return difyOriginal;
-    }
-
-    const difyChunks = report.state?.dify?.chunks;
-    if (Array.isArray(difyChunks) && difyChunks.length) {
-        try {
-            return JSON.stringify(difyChunks);
-        } catch (error) {
-            console.warn("[reports] Failed to stringify dify chunks", error);
-        }
-    }
-
-    const analysisDify = report.state?.analysis?.difyReport;
-    if (analysisDify && typeof analysisDify === "object") {
-        const stringified = normaliseJson(analysisDify);
-        if (stringified) {
-            return stringified;
-        }
-    }
-
-    const parsedWorkflowReport =
-        report.state?.parsedReport?.reports?.dify_workflow ||
-        report.state?.parsedReport?.reports?.difyWorkflow ||
-        null;
-    if (parsedWorkflowReport && typeof parsedWorkflowReport === "object") {
-        const raw = parsedWorkflowReport.raw;
-        if (typeof raw === "string" && raw.trim()) {
-            return raw;
-        }
-        if (raw && typeof raw === "object") {
-            const stringified = normaliseJson(raw);
-            if (stringified) {
-                return stringified;
-            }
-        }
-        const stringified = normaliseJson(parsedWorkflowReport);
-        if (stringified) {
-            return stringified;
-        }
+    const issues = collectIssuesForSource(report.state, ["dml_prompt"]);
+    try {
+        return JSON.stringify({ issues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify AI review issue payload", error);
     }
 
     return "";
