@@ -1005,6 +1005,61 @@ const activeReportDetails = computed(() => {
 
     const finalSourceSummaries = sourceSummaries.map(({ keyLower, ...item }) => item);
 
+    enhanceSourceSummary("dml_prompt", "AI審查", {
+        metricsSources: [dmlSourceValue, dmlDetails?.summary, dmlDetails?.aggregated],
+        statusCandidates: [
+            dmlSourceValue?.status,
+            dmlDetails?.status,
+            dmlSummary?.status,
+            report.state?.analysis?.dmlSummary?.status,
+            report.state?.analysis?.dmlReport?.summary?.status
+        ],
+        errorCandidates: [
+            dmlSourceValue?.error_message,
+            dmlSourceValue?.errorMessage,
+            dmlDetails?.error,
+            dmlSummary?.error_message,
+            dmlSummary?.errorMessage,
+            report.state?.analysis?.dmlErrorMessage
+        ],
+        generatedAtCandidates: [
+            dmlSourceValue?.generated_at,
+            dmlSourceValue?.generatedAt,
+            dmlDetails?.generatedAt,
+            dmlReport?.generatedAt,
+            dmlSummary?.generated_at,
+            dmlSummary?.generatedAt,
+            report.state?.analysis?.dmlGeneratedAt
+        ]
+    });
+
+    const combinedSourceValue =
+        globalSummary?.sources?.dify_workflow || globalSummary?.sources?.difyWorkflow || null;
+    enhanceSourceSummary("dify_workflow", "聚合報告", {
+        metricsSources: [combinedSourceValue, globalSummary],
+        statusCandidates: [
+            combinedSourceValue?.status,
+            globalSummary?.status,
+            report.state?.analysis?.dify?.status
+        ],
+        errorCandidates: [
+            combinedSourceValue?.error_message,
+            combinedSourceValue?.errorMessage,
+            globalSummary?.error_message,
+            globalSummary?.errorMessage,
+            report.state?.analysis?.difyErrorMessage,
+            report.state?.difyErrorMessage
+        ],
+        generatedAtCandidates: [
+            combinedSourceValue?.generated_at,
+            combinedSourceValue?.generatedAt,
+            globalSummary?.generated_at,
+            globalSummary?.generatedAt
+        ]
+    });
+
+    const finalSourceSummaries = sourceSummaries.map(({ keyLower, ...item }) => item);
+
     return {
         totalIssues: Number.isFinite(total) ? Number(total) : null,
         summary,
@@ -3019,6 +3074,66 @@ function normaliseReportAnalysisState(state) {
             difyTarget = staticResult.difyTarget;
 
             mergeAiReviewReportIntoAnalysis({ state, baseAnalysis, reports });
+
+            const difyReport = reports.dify_workflow || reports.difyWorkflow;
+            if (difyReport && typeof difyReport === "object") {
+                if (!difyTarget) {
+                    difyTarget = {};
+                }
+                const difyRaw = difyReport.raw;
+                if (typeof difyRaw === "string" && difyRaw.trim()) {
+                    if (!difyTarget.report || !difyTarget.report.trim()) {
+                        difyTarget.report = difyRaw.trim();
+                    }
+                } else if (difyRaw && typeof difyRaw === "object") {
+                    difyTarget.raw = difyRaw;
+                    if (!difyTarget.report || !difyTarget.report.trim()) {
+                        try {
+                            difyTarget.report = JSON.stringify(difyRaw);
+                        } catch (error) {
+                            console.warn("[Report] Failed to stringify dify raw payload", error);
+                        }
+                    }
+                } else if (!difyTarget.report || !difyTarget.report.trim()) {
+                    try {
+                        const fallback = { ...difyReport };
+                        delete fallback.raw;
+                        difyTarget.report = JSON.stringify(fallback);
+                    } catch (error) {
+                        console.warn("[Report] Failed to stringify dify workflow report", error);
+                    }
+                }
+                if (!difyTarget.summary && difyReport.summary && typeof difyReport.summary === "object") {
+                    difyTarget.summary = difyReport.summary;
+                }
+                if (!difyTarget.issues && Array.isArray(difyReport.issues)) {
+                    difyTarget.issues = difyReport.issues;
+                }
+                if (!difyTarget.metadata && difyReport.metadata && typeof difyReport.metadata === "object") {
+                    difyTarget.metadata = difyReport.metadata;
+                }
+            }
+        }
+
+        const parsedSummaryData =
+            parsedReport.summary && typeof parsedReport.summary === "object" ? parsedReport.summary : null;
+        if (!state.difyErrorMessage && parsedSummaryData) {
+            const sources =
+                parsedSummaryData.sources && typeof parsedSummaryData.sources === "object"
+                    ? parsedSummaryData.sources
+                    : null;
+            if (sources) {
+                const difySource = sources.dify_workflow || sources.difyWorkflow;
+                const difyError =
+                    typeof difySource?.error_message === "string"
+                        ? difySource.error_message
+                        : typeof difySource?.errorMessage === "string"
+                        ? difySource.errorMessage
+                        : "";
+                if (difyError && difyError.trim()) {
+                    state.difyErrorMessage = difyError.trim();
+                }
+            }
 
             const difyReport = reports.dify_workflow || reports.difyWorkflow;
             if (difyReport && typeof difyReport === "object") {
