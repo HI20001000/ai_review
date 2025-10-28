@@ -15,13 +15,23 @@ import {
 } from "../scripts/reports/combinedReport.js";
 import {
     collectStaticReportIssues,
-    mergeStaticReportIntoAnalysis
+    mergeStaticReportIntoAnalysis,
+    buildStaticRawSourceText
 } from "../scripts/reports/staticReport.js";
 import {
     collectAiReviewIssues,
     mergeAiReviewReportIntoAnalysis,
     buildAiReviewDetails
 } from "../scripts/reports/aiReviewReport.js";
+import {
+    isPlainObject,
+    pickJsonStringCandidate as pickReportJsonStringCandidate,
+    pickReportObjectCandidate,
+    normaliseReportObject,
+    normaliseAiReviewPayload,
+    stringifyReportCandidate,
+    parseReportJson
+} from "../scripts/reports/shared.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
 
@@ -288,8 +298,34 @@ const hasChunkDetails = computed(() => {
 
 const activeReportCombinedRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) {
+    if (!report) {
         return "";
+    }
+
+    const parsedReport = isPlainObject(report.state?.parsedReport) ? report.state.parsedReport : null;
+    const directCandidate = pickReportJsonStringCandidate(
+        report.state?.report,
+        report.state?.analysis?.result,
+        report.state?.analysis?.rawReport,
+        report.state?.analysis?.originalResult,
+        report.state?.rawReport
+    );
+    if (directCandidate) {
+        const directParsed = parseReportJson(directCandidate) || null;
+        if (
+            !parsedReport ||
+            (isPlainObject(directParsed) &&
+                (isPlainObject(directParsed.reports) || !isPlainObject(parsedReport.reports)))
+        ) {
+            return directCandidate;
+        }
+    }
+
+    if (parsedReport) {
+        const stringified = stringifyReportCandidate(parsedReport, "combined report payload");
+        if (stringified) {
+            return stringified;
+        }
     }
 
     const state = report.state;
@@ -309,36 +345,38 @@ const activeReportCombinedRawSourceText = computed(() => {
         console.warn("[reports] Failed to stringify aggregated report payload", error);
     }
 
-    const direct = state?.report;
-    if (typeof direct === "string" && direct.trim()) {
-        return direct;
-    }
-
-    const analysisResult = state?.analysis?.result;
-    if (typeof analysisResult === "string" && analysisResult.trim()) {
-        return analysisResult;
-    }
-
     return "";
 });
 
 const activeReportStaticRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) return "";
-
-    const issues = collectStaticReportIssues(report.state);
-    try {
-        return JSON.stringify({ issues });
-    } catch (error) {
-        console.warn("[reports] Failed to stringify static issue payload", error);
-    }
-
-    return "";
+    if (!report) return "";
+    return buildStaticRawSourceText(report.state);
 });
 
 const activeReportDifyRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) return "";
+    if (!report) return "";
+
+    const parsedReport = isPlainObject(report.state?.parsedReport) ? report.state.parsedReport : null;
+    const reports = parsedReport && isPlainObject(parsedReport.reports) ? parsedReport.reports : null;
+    const dmlSource = pickReportObjectCandidate(
+        report.state?.dml,
+        reports?.dml_prompt,
+        reports?.dmlPrompt,
+        report.state?.analysis?.dmlReport
+    );
+    if (dmlSource) {
+        const stringified = stringifyReportCandidate(dmlSource, "AI review report");
+        if (stringified) {
+            return stringified;
+        }
+    }
+
+    const fallbackText = pickReportJsonStringCandidate(report.state?.dify?.report);
+    if (fallbackText) {
+        return fallbackText;
+    }
 
     const issues = collectAiReviewIssues(report.state);
     try {
@@ -1542,10 +1580,6 @@ function parseReportRawValue(rawText) {
     }
 
     return { success: false, value: null };
-}
-
-function isPlainObject(value) {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function buildWorksheetFromValue(value) {
@@ -2923,25 +2957,6 @@ function createDefaultReportState() {
     };
 }
 
-function parseReportJson(reportText) {
-    if (typeof reportText !== "string") return null;
-    const trimmed = reportText.trim();
-    if (!trimmed) return null;
-    if (!/^\s*[\[{]/.test(trimmed)) return null;
-    try {
-        const parsed = JSON.parse(trimmed);
-        if (Array.isArray(parsed)) {
-            return { issues: parsed };
-        }
-        if (parsed && typeof parsed === "object") {
-            return parsed;
-        }
-        return null;
-    } catch (_error) {
-        return null;
-    }
-}
-
 function computeIssueSummary(reportText, parsedOverride = null) {
     const parsed = parsedOverride || parseReportJson(reportText);
     if (!parsed || typeof parsed !== "object") {
@@ -3284,24 +3299,6 @@ function normaliseHydratedReportText(value) {
     return String(value);
 }
 
-function normaliseHydratedReportObject(value) {
-    if (!value) return null;
-    if (typeof value === "string") {
-        const trimmed = value.trim();
-        if (!trimmed) return null;
-        try {
-            return JSON.parse(trimmed);
-        } catch (error) {
-            console.warn("[Report] Failed to parse hydrated report object", error, value);
-            return { report: trimmed };
-        }
-    }
-    if (typeof value === "object") {
-        return value;
-    }
-    return null;
-}
-
 function normaliseHydratedString(value) {
     return typeof value === "string" ? value : "";
 }
@@ -3333,8 +3330,14 @@ async function hydrateReportsForProject(projectId) {
             const analysisResult = normaliseHydratedString(record.analysis?.result);
             const analysisOriginal = normaliseHydratedString(record.analysis?.originalResult);
             state.rawReport = hydratedRawReport || analysisResult || analysisOriginal || "";
-            state.dify = normaliseHydratedReportObject(record.dify);
-            state.dml = normaliseHydratedReportObject(record.dml);
+            state.dify = normaliseReportObject(record.dify);
+            if (!state.dify) {
+                state.dify = normaliseReportObject(record.analysis?.dify);
+            }
+            state.dml = normaliseAiReviewPayload(record.dml);
+            if (!state.dml) {
+                state.dml = normaliseAiReviewPayload(record.analysis?.dmlReport);
+            }
             state.difyErrorMessage = normaliseHydratedString(record.difyErrorMessage);
             state.dmlErrorMessage = normaliseHydratedString(record.dmlErrorMessage);
             if (!state.difyErrorMessage) {
@@ -3512,8 +3515,14 @@ async function generateReportForFile(project, node, options = {}) {
         state.segments = Array.isArray(payload?.segments) ? payload.segments : [];
         state.conversationId = payload?.conversationId || "";
         state.rawReport = typeof payload?.rawReport === "string" ? payload.rawReport : "";
-        state.dify = payload?.dify || null;
-        state.dml = payload?.dml || null;
+        state.dify = normaliseReportObject(payload?.dify);
+        if (!state.dify) {
+            state.dify = normaliseReportObject(payload?.analysis?.dify);
+        }
+        state.dml = normaliseAiReviewPayload(payload?.dml);
+        if (!state.dml) {
+            state.dml = normaliseAiReviewPayload(payload?.analysis?.dmlReport);
+        }
         state.difyErrorMessage = typeof payload?.difyErrorMessage === "string" ? payload.difyErrorMessage : "";
         state.dmlErrorMessage = typeof payload?.dmlErrorMessage === "string" ? payload.dmlErrorMessage : "";
         state.analysis = payload?.analysis || null;
