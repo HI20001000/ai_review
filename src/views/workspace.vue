@@ -1349,10 +1349,6 @@ function buildSummaryRecord(summarySource, options) {
     };
 
     if (summarySource && typeof summarySource === "object" && !Array.isArray(summarySource)) {
-        const totalCandidate = Number(summarySource.total_issues ?? summarySource.totalIssues);
-        if (Number.isFinite(totalCandidate)) {
-            record.total_issues = totalCandidate;
-        }
         const statusValue =
             typeof summarySource.status === "string"
                 ? summarySource.status
@@ -1435,7 +1431,7 @@ function buildAggregatedSummaryRecords(state, staticIssues, aiIssues) {
     records.push(
         buildCombinedSummaryRecord(state, {
             label: "聚合報告",
-            issues: [...staticIssues, ...aiIssues]
+            issues: dedupeIssues([...staticIssues, ...aiIssues])
         })
     );
     return records;
@@ -1450,7 +1446,7 @@ const activeReportCombinedRawSourceText = computed(() => {
     const state = report.state;
     const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
     const aiIssues = collectIssuesForSource(state, ["dml_prompt"]);
-    const combined = [...staticIssues, ...aiIssues];
+    const combined = dedupeIssues([...staticIssues, ...aiIssues]);
     const summaryRecords = buildAggregatedSummaryRecords(state, staticIssues, aiIssues);
 
     try {
