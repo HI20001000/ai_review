@@ -13,6 +13,8 @@ import {
     buildCombinedReportPayload,
     buildIssueDistributions,
     buildSourceSummaries,
+    buildAggregatedSummaryRecords,
+    collectAggregatedIssues,
     collectIssueSummaryTotals
 } from "../scripts/reports/combinedReport.js";
 import {
