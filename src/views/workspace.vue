@@ -281,7 +281,15 @@ const activeReportDetails = computed(() => {
     const staticReport = reports?.static_analyzer || reports?.staticAnalyzer || null;
     const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
 
+    const staticIssues = collectIssuesForSource(report.state, ["static_analyzer"]);
+    const aiIssues = collectIssuesForSource(report.state, ["dml_prompt"]);
     const aggregatedIssues = collectAggregatedIssues(report.state);
+    const summaryRecords = buildAggregatedSummaryRecords(
+        report.state,
+        staticIssues,
+        aiIssues,
+        aggregatedIssues
+    );
     const fallbackIssues = Array.isArray(parsed.issues)
         ? parsed.issues
         : Array.isArray(staticReport?.issues)
@@ -294,32 +302,45 @@ const activeReportDetails = computed(() => {
             ? staticReport.summary
             : null;
     const summary = (parsed.summary ?? rawStaticSummary) ?? null;
+    const summaryObject = summary && typeof summary === "object" ? summary : null;
 
-    let total = useAggregatedIssues ? aggregatedIssues.length : report.state.issueSummary?.totalIssues;
+    const toSummaryKey = (value) => (typeof value === "string" ? value.toLowerCase() : "");
+    const combinedSummaryRecord = summaryRecords.find(
+        (record) => toSummaryKey(record?.source) === toSummaryKey("combined")
+    );
+
+    let total = null;
+    if (combinedSummaryRecord) {
+        const combinedTotal = Number(
+            combinedSummaryRecord.total_issues ?? combinedSummaryRecord.totalIssues
+        );
+        if (Number.isFinite(combinedTotal)) {
+            total = combinedTotal;
+        }
+    }
     if (!Number.isFinite(total)) {
-        const summaryObject = summary && typeof summary === "object" ? summary : null;
-        if (summaryObject) {
-            const candidate = Number(summaryObject.total_issues ?? summaryObject.totalIssues);
-            if (Number.isFinite(candidate)) {
-                total = candidate;
+        total = useAggregatedIssues ? aggregatedIssues.length : report.state.issueSummary?.totalIssues;
+    }
+    if (!Number.isFinite(total) && summaryObject) {
+        const candidate = Number(summaryObject.total_issues ?? summaryObject.totalIssues);
+        if (Number.isFinite(candidate)) {
+            total = candidate;
+        }
+    }
+    if (!Number.isFinite(total)) {
+        let computedTotal = 0;
+        for (const issue of issues) {
+            if (Array.isArray(issue?.issues) && issue.issues.length) {
+                const filtered = issue.issues.filter((entry) => typeof entry === "string" && entry.trim());
+                computedTotal += filtered.length || issue.issues.length;
+            } else if (typeof issue?.message === "string" && issue.message.trim()) {
+                computedTotal += 1;
             }
         }
-        if (!Number.isFinite(total)) {
-            let computedTotal = 0;
-            for (const issue of issues) {
-                if (Array.isArray(issue?.issues) && issue.issues.length) {
-                    const filtered = issue.issues.filter((entry) => typeof entry === "string" && entry.trim());
-                    computedTotal += filtered.length || issue.issues.length;
-                } else if (typeof issue?.message === "string" && issue.message.trim()) {
-                    computedTotal += 1;
-                }
-            }
-            total = computedTotal;
-        }
+        total = computedTotal;
     }
 
     const summaryText = typeof summary === "string" ? summary.trim() : "";
-    const summaryObject = summary && typeof summary === "object" ? summary : null;
     const staticSummaryObject =
         rawStaticSummary && typeof rawStaticSummary === "object" ? rawStaticSummary : summaryObject;
     const staticSummaryDetails = buildSummaryDetailList(staticSummaryObject, {
@@ -587,8 +608,12 @@ const activeReportDetails = computed(() => {
     ruleBreakdown.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 
     const globalSummary = parsed.summary && typeof parsed.summary === "object" ? parsed.summary : null;
-    const combinedSummaryDetails = buildSummaryDetailList(globalSummary, {
-        omitKeys: ["sources", "by_rule", "byRule"]
+    const combinedSummarySource =
+        (combinedSummaryRecord && typeof combinedSummaryRecord === "object"
+            ? combinedSummaryRecord
+            : null) || globalSummary;
+    const combinedSummaryDetails = buildSummaryDetailList(combinedSummarySource, {
+        omitKeys: ["sources", "by_rule", "byRule", "source", "label"]
     });
 
     const normaliseKey = (value) => (typeof value === "string" ? value.toLowerCase() : "");
@@ -735,6 +760,32 @@ const activeReportDetails = computed(() => {
             });
         }
     };
+
+    const applySummaryRecords = (records) => {
+        if (!Array.isArray(records)) return;
+        records.forEach((record) => {
+            if (!record || typeof record !== "object") return;
+            const keyLower = normaliseKey(record.source);
+            if (!keyLower) return;
+            const label =
+                typeof record.label === "string" && record.label.trim()
+                    ? record.label.trim()
+                    : record.source || keyLower;
+            const existingIndex = sourceSummaries.findIndex((item) => item.keyLower === keyLower);
+            if (existingIndex !== -1) {
+                sourceSummaries.splice(existingIndex, 1);
+            }
+            enhanceSourceSummary(keyLower, label, {
+                key: record.source || keyLower,
+                metricsSources: [record],
+                statusCandidates: [record.status],
+                errorCandidates: [record.error_message, record.errorMessage, record.message],
+                generatedAtCandidates: [record.generated_at, record.generatedAt]
+            });
+        });
+    };
+
+    applySummaryRecords(summaryRecords);
 
     const staticSourceValue =
         globalSummary?.sources?.static_analyzer || globalSummary?.sources?.staticAnalyzer || null;
@@ -902,7 +953,7 @@ const activeReportDetails = computed(() => {
         ruleBreakdown,
         raw: parsed,
         sourceSummaries: finalSourceSummaries,
-        combinedSummary: parsed.summary && typeof parsed.summary === "object" ? parsed.summary : null,
+        combinedSummary: combinedSummarySource,
         combinedSummaryDetails,
         staticReport,
         dmlReport: dmlDetails
@@ -1572,6 +1623,145 @@ function buildSummaryRecord(summarySource, options) {
         if (trimmed) {
             record.message = trimmed;
         }
+        const generatedAtValue =
+            summarySource.generated_at ??
+            summarySource.generatedAt ??
+            summarySource.generated_at_display ??
+            summarySource.generatedAtDisplay ??
+            null;
+        const normalisedTimestamp = normaliseTimestampValue(generatedAtValue);
+        if (normalisedTimestamp) {
+            record.generated_at = normalisedTimestamp;
+        }
+        const errorValue =
+            typeof summarySource.error_message === "string"
+                ? summarySource.error_message
+                : typeof summarySource.errorMessage === "string"
+                ? summarySource.errorMessage
+                : "";
+        if (errorValue && errorValue.trim()) {
+            record.error_message = errorValue.trim();
+        }
+        const messageValue =
+            typeof summarySource.message === "string" ? summarySource.message : summarySource.note;
+        if (messageValue && typeof messageValue === "string" && messageValue.trim()) {
+            record.message = messageValue.trim();
+        }
+    } else if (typeof summarySource === "string") {
+        const trimmed = summarySource.trim();
+        if (trimmed) {
+            record.message = trimmed;
+        }
+    }
+
+    return record;
+}
+
+function buildSourceSummaryRecord(state, options) {
+    const summaryCandidate = extractSummaryCandidate(state, options.sourceKey);
+    return buildSummaryRecord(summaryCandidate, {
+        source: options.sourceKey,
+        label: options.label,
+        issues: options.issues
+    });
+}
+
+function buildCombinedSummaryRecord(state, options) {
+    const globalSummary = state?.parsedReport?.summary || null;
+    return buildSummaryRecord(globalSummary, {
+        source: "combined",
+        label: options.label || "聚合報告",
+        issues: options.issues
+    });
+}
+
+function buildAggregatedSummaryRecords(state, staticIssues, aiIssues, aggregatedIssues = null) {
+    const records = [];
+    records.push(
+        buildSourceSummaryRecord(state, {
+            sourceKey: "static_analyzer",
+            label: "靜態分析器",
+            issues: staticIssues
+        })
+    );
+    records.push(
+        buildSourceSummaryRecord(state, {
+            sourceKey: "dml_prompt",
+            label: "AI審查",
+            issues: aiIssues
+        })
+    );
+    records.push(
+        buildCombinedSummaryRecord(state, {
+            label: "聚合報告",
+            issues:
+                Array.isArray(aggregatedIssues) && aggregatedIssues.length
+                    ? aggregatedIssues
+                    : dedupeIssues([...staticIssues, ...aiIssues])
+        })
+    );
+    return records;
+}
+
+const activeReportCombinedRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state?.parsedReport) {
+        return "";
+    }
+
+    const state = report.state;
+    const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
+    const aiIssues = collectIssuesForSource(state, ["dml_prompt"]);
+    const aggregatedIssues = collectAggregatedIssues(state);
+    const summaryRecords = buildAggregatedSummaryRecords(
+        state,
+        staticIssues,
+        aiIssues,
+        aggregatedIssues
+    );
+
+    try {
+        return JSON.stringify({ summary: summaryRecords, issues: aggregatedIssues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify aggregated report payload", error);
+    }
+
+    const direct = state?.report;
+    if (typeof direct === "string" && direct.trim()) {
+        return direct;
+    }
+
+    const analysisResult = state?.analysis?.result;
+    if (typeof analysisResult === "string" && analysisResult.trim()) {
+        return analysisResult;
+    }
+
+    return "";
+});
+
+const activeReportStaticRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state?.parsedReport) return "";
+
+    const issues = collectIssuesForSource(report.state, ["static_analyzer"]);
+    try {
+        return JSON.stringify({ issues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify static issue payload", error);
+    }
+
+    return "";
+});
+
+const activeReportDifyRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state?.parsedReport) return "";
+
+    const issues = collectIssuesForSource(report.state, ["dml_prompt"]);
+    try {
+        return JSON.stringify({ issues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify AI review issue payload", error);
     }
 
     return record;
@@ -3648,6 +3838,32 @@ function normaliseReportAnalysisState(state) {
                 }
             }
         }
+    }
+
+    if (difyTarget) {
+        const hasReport = typeof difyTarget.report === "string" && difyTarget.report.trim().length > 0;
+        if (!hasReport && difyTarget.raw && typeof difyTarget.raw === "object") {
+            try {
+                difyTarget.report = JSON.stringify(difyTarget.raw);
+            } catch (error) {
+                console.warn("[Report] Failed to stringify dify raw object for state", error);
+            }
+        }
+        const filteredKeys = Object.keys(difyTarget).filter((key) => {
+            const value = difyTarget[key];
+            if (value === null || value === undefined) return false;
+            if (typeof value === "string") return value.trim().length > 0;
+            if (Array.isArray(value)) return value.length > 0;
+            if (typeof value === "object") return Object.keys(value).length > 0;
+            return true;
+        });
+        if (filteredKeys.length > 0) {
+            state.dify = difyTarget;
+        } else {
+            state.dify = null;
+        }
+    } else if (!state.dify) {
+        state.dify = null;
     }
 
     if (difyTarget) {
