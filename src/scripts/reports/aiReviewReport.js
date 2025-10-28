@@ -319,6 +319,185 @@ function normaliseSegments(segments, chunks) {
     return results;
 }
 
+function truncateText(value, limit) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    if (!Number.isFinite(limit) || limit <= 0) {
+        return value.trim();
+    }
+    const trimmed = value.trim();
+    if (trimmed.length <= limit) {
+        return trimmed;
+    }
+    return `${trimmed.slice(0, limit).trim()}…`;
+}
+
+function cleanMarkdownLine(line) {
+    if (typeof line !== "string") {
+        return "";
+    }
+    const trimmed = line.replace(/\t/g, "    ").trim();
+    if (!trimmed) {
+        return "";
+    }
+
+    const headingMatch = trimmed.match(/^#{1,6}\s*(.+)$/);
+    if (headingMatch) {
+        const heading = headingMatch[1].trim();
+        if (!heading || /^第\s*\d+\s*段/.test(heading)) {
+            return "";
+        }
+        return heading;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*+]\s+(.+)$/);
+    if (bulletMatch) {
+        const content = bulletMatch[1].trim();
+        if (!content || /^第\s*\d+\s*段/.test(content)) {
+            return "";
+        }
+        return `• ${content}`;
+    }
+
+    const orderedMatch = trimmed.match(/^\d+[.)]\s+(.+)$/);
+    if (orderedMatch) {
+        const content = orderedMatch[1].trim();
+        if (!content || /^第\s*\d+\s*段/.test(content)) {
+            return "";
+        }
+        return content;
+    }
+
+    if (/^第\s*\d+\s*段/.test(trimmed)) {
+        return "";
+    }
+
+    return trimmed;
+}
+
+function summariseMarkdownContent(text) {
+    if (typeof text !== "string") {
+        return null;
+    }
+
+    const normalised = text.replace(/\r\n?/g, "\n");
+    const lines = normalised.split("\n");
+    const cleanedLines = [];
+
+    lines.forEach((line) => {
+        const cleaned = cleanMarkdownLine(line);
+        if (cleaned) {
+            cleanedLines.push(cleaned);
+        }
+    });
+
+    if (!cleanedLines.length) {
+        return null;
+    }
+
+    const summary = cleanedLines[0];
+    const detailText = cleanedLines.join("\n\n");
+    return {
+        summary,
+        detailText
+    };
+}
+
+function deriveIssuesFromMarkdownSegments(segments, reportText) {
+    const issues = [];
+    const seenMessages = new Set();
+    let globalDetailIndex = 1;
+
+    const pushIssueFromText = (text, segment) => {
+        if (typeof text !== "string") {
+            return false;
+        }
+        const candidate = summariseMarkdownContent(text);
+        if (!candidate) {
+            return false;
+        }
+
+        const { summary, detailText } = candidate;
+        const headline = truncateText(summary || detailText, 160);
+        const detailDisplay = truncateText(detailText, 600) || headline;
+        const dedupeKey = `${headline}::${detailDisplay}`;
+        if (seenMessages.has(dedupeKey)) {
+            return false;
+        }
+        seenMessages.add(dedupeKey);
+
+        const lines = Array.isArray(segment?.lines) ? segment.lines : [];
+        const numericLines = lines
+            .map((value) => Number(value))
+            .filter((value) => Number.isFinite(value));
+        const firstLine = numericLines.length ? numericLines[0] : null;
+        const lastLine = numericLines.length ? numericLines[numericLines.length - 1] : null;
+
+        const detail = {
+            index: globalDetailIndex,
+            message: detailDisplay,
+            severity: "",
+            severityLabel: "未標示",
+            severityClass: "muted"
+        };
+
+        if (detailText && detailText.length > detailDisplay.length) {
+            detail.fullMessage = detailText;
+        }
+
+        const issue = {
+            source: "dml_prompt",
+            message: headline,
+            description: detailText,
+            severity: "",
+            severityLabel: "未標示",
+            severityClass: "muted",
+            details: [detail],
+            fallbackSource: "markdown"
+        };
+
+        if (segment?.id) {
+            issue.segmentId = segment.id;
+        }
+        if (Number.isFinite(segment?.index)) {
+            issue.segmentIndex = Number(segment.index);
+        }
+        if (firstLine !== null) {
+            issue.line = firstLine;
+        }
+        if (lastLine !== null && lastLine !== firstLine) {
+            issue.endLine = lastLine;
+        }
+        if (typeof segment?.text === "string" && segment.text.trim()) {
+            issue.statement = segment.text.trim();
+        }
+
+        issues.push(issue);
+        globalDetailIndex += 1;
+        return true;
+    };
+
+    (Array.isArray(segments) ? segments : []).forEach((segment) => {
+        const text = typeof segment?.text === "string" ? segment.text : "";
+        pushIssueFromText(text, segment);
+    });
+
+    if (!issues.length && typeof reportText === "string" && reportText.trim()) {
+        const sections = reportText.split(/\n{2,}/);
+        let processed = false;
+        sections.forEach((section) => {
+            if (processed) return;
+            processed = pushIssueFromText(section, null);
+        });
+        if (!processed) {
+            pushIssueFromText(reportText, null);
+        }
+    }
+
+    return issues;
+}
+
 /**
  * Transform the AI review report into UI friendly detail records.
  *
@@ -339,6 +518,13 @@ export function buildAiReviewDetails(dmlReport) {
     const humanReadableText =
         typeof dmlReport.reportText === "string" ? dmlReport.reportText.trim() : "";
     const aggregatedIssues = Array.isArray(dmlReport.issues) ? dmlReport.issues : [];
+    let issues = aggregatedIssues;
+    if (!issues.length) {
+        const derived = deriveIssuesFromMarkdownSegments(segments, humanReadableText || aggregatedText);
+        if (derived.length) {
+            issues = derived;
+        }
+    }
     const aggregatedObject =
         dmlReport.aggregated && typeof dmlReport.aggregated === "object"
             ? dmlReport.aggregated
@@ -365,7 +551,7 @@ export function buildAiReviewDetails(dmlReport) {
             reportText: humanReadableText || aggregatedText,
             aggregatedText,
             aggregated: aggregatedObject,
-            issues: aggregatedIssues,
+            issues,
             error: errorMessage,
             status,
             generatedAt,
@@ -419,6 +605,28 @@ function normaliseAiReviewPayload(payload = {}) {
         issues = Array.isArray(aggregatedObject?.issues) ? aggregatedObject.issues : null;
     }
     issues = normaliseIssues(issues);
+    if (!issues.length) {
+        const fallbackMarkdown = pickFirstString(
+            [
+                summaryObject?.reportText,
+                summaryObject?.report,
+                reportObject?.reportText,
+                reportObject?.report,
+                aggregatedObject?.reportText,
+                aggregatedObject?.report,
+                payload.dmlReportText,
+                payload.dmlReport?.reportText,
+                payload.dmlReport?.report,
+                payload.dml?.reportText,
+                payload.dml?.report
+            ],
+            { allowEmpty: false }
+        );
+        const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
+        if (derivedIssues.length) {
+            issues = normaliseIssues(derivedIssues);
+        }
+    }
 
     const generatedAtCandidates = [
         payload.dmlGeneratedAt,
