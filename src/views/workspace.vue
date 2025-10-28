@@ -20,7 +20,10 @@ import {
 import {
     collectAiReviewIssues,
     mergeAiReviewReportIntoAnalysis,
-    buildAiReviewDetails
+    applyAiReviewResultToState,
+    hydrateAiReviewStateFromRecord,
+    buildAiReviewSourceSummaryConfig,
+    buildAiReviewPersistencePayload
 } from "../scripts/reports/aiReviewReport.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
@@ -941,41 +944,19 @@ const activeReportDetails = computed(() => {
     });
 
     const dmlSourceValue = globalSummary?.sources?.dml_prompt || globalSummary?.sources?.dmlPrompt || null;
-
-    let dmlDetails = null;
-    let dmlSummary = null;
-    if (dmlReport && typeof dmlReport === "object") {
-        const aiDetails = buildAiReviewDetails(dmlReport);
-        dmlSummary = aiDetails.summary;
-        dmlDetails = aiDetails.details;
-    }
+    const aiSourceSummary = buildAiReviewSourceSummaryConfig({
+        report: dmlReport,
+        globalSource: dmlSourceValue,
+        analysis: report.state?.analysis
+    });
+    const dmlSummary = aiSourceSummary.summary;
+    const dmlDetails = aiSourceSummary.details;
 
     enhanceSourceSummary("dml_prompt", "AI審查", {
-        metricsSources: [dmlSourceValue, dmlDetails?.summary, dmlDetails?.aggregated],
-        statusCandidates: [
-            dmlSourceValue?.status,
-            dmlDetails?.status,
-            dmlSummary?.status,
-            report.state?.analysis?.dmlSummary?.status,
-            report.state?.analysis?.dmlReport?.summary?.status
-        ],
-        errorCandidates: [
-            dmlSourceValue?.error_message,
-            dmlSourceValue?.errorMessage,
-            dmlDetails?.error,
-            dmlSummary?.error_message,
-            dmlSummary?.errorMessage,
-            report.state?.analysis?.dmlErrorMessage
-        ],
-        generatedAtCandidates: [
-            dmlSourceValue?.generated_at,
-            dmlSourceValue?.generatedAt,
-            dmlDetails?.generatedAt,
-            dmlReport?.generatedAt,
-            dmlSummary?.generated_at,
-            dmlSummary?.generatedAt,
-            report.state?.analysis?.dmlGeneratedAt
-        ]
+        metricsSources: aiSourceSummary.metricsSources,
+        statusCandidates: aiSourceSummary.statusCandidates,
+        errorCandidates: aiSourceSummary.errorCandidates,
+        generatedAtCandidates: aiSourceSummary.generatedAtCandidates
     });
 
     const combinedSummarySourceValue =
@@ -3060,6 +3041,11 @@ function normaliseReportAnalysisState(state) {
             }
         }
 
+        const aiPersistencePatch = buildAiReviewPersistencePayload(state);
+        if (aiPersistencePatch) {
+            Object.assign(baseAnalysis, aiPersistencePatch);
+        }
+
         const parsedSummaryData =
             parsedReport.summary && typeof parsedReport.summary === "object" ? parsedReport.summary : null;
         if (!state.difyErrorMessage && parsedSummaryData) {
@@ -3334,17 +3320,13 @@ async function hydrateReportsForProject(projectId) {
             const analysisOriginal = normaliseHydratedString(record.analysis?.originalResult);
             state.rawReport = hydratedRawReport || analysisResult || analysisOriginal || "";
             state.dify = normaliseHydratedReportObject(record.dify);
-            state.dml = normaliseHydratedReportObject(record.dml);
             state.difyErrorMessage = normaliseHydratedString(record.difyErrorMessage);
-            state.dmlErrorMessage = normaliseHydratedString(record.dmlErrorMessage);
             if (!state.difyErrorMessage) {
                 state.difyErrorMessage = normaliseHydratedString(record.analysis?.difyErrorMessage);
             }
-            if (!state.dmlErrorMessage) {
-                state.dmlErrorMessage = normaliseHydratedString(record.analysis?.dmlErrorMessage);
-            }
             state.parsedReport = parseReportJson(state.report);
             state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
+            hydrateAiReviewStateFromRecord(state, record);
             normaliseReportAnalysisState(state);
             updateIssueSummaryTotals(state);
             const timestamp = parseHydratedTimestamp(record.generatedAt || record.updatedAt || record.createdAt);
@@ -3513,10 +3495,9 @@ async function generateReportForFile(project, node, options = {}) {
         state.conversationId = payload?.conversationId || "";
         state.rawReport = typeof payload?.rawReport === "string" ? payload.rawReport : "";
         state.dify = payload?.dify || null;
-        state.dml = payload?.dml || null;
         state.difyErrorMessage = typeof payload?.difyErrorMessage === "string" ? payload.difyErrorMessage : "";
-        state.dmlErrorMessage = typeof payload?.dmlErrorMessage === "string" ? payload.dmlErrorMessage : "";
         state.analysis = payload?.analysis || null;
+        applyAiReviewResultToState(state, payload);
         state.parsedReport = parseReportJson(state.report);
         state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
         normaliseReportAnalysisState(state);
