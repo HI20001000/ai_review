@@ -1,8 +1,12 @@
 import { collectIssuesForSource } from "./combinedReport.js";
 import {
     dedupeIssues,
+    isPlainObject,
     normaliseReportSourceKey,
-    remapIssuesToSource
+    pickJsonStringCandidate,
+    pickReportObjectCandidate,
+    remapIssuesToSource,
+    stringifyReportCandidate
 } from "./shared.js";
 
 /**
@@ -157,11 +161,56 @@ export function preferStaticIssues(state, reports, sourceKey = "static_analyzer"
     return dedupeIssues(issues);
 }
 
+/**
+ * Build the preferred raw static analyzer JSON payload for preview/export workflows.
+ *
+ * @param {Record<string, any> | null | undefined} state - Workspace report state snapshot.
+ * @returns {string} Stringified static analyzer payload or empty string when unavailable.
+ */
+export function buildStaticRawSourceText(state) {
+    if (!state || typeof state !== "object") {
+        return "";
+    }
+
+    const parsedReport = isPlainObject(state.parsedReport) ? state.parsedReport : null;
+    const reports = parsedReport && isPlainObject(parsedReport.reports) ? parsedReport.reports : null;
+    const staticSource = pickReportObjectCandidate(
+        reports?.static_analyzer,
+        reports?.staticAnalyzer,
+        state.analysis?.staticReport
+    );
+    if (staticSource) {
+        const stringified = stringifyReportCandidate(staticSource, "static analyzer report");
+        if (stringified) {
+            return stringified;
+        }
+    }
+
+    const fallbackText = pickJsonStringCandidate(
+        state.analysis?.rawReport,
+        state.analysis?.originalResult,
+        state.rawReport
+    );
+    if (fallbackText) {
+        return fallbackText;
+    }
+
+    const issues = collectStaticReportIssues(state);
+    try {
+        return JSON.stringify({ issues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify static issue payload", error);
+    }
+
+    return "";
+}
+
 export default {
     buildStaticRawSourceText,
     buildStaticReportDetails,
     collectStaticReportIssues,
     extractStaticReport,
     mergeStaticReportIntoAnalysis,
-    preferStaticIssues
+    preferStaticIssues,
+    buildStaticRawSourceText
 };

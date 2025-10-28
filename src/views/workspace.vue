@@ -18,8 +18,7 @@ import {
 import {
     collectStaticReportIssues,
     mergeStaticReportIntoAnalysis,
-    buildStaticRawSourceText,
-    buildStaticReportDetails
+    buildStaticRawSourceText
 } from "../scripts/reports/staticReport.js";
 import {
     collectAiReviewIssues,
@@ -29,6 +28,13 @@ import {
     buildAiReviewSourceSummaryConfig,
     buildAiReviewPersistencePayload
 } from "../scripts/reports/aiReviewReport.js";
+import {
+    isPlainObject,
+    pickJsonStringCandidate,
+    pickReportObjectCandidate,
+    stringifyReportCandidate,
+    parseReportJson
+} from "../scripts/reports/shared.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
 
@@ -315,12 +321,24 @@ const activeReportCombinedRawSourceText = computed(() => {
     }
 
     const state = report.state;
-    const payload = buildCombinedReportPayload(state);
-
-    try {
-        return JSON.stringify(payload);
-    } catch (error) {
-        console.warn("[reports] Failed to stringify aggregated report payload", error);
+    const staticIssues = collectStaticReportIssues(state);
+    const aiIssues = collectAiReviewIssues(state);
+    const aggregatedIssues = collectAggregatedIssues(state);
+    const summaryRecords = buildAggregatedSummaryRecords(
+        state,
+        staticIssues,
+        aiIssues,
+        aggregatedIssues
+    );
+    if (directCandidate) {
+        const directParsed = parseReportJson(directCandidate) || null;
+        if (
+            !parsedReport ||
+            (isPlainObject(directParsed) &&
+                (isPlainObject(directParsed.reports) || !isPlainObject(parsedReport.reports)))
+        ) {
+            return directCandidate;
+        }
     }
 
     return "";
@@ -329,38 +347,7 @@ const activeReportCombinedRawSourceText = computed(() => {
 const activeReportStaticRawSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
-
-    const parsedReport = isPlainObject(report.state?.parsedReport) ? report.state.parsedReport : null;
-    const reports = parsedReport && isPlainObject(parsedReport.reports) ? parsedReport.reports : null;
-    const staticSource = pickReportObjectCandidate(
-        reports?.static_analyzer,
-        reports?.staticAnalyzer,
-        report.state?.analysis?.staticReport
-    );
-    if (staticSource) {
-        const stringified = stringifyReportCandidate(staticSource, "static analyzer report");
-        if (stringified) {
-            return stringified;
-        }
-    }
-
-    const fallbackText = pickJsonStringCandidate(
-        report.state?.analysis?.rawReport,
-        report.state?.analysis?.originalResult,
-        report.state?.rawReport
-    );
-    if (fallbackText) {
-        return fallbackText;
-    }
-
-    const issues = collectStaticReportIssues(report.state);
-    try {
-        return JSON.stringify({ issues });
-    } catch (error) {
-        console.warn("[reports] Failed to stringify static issue payload", error);
-    }
-
-    return "";
+    return buildStaticRawSourceText(report.state);
 });
 
 const activeReportDifyRawSourceText = computed(() => {
@@ -1252,31 +1239,6 @@ function parseReportRawValue(rawText) {
     }
 
     return { success: false, value: null };
-}
-
-function isPlainObject(value) {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function pickReportObjectCandidate(...candidates) {
-    for (const candidate of candidates) {
-        if (isPlainObject(candidate)) {
-            return candidate;
-        }
-    }
-    return null;
-}
-
-function stringifyReportCandidate(value, label) {
-    if (!isPlainObject(value)) {
-        return "";
-    }
-    try {
-        return JSON.stringify(value);
-    } catch (error) {
-        console.warn(`[reports] Failed to stringify ${label}`, error);
-    }
-    return "";
 }
 
 function buildWorksheetFromValue(value) {
@@ -2652,25 +2614,6 @@ function createDefaultReportState() {
         sourceLoading: false,
         sourceError: ""
     };
-}
-
-function parseReportJson(reportText) {
-    if (typeof reportText !== "string") return null;
-    const trimmed = reportText.trim();
-    if (!trimmed) return null;
-    if (!/^\s*[\[{]/.test(trimmed)) return null;
-    try {
-        const parsed = JSON.parse(trimmed);
-        if (Array.isArray(parsed)) {
-            return { issues: parsed };
-        }
-        if (parsed && typeof parsed === "object") {
-            return parsed;
-        }
-        return null;
-    } catch (_error) {
-        return null;
-    }
 }
 
 function computeIssueSummary(reportText, parsedOverride = null) {

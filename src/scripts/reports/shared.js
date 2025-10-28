@@ -139,10 +139,102 @@ export function dedupeIssues(list) {
     return result;
 }
 
+/**
+ * Determine whether a value is a plain object (not an array and not null).
+ *
+ * @param {unknown} value
+ * @returns {value is Record<string, any>}
+ */
+export function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Pick the first JSON string candidate from the provided values.
+ *
+ * @param {...unknown} candidates
+ * @returns {string}
+ */
+export function pickJsonStringCandidate(...candidates) {
+    for (const candidate of candidates) {
+        if (typeof candidate !== "string") continue;
+        const trimmed = candidate.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            return trimmed;
+        }
+    }
+    return "";
+}
+
+/**
+ * Return the first plain-object candidate from the provided values.
+ *
+ * @param {...unknown} candidates
+ * @returns {Record<string, any> | null}
+ */
+export function pickReportObjectCandidate(...candidates) {
+    for (const candidate of candidates) {
+        if (isPlainObject(candidate)) {
+            return candidate;
+        }
+    }
+    return null;
+}
+
+/**
+ * Safely stringify a report candidate for export or preview usage.
+ *
+ * @param {unknown} value
+ * @param {string} label
+ * @returns {string}
+ */
+export function stringifyReportCandidate(value, label) {
+    if (!isPlainObject(value)) {
+        return "";
+    }
+    try {
+        return JSON.stringify(value);
+    } catch (error) {
+        console.warn(`[reports] Failed to stringify ${label}`, error);
+    }
+    return "";
+}
+
+/**
+ * Parse a JSON string into a report object, tolerating array payloads by wrapping them.
+ *
+ * @param {string} reportText
+ * @returns {Record<string, any> | null}
+ */
+export function parseReportJson(reportText) {
+    if (typeof reportText !== "string") return null;
+    const trimmed = reportText.trim();
+    if (!trimmed) return null;
+    if (!/^\s*[\[{]/.test(trimmed)) return null;
+    try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+            return { issues: parsed };
+        }
+        if (parsed && typeof parsed === "object") {
+            return parsed;
+        }
+        return null;
+    } catch (_error) {
+        return null;
+    }
+}
+
 export default {
     normaliseReportSourceKey,
     findEntryBySourceKey,
     cloneIssueWithSource,
     remapIssuesToSource,
-    dedupeIssues
+    dedupeIssues,
+    isPlainObject,
+    pickJsonStringCandidate,
+    pickReportObjectCandidate,
+    stringifyReportCandidate,
+    parseReportJson
 };
