@@ -1314,12 +1314,12 @@ const activeReportDifyRawSourceText = computed(() => {
         }
     }
 
-    const parsedDify =
+    const parsedWorkflowReport =
         report.state?.parsedReport?.reports?.dify_workflow ||
         report.state?.parsedReport?.reports?.difyWorkflow ||
         null;
-    if (parsedDify && typeof parsedDify === "object") {
-        const raw = parsedDify.raw;
+    if (parsedWorkflowReport && typeof parsedWorkflowReport === "object") {
+        const raw = parsedWorkflowReport.raw;
         if (typeof raw === "string" && raw.trim()) {
             return raw;
         }
@@ -1329,32 +1329,9 @@ const activeReportDifyRawSourceText = computed(() => {
                 return stringified;
             }
         }
-        const stringified = normaliseJson(parsedDify);
+        const stringified = normaliseJson(parsedWorkflowReport);
         if (stringified) {
             return stringified;
-        }
-    }
-
-    const parsedDify =
-        report.state?.parsedReport?.reports?.dify_workflow ||
-        report.state?.parsedReport?.reports?.difyWorkflow ||
-        null;
-    if (parsedDify && typeof parsedDify === "object") {
-        const raw = parsedDify.raw;
-        if (typeof raw === "string" && raw.trim()) {
-            return raw;
-        }
-        if (raw && typeof raw === "object") {
-            try {
-                return JSON.stringify(raw);
-            } catch (error) {
-                console.warn("[reports] Failed to stringify parsed dify raw", error);
-            }
-        }
-        try {
-            return JSON.stringify(parsedDify);
-        } catch (error) {
-            console.warn("[reports] Failed to stringify parsed dify workflow", error);
         }
     }
 
@@ -3224,26 +3201,6 @@ function normaliseReportAnalysisState(state) {
                         staticSummary.generated_at = state.analysis?.generatedAt || state.generatedAt;
                     }
                 }
-                const enrichment = staticReport.enrichment;
-                if (enrichment !== undefined && enrichment !== null) {
-                    if (!difyTarget) {
-                        difyTarget = {};
-                    }
-                    if (typeof enrichment === "string" && enrichment.trim()) {
-                        if (!difyTarget.report || !difyTarget.report.trim()) {
-                            difyTarget.report = enrichment.trim();
-                        }
-                    } else if (enrichment && typeof enrichment === "object") {
-                        difyTarget.raw = enrichment;
-                        if (!difyTarget.report || !difyTarget.report.trim()) {
-                            try {
-                                difyTarget.report = JSON.stringify(enrichment);
-                            } catch (error) {
-                                console.warn("[Report] Failed to stringify static enrichment", error);
-                            }
-                        }
-                    }
-                }
             }
 
             const dmlReport = reports.dml_prompt || reports.dmlPrompt;
@@ -3342,84 +3299,6 @@ function normaliseReportAnalysisState(state) {
                 }
             }
         }
-    }
-
-    if (difyTarget) {
-        const hasReport = typeof difyTarget.report === "string" && difyTarget.report.trim().length > 0;
-        if (!hasReport && difyTarget.raw && typeof difyTarget.raw === "object") {
-            try {
-                difyTarget.report = JSON.stringify(difyTarget.raw);
-            } catch (error) {
-                console.warn("[Report] Failed to stringify dify raw object for state", error);
-            }
-        }
-        const filteredKeys = Object.keys(difyTarget).filter((key) => {
-            const value = difyTarget[key];
-            if (value === null || value === undefined) return false;
-            if (typeof value === "string") return value.trim().length > 0;
-            if (Array.isArray(value)) return value.length > 0;
-            if (typeof value === "object") return Object.keys(value).length > 0;
-            return true;
-        });
-        if (filteredKeys.length > 0) {
-            state.dify = difyTarget;
-        } else {
-            state.dify = null;
-        }
-    } else if (!state.dify) {
-        state.dify = null;
-    }
-
-    if (difyTarget) {
-        const hasReport = typeof difyTarget.report === "string" && difyTarget.report.trim().length > 0;
-        if (!hasReport && difyTarget.raw && typeof difyTarget.raw === "object") {
-            try {
-                difyTarget.report = JSON.stringify(difyTarget.raw);
-            } catch (error) {
-                console.warn("[Report] Failed to stringify dify raw object for state", error);
-            }
-        }
-        const filteredKeys = Object.keys(difyTarget).filter((key) => {
-            const value = difyTarget[key];
-            if (value === null || value === undefined) return false;
-            if (typeof value === "string") return value.trim().length > 0;
-            if (Array.isArray(value)) return value.length > 0;
-            if (typeof value === "object") return Object.keys(value).length > 0;
-            return true;
-        });
-        if (filteredKeys.length > 0) {
-            state.dify = difyTarget;
-        } else {
-            state.dify = null;
-        }
-    } else if (!state.dify) {
-        state.dify = null;
-    }
-
-    if (difyTarget) {
-        const hasReport = typeof difyTarget.report === "string" && difyTarget.report.trim().length > 0;
-        if (!hasReport && difyTarget.raw && typeof difyTarget.raw === "object") {
-            try {
-                difyTarget.report = JSON.stringify(difyTarget.raw);
-            } catch (error) {
-                console.warn("[Report] Failed to stringify dify raw object for state", error);
-            }
-        }
-        const filteredKeys = Object.keys(difyTarget).filter((key) => {
-            const value = difyTarget[key];
-            if (value === null || value === undefined) return false;
-            if (typeof value === "string") return value.trim().length > 0;
-            if (Array.isArray(value)) return value.length > 0;
-            if (typeof value === "object") return Object.keys(value).length > 0;
-            return true;
-        });
-        if (filteredKeys.length > 0) {
-            state.dify = difyTarget;
-        } else {
-            state.dify = null;
-        }
-    } else if (!state.dify) {
-        state.dify = null;
     }
 
     if (difyTarget) {
