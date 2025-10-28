@@ -1623,6 +1623,145 @@ function buildSummaryRecord(summarySource, options) {
         if (trimmed) {
             record.message = trimmed;
         }
+        const generatedAtValue =
+            summarySource.generated_at ??
+            summarySource.generatedAt ??
+            summarySource.generated_at_display ??
+            summarySource.generatedAtDisplay ??
+            null;
+        const normalisedTimestamp = normaliseTimestampValue(generatedAtValue);
+        if (normalisedTimestamp) {
+            record.generated_at = normalisedTimestamp;
+        }
+        const errorValue =
+            typeof summarySource.error_message === "string"
+                ? summarySource.error_message
+                : typeof summarySource.errorMessage === "string"
+                ? summarySource.errorMessage
+                : "";
+        if (errorValue && errorValue.trim()) {
+            record.error_message = errorValue.trim();
+        }
+        const messageValue =
+            typeof summarySource.message === "string" ? summarySource.message : summarySource.note;
+        if (messageValue && typeof messageValue === "string" && messageValue.trim()) {
+            record.message = messageValue.trim();
+        }
+    } else if (typeof summarySource === "string") {
+        const trimmed = summarySource.trim();
+        if (trimmed) {
+            record.message = trimmed;
+        }
+    }
+
+    return record;
+}
+
+function buildSourceSummaryRecord(state, options) {
+    const summaryCandidate = extractSummaryCandidate(state, options.sourceKey);
+    return buildSummaryRecord(summaryCandidate, {
+        source: options.sourceKey,
+        label: options.label,
+        issues: options.issues
+    });
+}
+
+function buildCombinedSummaryRecord(state, options) {
+    const globalSummary = state?.parsedReport?.summary || null;
+    return buildSummaryRecord(globalSummary, {
+        source: "combined",
+        label: options.label || "聚合報告",
+        issues: options.issues
+    });
+}
+
+function buildAggregatedSummaryRecords(state, staticIssues, aiIssues, aggregatedIssues = null) {
+    const records = [];
+    records.push(
+        buildSourceSummaryRecord(state, {
+            sourceKey: "static_analyzer",
+            label: "靜態分析器",
+            issues: staticIssues
+        })
+    );
+    records.push(
+        buildSourceSummaryRecord(state, {
+            sourceKey: "dml_prompt",
+            label: "AI審查",
+            issues: aiIssues
+        })
+    );
+    records.push(
+        buildCombinedSummaryRecord(state, {
+            label: "聚合報告",
+            issues:
+                Array.isArray(aggregatedIssues) && aggregatedIssues.length
+                    ? aggregatedIssues
+                    : dedupeIssues([...staticIssues, ...aiIssues])
+        })
+    );
+    return records;
+}
+
+const activeReportCombinedRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state?.parsedReport) {
+        return "";
+    }
+
+    const state = report.state;
+    const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
+    const aiIssues = collectIssuesForSource(state, ["dml_prompt"]);
+    const aggregatedIssues = collectAggregatedIssues(state);
+    const summaryRecords = buildAggregatedSummaryRecords(
+        state,
+        staticIssues,
+        aiIssues,
+        aggregatedIssues
+    );
+
+    try {
+        return JSON.stringify({ summary: summaryRecords, issues: aggregatedIssues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify aggregated report payload", error);
+    }
+
+    const direct = state?.report;
+    if (typeof direct === "string" && direct.trim()) {
+        return direct;
+    }
+
+    const analysisResult = state?.analysis?.result;
+    if (typeof analysisResult === "string" && analysisResult.trim()) {
+        return analysisResult;
+    }
+
+    return "";
+});
+
+const activeReportStaticRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state?.parsedReport) return "";
+
+    const issues = collectIssuesForSource(report.state, ["static_analyzer"]);
+    try {
+        return JSON.stringify({ issues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify static issue payload", error);
+    }
+
+    return "";
+});
+
+const activeReportDifyRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state?.parsedReport) return "";
+
+    const issues = collectIssuesForSource(report.state, ["dml_prompt"]);
+    try {
+        return JSON.stringify({ issues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify AI review issue payload", error);
     }
 
     return record;
@@ -3699,6 +3838,32 @@ function normaliseReportAnalysisState(state) {
                 }
             }
         }
+    }
+
+    if (difyTarget) {
+        const hasReport = typeof difyTarget.report === "string" && difyTarget.report.trim().length > 0;
+        if (!hasReport && difyTarget.raw && typeof difyTarget.raw === "object") {
+            try {
+                difyTarget.report = JSON.stringify(difyTarget.raw);
+            } catch (error) {
+                console.warn("[Report] Failed to stringify dify raw object for state", error);
+            }
+        }
+        const filteredKeys = Object.keys(difyTarget).filter((key) => {
+            const value = difyTarget[key];
+            if (value === null || value === undefined) return false;
+            if (typeof value === "string") return value.trim().length > 0;
+            if (Array.isArray(value)) return value.length > 0;
+            if (typeof value === "object") return Object.keys(value).length > 0;
+            return true;
+        });
+        if (filteredKeys.length > 0) {
+            state.dify = difyTarget;
+        } else {
+            state.dify = null;
+        }
+    } else if (!state.dify) {
+        state.dify = null;
     }
 
     if (difyTarget) {
