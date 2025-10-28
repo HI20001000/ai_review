@@ -281,18 +281,21 @@ const activeReportDetails = computed(() => {
     const staticReport = reports?.static_analyzer || reports?.staticAnalyzer || null;
     const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
 
-    const issues = Array.isArray(parsed.issues)
+    const aggregatedIssues = collectAggregatedIssues(report.state);
+    const fallbackIssues = Array.isArray(parsed.issues)
         ? parsed.issues
         : Array.isArray(staticReport?.issues)
         ? staticReport.issues
         : [];
+    const useAggregatedIssues = aggregatedIssues.length > 0 || fallbackIssues.length === 0;
+    const issues = useAggregatedIssues ? aggregatedIssues : fallbackIssues;
     const rawStaticSummary =
         staticReport && typeof staticReport === "object" && staticReport.summary !== undefined
             ? staticReport.summary
             : null;
     const summary = (parsed.summary ?? rawStaticSummary) ?? null;
 
-    let total = report.state.issueSummary?.totalIssues;
+    let total = useAggregatedIssues ? aggregatedIssues.length : report.state.issueSummary?.totalIssues;
     if (!Number.isFinite(total)) {
         const summaryObject = summary && typeof summary === "object" ? summary : null;
         if (summaryObject) {
@@ -1285,6 +1288,52 @@ function collectIssuesForSource(state, sourceKeys) {
     return dedupeIssues(results);
 }
 
+function collectAggregatedIssues(state) {
+    if (!state) return [];
+    const issues = [
+        ...collectIssuesForSource(state, ["static_analyzer"]),
+        ...collectIssuesForSource(state, ["dml_prompt"]),
+        ...collectIssuesForSource(state, ["dify_workflow"])
+    ];
+    const combined = dedupeIssues(issues);
+    if (combined.length > 0) {
+        return combined;
+    }
+    const parsedIssues = Array.isArray(state.parsedReport?.issues)
+        ? dedupeIssues(state.parsedReport.issues)
+        : [];
+    if (parsedIssues.length > 0) {
+        return parsedIssues;
+    }
+    const staticIssues = Array.isArray(state.analysis?.staticReport?.issues)
+        ? dedupeIssues(state.analysis.staticReport.issues)
+        : [];
+    if (staticIssues.length > 0) {
+        return staticIssues;
+    }
+    const dmlIssues = Array.isArray(state.dml?.issues)
+        ? dedupeIssues(state.dml.issues)
+        : [];
+    if (dmlIssues.length > 0) {
+        return dmlIssues;
+    }
+    return combined;
+}
+
+function updateIssueSummaryTotals(state) {
+    if (!state) return;
+    const combinedIssues = collectAggregatedIssues(state);
+    const total = Number.isFinite(combinedIssues.length) ? combinedIssues.length : null;
+    if (total === null) {
+        return;
+    }
+    if (!state.issueSummary || typeof state.issueSummary !== "object") {
+        state.issueSummary = { totalIssues: total };
+        return;
+    }
+    state.issueSummary.totalIssues = total;
+}
+
 function extractSummaryCandidate(state, sourceKey) {
     if (!state) return null;
     const reports = state.parsedReport?.reports;
@@ -1412,7 +1461,7 @@ function buildCombinedSummaryRecord(state, options) {
     });
 }
 
-function buildAggregatedSummaryRecords(state, staticIssues, aiIssues) {
+function buildAggregatedSummaryRecords(state, staticIssues, aiIssues, aggregatedIssues = null) {
     const records = [];
     records.push(
         buildSourceSummaryRecord(state, {
@@ -1431,7 +1480,10 @@ function buildAggregatedSummaryRecords(state, staticIssues, aiIssues) {
     records.push(
         buildCombinedSummaryRecord(state, {
             label: "聚合報告",
-            issues: dedupeIssues([...staticIssues, ...aiIssues])
+            issues:
+                Array.isArray(aggregatedIssues) && aggregatedIssues.length
+                    ? aggregatedIssues
+                    : dedupeIssues([...staticIssues, ...aiIssues])
         })
     );
     return records;
@@ -1446,11 +1498,16 @@ const activeReportCombinedRawSourceText = computed(() => {
     const state = report.state;
     const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
     const aiIssues = collectIssuesForSource(state, ["dml_prompt"]);
-    const combined = dedupeIssues([...staticIssues, ...aiIssues]);
-    const summaryRecords = buildAggregatedSummaryRecords(state, staticIssues, aiIssues);
+    const aggregatedIssues = collectAggregatedIssues(state);
+    const summaryRecords = buildAggregatedSummaryRecords(
+        state,
+        staticIssues,
+        aiIssues,
+        aggregatedIssues
+    );
 
     try {
-        return JSON.stringify({ summary: summaryRecords, issues: combined });
+        return JSON.stringify({ summary: summaryRecords, issues: aggregatedIssues });
     } catch (error) {
         console.warn("[reports] Failed to stringify aggregated report payload", error);
     }
@@ -3457,6 +3514,51 @@ function normaliseReportAnalysisState(state) {
                 }
             }
         }
+
+        const parsedSummary =
+            parsedReport.summary && typeof parsedReport.summary === "object" ? parsedReport.summary : null;
+        if (!state.difyErrorMessage && parsedSummary) {
+            const sources =
+                parsedSummary.sources && typeof parsedSummary.sources === "object" ? parsedSummary.sources : null;
+            if (sources) {
+                const difySource = sources.dify_workflow || sources.difyWorkflow;
+                const difyError =
+                    typeof difySource?.error_message === "string"
+                        ? difySource.error_message
+                        : typeof difySource?.errorMessage === "string"
+                        ? difySource.errorMessage
+                        : "";
+                if (difyError && difyError.trim()) {
+                    state.difyErrorMessage = difyError.trim();
+                }
+            }
+        }
+    }
+
+    if (difyTarget) {
+        const hasReport = typeof difyTarget.report === "string" && difyTarget.report.trim().length > 0;
+        if (!hasReport && difyTarget.raw && typeof difyTarget.raw === "object") {
+            try {
+                difyTarget.report = JSON.stringify(difyTarget.raw);
+            } catch (error) {
+                console.warn("[Report] Failed to stringify dify raw object for state", error);
+            }
+        }
+        const filteredKeys = Object.keys(difyTarget).filter((key) => {
+            const value = difyTarget[key];
+            if (value === null || value === undefined) return false;
+            if (typeof value === "string") return value.trim().length > 0;
+            if (Array.isArray(value)) return value.length > 0;
+            if (typeof value === "object") return Object.keys(value).length > 0;
+            return true;
+        });
+        if (filteredKeys.length > 0) {
+            state.dify = difyTarget;
+        } else {
+            state.dify = null;
+        }
+    } else if (!state.dify) {
+        state.dify = null;
     }
 
     if (difyTarget) {
@@ -3723,6 +3825,7 @@ async function hydrateReportsForProject(projectId) {
             state.parsedReport = parseReportJson(state.report);
             state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
             normaliseReportAnalysisState(state);
+            updateIssueSummaryTotals(state);
             const timestamp = parseHydratedTimestamp(record.generatedAt || record.updatedAt || record.createdAt);
             state.updatedAt = timestamp;
             state.updatedAtDisplay = timestamp ? timestamp.toLocaleString() : null;
@@ -3896,6 +3999,7 @@ async function generateReportForFile(project, node, options = {}) {
         state.parsedReport = parseReportJson(state.report);
         state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
         normaliseReportAnalysisState(state);
+        updateIssueSummaryTotals(state);
         state.error = "";
 
         if (autoSelect) {
