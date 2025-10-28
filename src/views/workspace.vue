@@ -288,8 +288,34 @@ const hasChunkDetails = computed(() => {
 
 const activeReportCombinedRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) {
+    if (!report) {
         return "";
+    }
+
+    const parsedReport = isPlainObject(report.state?.parsedReport) ? report.state.parsedReport : null;
+    const directCandidate = pickJsonStringCandidate(
+        report.state?.report,
+        report.state?.analysis?.result,
+        report.state?.analysis?.rawReport,
+        report.state?.analysis?.originalResult,
+        report.state?.rawReport
+    );
+    if (directCandidate) {
+        const directParsed = parseReportJson(directCandidate) || null;
+        if (
+            !parsedReport ||
+            (isPlainObject(directParsed) &&
+                (isPlainObject(directParsed.reports) || !isPlainObject(parsedReport.reports)))
+        ) {
+            return directCandidate;
+        }
+    }
+
+    if (parsedReport) {
+        const stringified = stringifyReportCandidate(parsedReport, "combined report payload");
+        if (stringified) {
+            return stringified;
+        }
     }
 
     const state = report.state;
@@ -309,22 +335,35 @@ const activeReportCombinedRawSourceText = computed(() => {
         console.warn("[reports] Failed to stringify aggregated report payload", error);
     }
 
-    const direct = state?.report;
-    if (typeof direct === "string" && direct.trim()) {
-        return direct;
-    }
-
-    const analysisResult = state?.analysis?.result;
-    if (typeof analysisResult === "string" && analysisResult.trim()) {
-        return analysisResult;
-    }
-
     return "";
 });
 
 const activeReportStaticRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) return "";
+    if (!report) return "";
+
+    const parsedReport = isPlainObject(report.state?.parsedReport) ? report.state.parsedReport : null;
+    const reports = parsedReport && isPlainObject(parsedReport.reports) ? parsedReport.reports : null;
+    const staticSource = pickReportObjectCandidate(
+        reports?.static_analyzer,
+        reports?.staticAnalyzer,
+        report.state?.analysis?.staticReport
+    );
+    if (staticSource) {
+        const stringified = stringifyReportCandidate(staticSource, "static analyzer report");
+        if (stringified) {
+            return stringified;
+        }
+    }
+
+    const fallbackText = pickJsonStringCandidate(
+        report.state?.analysis?.rawReport,
+        report.state?.analysis?.originalResult,
+        report.state?.rawReport
+    );
+    if (fallbackText) {
+        return fallbackText;
+    }
 
     const issues = collectStaticReportIssues(report.state);
     try {
@@ -338,7 +377,27 @@ const activeReportStaticRawSourceText = computed(() => {
 
 const activeReportDifyRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) return "";
+    if (!report) return "";
+
+    const parsedReport = isPlainObject(report.state?.parsedReport) ? report.state.parsedReport : null;
+    const reports = parsedReport && isPlainObject(parsedReport.reports) ? parsedReport.reports : null;
+    const dmlSource = pickReportObjectCandidate(
+        report.state?.dml,
+        reports?.dml_prompt,
+        reports?.dmlPrompt,
+        report.state?.analysis?.dmlReport
+    );
+    if (dmlSource) {
+        const stringified = stringifyReportCandidate(dmlSource, "AI review report");
+        if (stringified) {
+            return stringified;
+        }
+    }
+
+    const fallbackText = pickJsonStringCandidate(report.state?.dify?.report);
+    if (fallbackText) {
+        return fallbackText;
+    }
 
     const issues = collectAiReviewIssues(report.state);
     try {
@@ -1286,6 +1345,18 @@ function formatReportRawText(rawText) {
     return candidate;
 }
 
+function pickJsonStringCandidate(...candidates) {
+    for (const candidate of candidates) {
+        if (typeof candidate !== "string") continue;
+        const trimmed = candidate.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            return trimmed;
+        }
+    }
+    return "";
+}
+
 const canShowCodeIssues = computed(() => {
     const report = activeReport.value;
     if (!report) return false;
@@ -1546,6 +1617,27 @@ function parseReportRawValue(rawText) {
 
 function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function pickReportObjectCandidate(...candidates) {
+    for (const candidate of candidates) {
+        if (isPlainObject(candidate)) {
+            return candidate;
+        }
+    }
+    return null;
+}
+
+function stringifyReportCandidate(value, label) {
+    if (!isPlainObject(value)) {
+        return "";
+    }
+    try {
+        return JSON.stringify(value);
+    } catch (error) {
+        console.warn(`[reports] Failed to stringify ${label}`, error);
+    }
+    return "";
 }
 
 function buildWorksheetFromValue(value) {
