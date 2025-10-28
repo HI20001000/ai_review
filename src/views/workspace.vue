@@ -1166,49 +1166,31 @@ function findEntryBySourceKey(container, sourceKey) {
 }
 
 function cloneIssueWithSource(issue, sourceKey, options = {}) {
-    if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
-        return issue;
-    }
-    return { ...issue, source: sourceKey };
-}
+    let result = issue;
 
-    const target = normaliseReportSourceKey(sourceKey);
-    if (!target) {
-        return issue;
-    }
+    if (issue && typeof issue === "object" && !Array.isArray(issue)) {
+        const target = normaliseReportSourceKey(sourceKey);
 
-    const existingKeys = [
-        normaliseReportSourceKey(issue.source),
-        normaliseReportSourceKey(issue.analysis_source),
-        normaliseReportSourceKey(issue.analysisSource)
-    ].filter(Boolean);
+        if (target) {
+            const existingKeys = [
+                normaliseReportSourceKey(issue.source),
+                normaliseReportSourceKey(issue.analysis_source),
+                normaliseReportSourceKey(issue.analysisSource)
+            ].filter(Boolean);
 
-    if (!options.force) {
-        if (existingKeys.includes(target)) {
-            if (issue.source === sourceKey) {
-                return issue;
+            if (options.force) {
+                const base = issue.source === sourceKey ? issue : { ...issue, source: sourceKey };
+                const { analysis_source: _analysisSource, analysisSource: _analysisSourceCamel, ...rest } = base;
+                result = { ...rest, source: sourceKey };
+            } else if (existingKeys.includes(target)) {
+                result = issue.source === sourceKey ? issue : { ...issue, source: sourceKey };
+            } else if (existingKeys.length === 0) {
+                result = { ...issue, source: sourceKey };
             }
-            return { ...issue, source: sourceKey };
-        }
-        if (existingKeys.length > 0) {
-            return issue;
         }
     }
+
     return result;
-}
-
-function collectIssuesForSource(state, sourceKeys) {
-    if (!state) return [];
-    const sources = Array.isArray(sourceKeys) ? sourceKeys : [sourceKeys];
-    const sourceSet = new Set(sources.map((key) => normaliseReportSourceKey(key)));
-    const results = [];
-
-    const cloned = { ...issue, source: sourceKey };
-    if (options.force) {
-        delete cloned.analysis_source;
-        delete cloned.analysisSource;
-    }
-    return cloned;
 }
 
 function remapIssuesToSource(issues, sourceKey, options = {}) {
@@ -1241,22 +1223,6 @@ function createIssueKey(issue) {
         } catch (_error) {
             return String(issue);
         }
-        results.push(candidate);
-    };
-
-    const parsedIssues = state.parsedReport?.issues;
-    if (Array.isArray(parsedIssues)) {
-        parsedIssues.forEach((issue) => {
-            const sourceValue =
-                issue?.source || issue?.analysis_source || issue?.analysisSource || issue?.from;
-            const normalised = normaliseReportSourceKey(sourceValue);
-            if (normalised && sourceSet.has(normalised)) {
-                pushIssue(issue);
-            }
-        });
-    }
-    if (typeof issue === "string") {
-        return issue;
     }
     if (typeof issue === "string") {
         return issue;
@@ -1484,8 +1450,6 @@ function collectAggregatedIssues(state) {
     if (dmlIssues.length > 0) {
         return dmlIssues;
     }
-    state.issueSummary.totalIssues = total;
-}
 
     return [];
 }
@@ -1608,116 +1572,6 @@ function buildSummaryRecord(summarySource, options) {
         if (trimmed) {
             record.message = trimmed;
         }
-    }
-
-    return record;
-}
-
-function buildSourceSummaryRecord(state, options) {
-    const summaryCandidate = extractSummaryCandidate(state, options.sourceKey);
-    return buildSummaryRecord(summaryCandidate, {
-        source: options.sourceKey,
-        label: options.label,
-        issues: options.issues
-    });
-}
-
-function buildCombinedSummaryRecord(state, options) {
-    const globalSummary = state?.parsedReport?.summary || null;
-    return buildSummaryRecord(globalSummary, {
-        source: "combined",
-        label: options.label || "聚合報告",
-        issues: options.issues
-    });
-}
-
-function buildAggregatedSummaryRecords(state, staticIssues, aiIssues, aggregatedIssues = null) {
-    const records = [];
-    records.push(
-        buildSourceSummaryRecord(state, {
-            sourceKey: "static_analyzer",
-            label: "靜態分析器",
-            issues: staticIssues
-        })
-    );
-    records.push(
-        buildSourceSummaryRecord(state, {
-            sourceKey: "dml_prompt",
-            label: "AI審查",
-            issues: aiIssues
-        })
-    );
-    records.push(
-        buildCombinedSummaryRecord(state, {
-            label: "聚合報告",
-            issues:
-                Array.isArray(aggregatedIssues) && aggregatedIssues.length
-                    ? aggregatedIssues
-                    : dedupeIssues([...staticIssues, ...aiIssues])
-        })
-    );
-    return records;
-}
-
-const activeReportCombinedRawSourceText = computed(() => {
-    const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) {
-        return "";
-    }
-
-    const state = report.state;
-    const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
-    const aiIssues = collectIssuesForSource(state, ["dml_prompt"]);
-    const aggregatedIssues = collectAggregatedIssues(state);
-    const summaryRecords = buildAggregatedSummaryRecords(
-        state,
-        staticIssues,
-        aiIssues,
-        aggregatedIssues
-    );
-
-    try {
-        return JSON.stringify({ summary: summaryRecords, issues: aggregatedIssues });
-    } catch (error) {
-        console.warn("[reports] Failed to stringify aggregated report payload", error);
-    }
-
-    const direct = state?.report;
-    if (typeof direct === "string" && direct.trim()) {
-        return direct;
-    }
-
-    const analysisResult = state?.analysis?.result;
-    if (typeof analysisResult === "string" && analysisResult.trim()) {
-        return analysisResult;
-    }
-
-    return "";
-});
-
-const activeReportStaticRawSourceText = computed(() => {
-    const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) return "";
-
-    const issues = collectIssuesForSource(report.state, ["static_analyzer"]);
-    try {
-        return JSON.stringify({ issues });
-    } catch (error) {
-        console.warn("[reports] Failed to stringify static issue payload", error);
-    }
-
-    return "";
-});
-
-const activeReportDifyRawSourceText = computed(() => {
-    const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) return "";
-
-    const issues = collectIssuesForSource(report.state, ["dml_prompt"]);
-    try {
-        return JSON.stringify({ issues });
-    } catch (error) {
-        console.warn("[reports] Failed to stringify AI review issue payload", error);
     }
 
     return record;
