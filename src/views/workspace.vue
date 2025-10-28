@@ -238,7 +238,12 @@ const activeReport = computed(() => {
     const key = toReportKey(target.projectId, target.path);
     if (!key) return null;
     const state = reportStates[key];
-    if (!state || (state.status !== "ready" && state.status !== "error")) return null;
+    if (
+        !state ||
+        (state.status !== "ready" && state.status !== "error" && state.status !== "processing")
+    ) {
+        return null;
+    }
     const projectList = Array.isArray(projects.value) ? projects.value : [];
     const project = projectList.find((item) => String(item.id) === target.projectId);
     if (!project) return null;
@@ -252,7 +257,11 @@ const activeReport = computed(() => {
 const viewerHasContent = computed(() => {
     const report = activeReport.value;
     if (!report) return false;
-    return report.state.status === "ready" || report.state.status === "error";
+    return (
+        report.state.status === "ready" ||
+        report.state.status === "error" ||
+        report.state.status === "processing"
+    );
 });
 
 const hasChunkDetails = computed(() => {
@@ -578,52 +587,194 @@ const activeReportDetails = computed(() => {
     const combinedSummaryDetails = buildSummaryDetailList(globalSummary, {
         omitKeys: ["sources", "by_rule", "byRule"]
     });
+
+    const normaliseKey = (value) => (typeof value === "string" ? value.toLowerCase() : "");
+    const pickString = (...candidates) => {
+        for (const candidate of candidates) {
+            if (typeof candidate === "string") {
+                const trimmed = candidate.trim();
+                if (trimmed) {
+                    return trimmed;
+                }
+            }
+        }
+        return "";
+    };
+    const pickFirstValue = (...candidates) => {
+        for (const candidate of candidates) {
+            if (candidate !== null && candidate !== undefined && candidate !== "") {
+                return candidate;
+            }
+        }
+        return null;
+    };
+    const buildSourceMetrics = (...sources) => {
+        const metrics = [];
+        const seen = new Set();
+        const pushMetric = (label, rawValue, transform = (value) => value) => {
+            if (!label || rawValue === undefined || rawValue === null) return;
+            const value = transform(rawValue);
+            if (value === null || value === undefined || value === "") return;
+            if (seen.has(label)) return;
+            seen.add(label);
+            metrics.push({ label, value });
+        };
+
+        for (const source of sources) {
+            if (!source || typeof source !== "object") continue;
+            pushMetric(
+                "問題數",
+                source.total_issues ?? source.totalIssues,
+                (candidate) => {
+                    const numeric = Number(candidate);
+                    return Number.isFinite(numeric) ? numeric : Number(candidate ?? 0) || 0;
+                }
+            );
+            if (source.by_rule || source.byRule) {
+                const byRuleEntries = Object.entries(source.by_rule || source.byRule || {});
+                pushMetric("規則數", byRuleEntries.length, (count) => Number(count) || 0);
+            }
+            pushMetric(
+                "拆分語句",
+                source.total_segments ?? source.totalSegments,
+                (candidate) => {
+                    const numeric = Number(candidate);
+                    return Number.isFinite(numeric) ? numeric : Number(candidate ?? 0) || 0;
+                }
+            );
+            pushMetric(
+                "已分析段數",
+                source.analyzed_segments ?? source.analyzedSegments,
+                (candidate) => {
+                    const numeric = Number(candidate);
+                    return Number.isFinite(numeric) ? numeric : Number(candidate ?? 0) || 0;
+                }
+            );
+        }
+
+        return metrics;
+    };
+    const mergeMetrics = (base, extra) => {
+        if (!Array.isArray(base) || !base.length) return Array.isArray(extra) ? [...extra] : [];
+        if (!Array.isArray(extra) || !extra.length) return [...base];
+        const merged = [...base];
+        const seen = new Set(base.map((item) => item.label));
+        extra.forEach((item) => {
+            if (!item || typeof item !== "object") return;
+            if (seen.has(item.label)) return;
+            seen.add(item.label);
+            merged.push(item);
+        });
+        return merged;
+    };
+
     const sourceSummaries = [];
     if (globalSummary?.sources && typeof globalSummary.sources === "object") {
         for (const [key, value] of Object.entries(globalSummary.sources)) {
             if (!value || typeof value !== "object") continue;
-            const keyLower = key.toLowerCase();
+            const keyLower = normaliseKey(key);
             let label = key;
             if (keyLower === "static_analyzer" || keyLower === "staticanalyzer") {
                 label = "靜態分析器";
             } else if (keyLower === "dml_prompt" || keyLower === "dmlprompt") {
-                label = "DML 提示詞分析";
+                label = "AI審查";
             } else if (keyLower === "dify_workflow" || keyLower === "difyworkflow") {
-                label = "Dify 工作流";
+                label = "聚合報告";
             }
-            const metrics = [];
-            if (value.total_issues !== undefined || value.totalIssues !== undefined) {
-                const totalValue = Number(value.total_issues ?? value.totalIssues ?? 0);
-                metrics.push({ label: "問題數", value: Number.isFinite(totalValue) ? totalValue : 0 });
-            }
-            if (value.by_rule || value.byRule) {
-                const byRuleEntries = Object.entries(value.by_rule || value.byRule || {});
-                metrics.push({ label: "規則數", value: byRuleEntries.length });
-            }
-            if (value.total_segments !== undefined || value.totalSegments !== undefined) {
-                const totalSegments = Number(value.total_segments ?? value.totalSegments ?? 0);
-                metrics.push({ label: "拆分語句", value: Number.isFinite(totalSegments) ? totalSegments : 0 });
-            }
-            if (value.analyzed_segments !== undefined || value.analyzedSegments !== undefined) {
-                const analysedSegments = Number(value.analyzed_segments ?? value.analyzedSegments ?? 0);
-                metrics.push({ label: "已分析段數", value: Number.isFinite(analysedSegments) ? analysedSegments : 0 });
-            }
-            const status = typeof value.status === "string" ? value.status : "";
-            const errorMessage =
-                typeof value.error_message === "string"
-                    ? value.error_message
-                    : typeof value.errorMessage === "string"
-                    ? value.errorMessage
-                    : "";
-            const generatedAt = value.generated_at || value.generatedAt || null;
-            sourceSummaries.push({ key, label, metrics, status, errorMessage, generatedAt });
+
+            const metrics = buildSourceMetrics(value);
+            const status = pickString(value.status);
+            const errorMessage = pickString(value.error_message, value.errorMessage);
+            const generatedAt = pickFirstValue(value.generated_at, value.generatedAt);
+
+            sourceSummaries.push({
+                key,
+                keyLower,
+                label,
+                metrics,
+                status,
+                errorMessage,
+                generatedAt
+            });
         }
     }
 
+    const enhanceSourceSummary = (keyLower, label, options = {}) => {
+        const entry = sourceSummaries.find((item) => item.keyLower === keyLower);
+        const metrics = buildSourceMetrics(...(options.metricsSources || []));
+        const status = pickString(...(options.statusCandidates || []));
+        const errorMessage = pickString(...(options.errorCandidates || []));
+        const generatedAt = pickFirstValue(...(options.generatedAtCandidates || []));
+
+        if (entry) {
+            entry.label = label;
+            if (metrics.length) {
+                entry.metrics = mergeMetrics(entry.metrics, metrics);
+            }
+            if (!entry.status) {
+                entry.status = status;
+            }
+            if (!entry.errorMessage) {
+                entry.errorMessage = errorMessage;
+            }
+            if (!entry.generatedAt) {
+                entry.generatedAt = generatedAt;
+            }
+        } else if (metrics.length || status || errorMessage || generatedAt) {
+            sourceSummaries.push({
+                key: options.key || keyLower,
+                keyLower,
+                label,
+                metrics,
+                status,
+                errorMessage,
+                generatedAt
+            });
+        }
+    };
+
+    const staticSourceValue =
+        globalSummary?.sources?.static_analyzer || globalSummary?.sources?.staticAnalyzer || null;
+    const staticAnalysis =
+        report.state?.analysis?.staticReport && typeof report.state.analysis.staticReport === "object"
+            ? report.state.analysis.staticReport
+            : null;
+    enhanceSourceSummary("static_analyzer", "靜態分析器", {
+        metricsSources: [staticSourceValue, staticSummaryObject],
+        statusCandidates: [
+            staticSourceValue?.status,
+            staticSummaryObject?.status,
+            staticSummaryObject?.status_label,
+            staticSummaryObject?.statusLabel,
+            staticAnalysis?.summary?.status,
+            staticAnalysis?.status
+        ],
+        errorCandidates: [
+            staticSourceValue?.error_message,
+            staticSourceValue?.errorMessage,
+            staticSummaryObject?.error_message,
+            staticSummaryObject?.errorMessage,
+            staticAnalysis?.summary?.error_message,
+            staticAnalysis?.summary?.errorMessage,
+            staticAnalysis?.error
+        ],
+        generatedAtCandidates: [
+            staticSourceValue?.generated_at,
+            staticSourceValue?.generatedAt,
+            staticSummaryObject?.generated_at,
+            staticSummaryObject?.generatedAt,
+            staticAnalysis?.generatedAt,
+            staticAnalysis?.summary?.generated_at,
+            staticAnalysis?.summary?.generatedAt
+        ]
+    });
+
+    const dmlSourceValue = globalSummary?.sources?.dml_prompt || globalSummary?.sources?.dmlPrompt || null;
+
     let dmlDetails = null;
+    let dmlSummary = null;
     if (dmlReport && typeof dmlReport === "object") {
-        const dmlSummary =
-            dmlReport.summary && typeof dmlReport.summary === "object" ? dmlReport.summary : null;
+        dmlSummary = dmlReport.summary && typeof dmlReport.summary === "object" ? dmlReport.summary : null;
         const dmlChunks = Array.isArray(dmlReport.chunks) ? dmlReport.chunks : [];
         const dmlSegments = Array.isArray(dmlReport.segments)
             ? dmlReport.segments.map((segment, index) => {
@@ -676,6 +827,57 @@ const activeReportDetails = computed(() => {
         };
     }
 
+    enhanceSourceSummary("dml_prompt", "AI審查", {
+        metricsSources: [dmlSourceValue, dmlDetails?.summary, dmlDetails?.aggregated],
+        statusCandidates: [
+            dmlSourceValue?.status,
+            dmlDetails?.status,
+            dmlSummary?.status
+        ],
+        errorCandidates: [
+            dmlSourceValue?.error_message,
+            dmlSourceValue?.errorMessage,
+            dmlDetails?.error,
+            dmlSummary?.error_message,
+            dmlSummary?.errorMessage
+        ],
+        generatedAtCandidates: [
+            dmlSourceValue?.generated_at,
+            dmlSourceValue?.generatedAt,
+            dmlDetails?.generatedAt,
+            dmlReport?.generatedAt,
+            dmlSummary?.generated_at,
+            dmlSummary?.generatedAt
+        ]
+    });
+
+    const combinedSourceValue =
+        globalSummary?.sources?.dify_workflow || globalSummary?.sources?.difyWorkflow || null;
+    enhanceSourceSummary("dify_workflow", "聚合報告", {
+        metricsSources: [combinedSourceValue, globalSummary],
+        statusCandidates: [
+            combinedSourceValue?.status,
+            globalSummary?.status,
+            report.state?.analysis?.dify?.status
+        ],
+        errorCandidates: [
+            combinedSourceValue?.error_message,
+            combinedSourceValue?.errorMessage,
+            globalSummary?.error_message,
+            globalSummary?.errorMessage,
+            report.state?.analysis?.difyErrorMessage,
+            report.state?.difyErrorMessage
+        ],
+        generatedAtCandidates: [
+            combinedSourceValue?.generated_at,
+            combinedSourceValue?.generatedAt,
+            globalSummary?.generated_at,
+            globalSummary?.generatedAt
+        ]
+    });
+
+    const finalSourceSummaries = sourceSummaries.map(({ keyLower, ...item }) => item);
+
     return {
         totalIssues: Number.isFinite(total) ? Number(total) : null,
         summary,
@@ -689,7 +891,7 @@ const activeReportDetails = computed(() => {
         severityBreakdown,
         ruleBreakdown,
         raw: parsed,
-        sourceSummaries,
+        sourceSummaries: finalSourceSummaries,
         combinedSummary: parsed.summary && typeof parsed.summary === "object" ? parsed.summary : null,
         combinedSummaryDetails,
         staticReport,
@@ -955,6 +1157,33 @@ const activeReportStaticRawSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
 
+    const enrichedStatic = report.state?.analysis?.staticReport?.enrichment;
+    if (typeof enrichedStatic === "string" && enrichedStatic.trim()) {
+        return enrichedStatic;
+    }
+    if (enrichedStatic && typeof enrichedStatic === "object") {
+        try {
+            return JSON.stringify(enrichedStatic);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify static enrichment", error);
+        }
+    }
+
+    const parsedEnrichment =
+        report.state?.parsedReport?.reports?.static_analyzer?.enrichment ||
+        report.state?.parsedReport?.reports?.staticAnalyzer?.enrichment ||
+        null;
+    if (typeof parsedEnrichment === "string" && parsedEnrichment.trim()) {
+        return parsedEnrichment;
+    }
+    if (parsedEnrichment && typeof parsedEnrichment === "object") {
+        try {
+            return JSON.stringify(parsedEnrichment);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify parsed static enrichment", error);
+        }
+    }
+
     const direct = report.state?.rawReport;
     if (typeof direct === "string" && direct.trim()) {
         return direct;
@@ -1027,6 +1256,29 @@ const activeReportDifyRawSourceText = computed(() => {
             return JSON.stringify(analysisDify);
         } catch (error) {
             console.warn("[reports] Failed to stringify analysis dify report", error);
+        }
+    }
+
+    const parsedDify =
+        report.state?.parsedReport?.reports?.dify_workflow ||
+        report.state?.parsedReport?.reports?.difyWorkflow ||
+        null;
+    if (parsedDify && typeof parsedDify === "object") {
+        const raw = parsedDify.raw;
+        if (typeof raw === "string" && raw.trim()) {
+            return raw;
+        }
+        if (raw && typeof raw === "object") {
+            try {
+                return JSON.stringify(raw);
+            } catch (error) {
+                console.warn("[reports] Failed to stringify parsed dify raw", error);
+            }
+        }
+        try {
+            return JSON.stringify(parsedDify);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify parsed dify workflow", error);
         }
     }
 
@@ -1118,9 +1370,9 @@ const reportDifyUnavailableNotice = computed(() => {
     if (!shouldShowDifyUnavailableNotice.value) return "";
     const detail = activeReportDifyErrorMessage.value;
     if (detail) {
-        return `無法連接 Dify 分析：${detail}。目前僅顯示靜態分析器報告。`;
+        return `無法取得 AI審查報告（Dify）：${detail}。目前僅顯示靜態分析器報告。`;
     }
-    return "無法連接 Dify 分析，僅顯示靜態分析器報告。";
+    return "無法取得 AI審查報告（Dify），僅顯示靜態分析器報告。";
 });
 
 const shouldShowReportIssuesSection = computed(
@@ -1273,7 +1525,7 @@ function getReportJsonLabel(mode) {
         return "聚合報告 JSON";
     }
     if (mode === "dify") {
-        return "Dify JSON";
+        return "AI審查 JSON";
     }
     return "靜態分析器 JSON";
 }
@@ -2805,6 +3057,8 @@ function normaliseReportAnalysisState(state) {
         state.analysis && typeof state.analysis === "object" && !Array.isArray(state.analysis)
             ? { ...state.analysis }
             : {};
+    let difyTarget =
+        state.dify && typeof state.dify === "object" && !Array.isArray(state.dify) ? { ...state.dify } : null;
 
     if (rawReport) {
         if (typeof baseAnalysis.rawReport !== "string") {
@@ -2828,6 +3082,26 @@ function normaliseReportAnalysisState(state) {
                 if (!baseAnalysis.staticReport) {
                     baseAnalysis.staticReport = staticReport;
                 }
+                const enrichment = staticReport.enrichment;
+                if (enrichment !== undefined && enrichment !== null) {
+                    if (!difyTarget) {
+                        difyTarget = {};
+                    }
+                    if (typeof enrichment === "string" && enrichment.trim()) {
+                        if (!difyTarget.report || !difyTarget.report.trim()) {
+                            difyTarget.report = enrichment.trim();
+                        }
+                    } else if (enrichment && typeof enrichment === "object") {
+                        difyTarget.raw = enrichment;
+                        if (!difyTarget.report || !difyTarget.report.trim()) {
+                            try {
+                                difyTarget.report = JSON.stringify(enrichment);
+                            } catch (error) {
+                                console.warn("[Report] Failed to stringify static enrichment", error);
+                            }
+                        }
+                    }
+                }
             }
 
             const dmlReport = reports.dml_prompt || reports.dmlPrompt;
@@ -2845,7 +3119,91 @@ function normaliseReportAnalysisState(state) {
                     state.dmlErrorMessage = dmlError || "";
                 }
             }
+
+            const difyReport = reports.dify_workflow || reports.difyWorkflow;
+            if (difyReport && typeof difyReport === "object") {
+                if (!difyTarget) {
+                    difyTarget = {};
+                }
+                const difyRaw = difyReport.raw;
+                if (typeof difyRaw === "string" && difyRaw.trim()) {
+                    if (!difyTarget.report || !difyTarget.report.trim()) {
+                        difyTarget.report = difyRaw.trim();
+                    }
+                } else if (difyRaw && typeof difyRaw === "object") {
+                    difyTarget.raw = difyRaw;
+                    if (!difyTarget.report || !difyTarget.report.trim()) {
+                        try {
+                            difyTarget.report = JSON.stringify(difyRaw);
+                        } catch (error) {
+                            console.warn("[Report] Failed to stringify dify raw payload", error);
+                        }
+                    }
+                } else if (!difyTarget.report || !difyTarget.report.trim()) {
+                    try {
+                        const fallback = { ...difyReport };
+                        delete fallback.raw;
+                        difyTarget.report = JSON.stringify(fallback);
+                    } catch (error) {
+                        console.warn("[Report] Failed to stringify dify workflow report", error);
+                    }
+                }
+                if (!difyTarget.summary && difyReport.summary && typeof difyReport.summary === "object") {
+                    difyTarget.summary = difyReport.summary;
+                }
+                if (!difyTarget.issues && Array.isArray(difyReport.issues)) {
+                    difyTarget.issues = difyReport.issues;
+                }
+                if (!difyTarget.metadata && difyReport.metadata && typeof difyReport.metadata === "object") {
+                    difyTarget.metadata = difyReport.metadata;
+                }
+            }
         }
+
+        const parsedSummary =
+            parsedReport.summary && typeof parsedReport.summary === "object" ? parsedReport.summary : null;
+        if (!state.difyErrorMessage && parsedSummary) {
+            const sources =
+                parsedSummary.sources && typeof parsedSummary.sources === "object" ? parsedSummary.sources : null;
+            if (sources) {
+                const difySource = sources.dify_workflow || sources.difyWorkflow;
+                const difyError =
+                    typeof difySource?.error_message === "string"
+                        ? difySource.error_message
+                        : typeof difySource?.errorMessage === "string"
+                        ? difySource.errorMessage
+                        : "";
+                if (difyError && difyError.trim()) {
+                    state.difyErrorMessage = difyError.trim();
+                }
+            }
+        }
+    }
+
+    if (difyTarget) {
+        const hasReport = typeof difyTarget.report === "string" && difyTarget.report.trim().length > 0;
+        if (!hasReport && difyTarget.raw && typeof difyTarget.raw === "object") {
+            try {
+                difyTarget.report = JSON.stringify(difyTarget.raw);
+            } catch (error) {
+                console.warn("[Report] Failed to stringify dify raw object for state", error);
+            }
+        }
+        const filteredKeys = Object.keys(difyTarget).filter((key) => {
+            const value = difyTarget[key];
+            if (value === null || value === undefined) return false;
+            if (typeof value === "string") return value.trim().length > 0;
+            if (Array.isArray(value)) return value.length > 0;
+            if (typeof value === "object") return Object.keys(value).length > 0;
+            return true;
+        });
+        if (filteredKeys.length > 0) {
+            state.dify = difyTarget;
+        } else {
+            state.dify = null;
+        }
+    } else if (!state.dify) {
+        state.dify = null;
     }
 
     state.analysis = Object.keys(baseAnalysis).length ? baseAnalysis : null;
@@ -3006,6 +3364,46 @@ function parseHydratedTimestamp(value) {
     return null;
 }
 
+function normaliseHydratedReportText(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+    if (value === null || value === undefined) {
+        return "";
+    }
+    if (typeof value === "object") {
+        try {
+            return JSON.stringify(value);
+        } catch (error) {
+            console.warn("[Report] Failed to stringify hydrated report payload", error, value);
+            return "";
+        }
+    }
+    return String(value);
+}
+
+function normaliseHydratedReportObject(value) {
+    if (!value) return null;
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        try {
+            return JSON.parse(trimmed);
+        } catch (error) {
+            console.warn("[Report] Failed to parse hydrated report object", error, value);
+            return { report: trimmed };
+        }
+    }
+    if (typeof value === "object") {
+        return value;
+    }
+    return null;
+}
+
+function normaliseHydratedString(value) {
+    return typeof value === "string" ? value : "";
+}
+
 async function hydrateReportsForProject(projectId) {
     const entry = ensureReportTreeEntry(projectId);
     if (!entry) return;
@@ -3018,18 +3416,31 @@ async function hydrateReportsForProject(projectId) {
             if (!record || !record.path) continue;
             const state = ensureFileReportState(projectId, record.path);
             if (!state) continue;
-            state.status = record.report ? "ready" : "idle";
-            state.report = record.report || "";
-            state.error = "";
+            const hydratedStatus = normaliseHydratedString(record.status).trim();
+            state.status = hydratedStatus || (record.report ? "ready" : "idle");
+            state.report = normaliseHydratedReportText(record.report);
+            state.error = normaliseHydratedString(record.error);
             state.chunks = Array.isArray(record.chunks) ? record.chunks : [];
             state.segments = Array.isArray(record.segments) ? record.segments : [];
-            state.conversationId = record.conversationId || "";
-            state.analysis = record.analysis || null;
-            state.rawReport = typeof record.analysis?.result === "string" ? record.analysis.result : "";
-            state.dify = null;
-            state.dml = null;
-            state.difyErrorMessage = "";
-            state.dmlErrorMessage = "";
+            state.conversationId = normaliseHydratedString(record.conversationId);
+            state.analysis =
+                record.analysis && typeof record.analysis === "object" && !Array.isArray(record.analysis)
+                    ? record.analysis
+                    : null;
+            const hydratedRawReport = normaliseHydratedString(record.rawReport);
+            const analysisResult = normaliseHydratedString(record.analysis?.result);
+            const analysisOriginal = normaliseHydratedString(record.analysis?.originalResult);
+            state.rawReport = hydratedRawReport || analysisResult || analysisOriginal || "";
+            state.dify = normaliseHydratedReportObject(record.dify);
+            state.dml = normaliseHydratedReportObject(record.dml);
+            state.difyErrorMessage = normaliseHydratedString(record.difyErrorMessage);
+            state.dmlErrorMessage = normaliseHydratedString(record.dmlErrorMessage);
+            if (!state.difyErrorMessage) {
+                state.difyErrorMessage = normaliseHydratedString(record.analysis?.difyErrorMessage);
+            }
+            if (!state.dmlErrorMessage) {
+                state.dmlErrorMessage = normaliseHydratedString(record.analysis?.dmlErrorMessage);
+            }
             state.parsedReport = parseReportJson(state.report);
             state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
             normaliseReportAnalysisState(state);
@@ -3829,7 +4240,11 @@ onBeforeUnmount(() => {
                                     <h3 class="reportTitle">{{ activeReport.project.name }} / {{ activeReport.path }}</h3>
                                     <p class="reportViewerTimestamp">更新於 {{ activeReport.state.updatedAtDisplay || '-' }}</p>
                                 </div>
-                                <div v-if="activeReport.state.status === 'error'" class="reportErrorPanel">
+                                <div v-if="activeReport.state.status === 'processing'" class="reportViewerLoading">
+                                    <span class="reportViewerSpinner" aria-hidden="true"></span>
+                                    <p class="reportViewerLoadingText">正在透過 Dify 執行 AI審查，請稍候…</p>
+                                </div>
+                                <div v-else-if="activeReport.state.status === 'error'" class="reportErrorPanel">
                                     <p class="reportErrorText">生成失敗：{{ activeReport.state.error || '未知原因' }}</p>
                                     <p class="reportErrorHint">請檢查檔案權限、Dify 設定或稍後再試。</p>
                                 </div>
@@ -3866,7 +4281,7 @@ onBeforeUnmount(() => {
                                                 :disabled="!canShowStructuredDml"
                                                 @click="setStructuredReportViewMode('dml')"
                                             >
-                                                DML 語句分析
+                                                AI審查
                                             </button>
                                         </div>
                                         <section
@@ -3893,6 +4308,12 @@ onBeforeUnmount(() => {
                                                                 {{ item.status }}
                                                             </span>
                                                         </div>
+                                                        <p
+                                                            v-if="item.generatedAt"
+                                                            class="reportSummarySourceTimestamp"
+                                                        >
+                                                            產生於 {{ item.generatedAt }}
+                                                        </p>
                                                         <ul
                                                             v-if="item.metrics?.length"
                                                             class="reportSummarySourceMetrics"
@@ -4029,7 +4450,7 @@ onBeforeUnmount(() => {
                                             class="reportDmlSection"
                                         >
                                             <div class="reportDmlHeader">
-                                                <h4>DML 提示詞分析</h4>
+                                                <h4>AI審查</h4>
                                                 <span v-if="dmlReportDetails.status" class="reportDmlStatus">
                                                     {{ dmlReportDetails.status }}
                                                 </span>
@@ -4065,7 +4486,7 @@ onBeforeUnmount(() => {
                                                     </pre>
                                                 </details>
                                             </div>
-                                            <p v-else class="reportDmlEmpty">尚未取得 DML 拆分結果。</p>
+                                            <p v-else class="reportDmlEmpty">尚未取得 AI審查拆分結果。</p>
                                             <pre
                                                 v-if="dmlReportDetails.reportText"
                                                 class="reportDmlSummary codeScroll themed-scrollbar"
@@ -4122,7 +4543,7 @@ onBeforeUnmount(() => {
                                                             :disabled="!canShowDifyReportJson"
                                                             @click="setReportIssuesViewMode('dify')"
                                                         >
-                                                            Dify JSON
+                                                            AI審查 JSON
                                                         </button>
                                                     </div>
                                                 </div>
@@ -4279,10 +4700,10 @@ onBeforeUnmount(() => {
                                                                 {{ activeReportDifyRawText }}
                                                             </pre>
                                                             <p v-if="!canExportActiveReportDifyRaw" class="reportRowNotice">
-                                                                Dify JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
+                                                                AI審查 JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
                                                             </p>
                                                         </div>
-                                                        <p v-else class="reportIssuesEmpty">尚未取得 Dify 報告內容。</p>
+                                                        <p v-else class="reportIssuesEmpty">尚未取得 AI審查報告內容。</p>
                                                     </template>
                                                     <p v-else class="reportIssuesEmpty">此報告不支援結構化檢視。</p>
                                                 </div>
@@ -4687,6 +5108,42 @@ body,
     min-width: 0;
 }
 
+.reportViewerLoading {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 40px 16px;
+    text-align: center;
+    color: #e2e8f0;
+}
+
+.reportViewerSpinner {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 3px solid rgba(148, 163, 184, 0.35);
+    border-top-color: #60a5fa;
+    animation: reportViewerSpin 1s linear infinite;
+}
+
+.reportViewerLoadingText {
+    margin: 0;
+    font-size: 14px;
+    color: #cbd5f5;
+}
+
+@keyframes reportViewerSpin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
 .reportViewerHeader {
     display: flex;
     flex-direction: column;
@@ -5019,6 +5476,12 @@ body,
     font-weight: 600;
     color: #38bdf8;
     text-transform: uppercase;
+}
+
+.reportSummarySourceTimestamp {
+    margin: 0;
+    font-size: 12px;
+    color: #94a3b8;
 }
 
 .reportSummarySourceMetrics {
