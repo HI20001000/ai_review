@@ -1165,7 +1165,7 @@ function findEntryBySourceKey(container, sourceKey) {
     return null;
 }
 
-function cloneIssueWithSource(issue, sourceKey) {
+function cloneIssueWithSource(issue, sourceKey, options = {}) {
     if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
         return issue;
     }
@@ -1173,6 +1173,45 @@ function cloneIssueWithSource(issue, sourceKey) {
         return issue;
     }
     return { ...issue, source: sourceKey };
+}
+
+    const target = normaliseReportSourceKey(sourceKey);
+    if (!target) {
+        return issue;
+    }
+
+    const existingKeys = [
+        normaliseReportSourceKey(issue.source),
+        normaliseReportSourceKey(issue.analysis_source),
+        normaliseReportSourceKey(issue.analysisSource)
+    ].filter(Boolean);
+
+    if (!options.force) {
+        if (existingKeys.includes(target)) {
+            if (issue.source === sourceKey) {
+                return issue;
+            }
+            return { ...issue, source: sourceKey };
+        }
+        if (existingKeys.length > 0) {
+            return issue;
+        }
+    }
+    return result;
+}
+
+function collectIssuesForSource(state, sourceKeys) {
+    if (!state) return [];
+    const sources = Array.isArray(sourceKeys) ? sourceKeys : [sourceKeys];
+    const sourceSet = new Set(sources.map((key) => normaliseReportSourceKey(key)));
+    const results = [];
+
+    const cloned = { ...issue, source: sourceKey };
+    if (options.force) {
+        delete cloned.analysis_source;
+        delete cloned.analysisSource;
+    }
+    return cloned;
 }
 
 function sortObjectKeys(value) {
@@ -1198,6 +1237,21 @@ function createIssueKey(issue) {
         } catch (_error) {
             return String(issue);
         }
+    });
+
+    return dedupeIssues(results);
+}
+
+function collectAggregatedIssues(state) {
+    if (!state) return [];
+    const issues = [
+        ...collectIssuesForSource(state, ["static_analyzer"]),
+        ...collectIssuesForSource(state, ["dml_prompt"]),
+        ...collectIssuesForSource(state, ["dify_workflow"])
+    ];
+    const combined = dedupeIssues(issues);
+    if (combined.length > 0) {
+        return combined;
     }
     if (typeof issue === "string") {
         return issue;
@@ -1223,13 +1277,13 @@ function collectIssuesForSource(state, sourceKeys) {
     const sourceSet = new Set(sources.map((key) => normaliseReportSourceKey(key)));
     const results = [];
 
-    const pushIssue = (issue, fallbackSourceKey = null) => {
+    const pushIssue = (issue, fallbackSourceKey = null, forceSource = false) => {
         if (issue === null || issue === undefined) {
             return;
         }
         let candidate = issue;
         if (fallbackSourceKey) {
-            candidate = cloneIssueWithSource(candidate, fallbackSourceKey);
+            candidate = cloneIssueWithSource(candidate, fallbackSourceKey, { force: forceSource });
         }
         results.push(candidate);
     };
@@ -1250,12 +1304,54 @@ function collectIssuesForSource(state, sourceKeys) {
     if (reports && typeof reports === "object") {
         sources.forEach((sourceKey) => {
             const reportEntry = findEntryBySourceKey(reports, sourceKey);
-            if (reportEntry && Array.isArray(reportEntry.issues)) {
-                reportEntry.issues.forEach((issue) => pushIssue(issue, sourceKey));
-            }
-            const aggregated = reportEntry?.aggregated;
-            if (aggregated && typeof aggregated === "object" && Array.isArray(aggregated.issues)) {
-                aggregated.issues.forEach((issue) => pushIssue(issue, sourceKey));
+            const normalisedKey = normaliseReportSourceKey(sourceKey);
+
+            if (normalisedKey === normaliseReportSourceKey("static_analyzer")) {
+                let enrichedCount = 0;
+
+                const difyEntry = findEntryBySourceKey(reports, "dify_workflow");
+                const difyAggregated =
+                    difyEntry?.aggregated && typeof difyEntry.aggregated === "object"
+                        ? difyEntry.aggregated
+                        : null;
+                if (difyAggregated && Array.isArray(difyAggregated.issues) && difyAggregated.issues.length) {
+                    difyAggregated.issues.forEach((issue) => pushIssue(issue, sourceKey, true));
+                    enrichedCount += difyAggregated.issues.length;
+                }
+
+                if (!enrichedCount && Array.isArray(difyEntry?.issues) && difyEntry.issues.length) {
+                    difyEntry.issues.forEach((issue) => pushIssue(issue, sourceKey, true));
+                    enrichedCount += difyEntry.issues.length;
+                }
+
+                const aggregated =
+                    reportEntry?.aggregated && typeof reportEntry.aggregated === "object"
+                        ? reportEntry.aggregated
+                        : null;
+                if (!enrichedCount && aggregated && Array.isArray(aggregated.issues) && aggregated.issues.length) {
+                    aggregated.issues.forEach((issue) => pushIssue(issue, sourceKey));
+                    enrichedCount += aggregated.issues.length;
+                }
+
+                if (!enrichedCount && Array.isArray(state.dify?.issues) && state.dify.issues.length) {
+                    state.dify.issues.forEach((issue) => pushIssue(issue, sourceKey, true));
+                    enrichedCount += state.dify.issues.length;
+                }
+
+                if (!enrichedCount && reportEntry && Array.isArray(reportEntry.issues)) {
+                    reportEntry.issues.forEach((issue) => pushIssue(issue, sourceKey));
+                }
+            } else {
+                if (reportEntry && Array.isArray(reportEntry.issues)) {
+                    reportEntry.issues.forEach((issue) => pushIssue(issue, sourceKey));
+                }
+                const aggregated =
+                    reportEntry?.aggregated && typeof reportEntry.aggregated === "object"
+                        ? reportEntry.aggregated
+                        : null;
+                if (aggregated && Array.isArray(aggregated.issues)) {
+                    aggregated.issues.forEach((issue) => pushIssue(issue, sourceKey));
+                }
             }
         });
     }
@@ -1275,10 +1371,33 @@ function collectIssuesForSource(state, sourceKeys) {
                 aggregatedIssues.forEach((issue) => pushIssue(issue, sourceKey));
             }
         } else if (normalisedKey === normaliseReportSourceKey("static_analyzer")) {
+            const staticKey = normaliseReportSourceKey("static_analyzer");
+            const hasStaticIssues = results.some((existing) => {
+                if (!existing || typeof existing !== "object") {
+                    return false;
+                }
+                const existingKey =
+                    normaliseReportSourceKey(existing.source) ||
+                    normaliseReportSourceKey(existing.analysis_source) ||
+                    normaliseReportSourceKey(existing.analysisSource);
+                return existingKey === staticKey;
+            });
+            if (hasStaticIssues) {
+                return;
+            }
             const staticReport =
                 state.analysis && typeof state.analysis.staticReport === "object"
                     ? state.analysis.staticReport
                     : null;
+            const aggregatedIssues =
+                staticReport?.aggregated && typeof staticReport.aggregated === "object"
+                    ? staticReport.aggregated.issues
+                    : null;
+            if (Array.isArray(aggregatedIssues) && aggregatedIssues.length) {
+                aggregatedIssues.forEach((issue) => pushIssue(issue, sourceKey));
+                return;
+            }
+
             if (Array.isArray(staticReport?.issues)) {
                 staticReport.issues.forEach((issue) => pushIssue(issue, sourceKey));
             }
@@ -1290,33 +1409,39 @@ function collectIssuesForSource(state, sourceKeys) {
 
 function collectAggregatedIssues(state) {
     if (!state) return [];
-    const issues = [
-        ...collectIssuesForSource(state, ["static_analyzer"]),
-        ...collectIssuesForSource(state, ["dml_prompt"]),
-        ...collectIssuesForSource(state, ["dify_workflow"])
-    ];
-    const combined = dedupeIssues(issues);
+    const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
+    const aiIssues = collectIssuesForSource(state, ["dml_prompt"]);
+    const combined = dedupeIssues([...staticIssues, ...aiIssues]);
     if (combined.length > 0) {
         return combined;
     }
+
+    const difyIssues = collectIssuesForSource(state, ["dify_workflow"]);
+    if (difyIssues.length > 0) {
+        return dedupeIssues(difyIssues);
+    }
+
     const parsedIssues = Array.isArray(state.parsedReport?.issues)
         ? dedupeIssues(state.parsedReport.issues)
         : [];
     if (parsedIssues.length > 0) {
         return parsedIssues;
     }
-    const staticIssues = Array.isArray(state.analysis?.staticReport?.issues)
+
+    const staticFallback = Array.isArray(state.analysis?.staticReport?.issues)
         ? dedupeIssues(state.analysis.staticReport.issues)
         : [];
-    if (staticIssues.length > 0) {
-        return staticIssues;
+    if (staticFallback.length > 0) {
+        return staticFallback;
     }
+
     const dmlIssues = Array.isArray(state.dml?.issues)
         ? dedupeIssues(state.dml.issues)
         : [];
     if (dmlIssues.length > 0) {
         return dmlIssues;
     }
+
     return combined;
 }
 
