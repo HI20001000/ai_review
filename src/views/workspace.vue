@@ -3006,6 +3006,46 @@ function parseHydratedTimestamp(value) {
     return null;
 }
 
+function normaliseHydratedReportText(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+    if (value === null || value === undefined) {
+        return "";
+    }
+    if (typeof value === "object") {
+        try {
+            return JSON.stringify(value);
+        } catch (error) {
+            console.warn("[Report] Failed to stringify hydrated report payload", error, value);
+            return "";
+        }
+    }
+    return String(value);
+}
+
+function normaliseHydratedReportObject(value) {
+    if (!value) return null;
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        try {
+            return JSON.parse(trimmed);
+        } catch (error) {
+            console.warn("[Report] Failed to parse hydrated report object", error, value);
+            return { report: trimmed };
+        }
+    }
+    if (typeof value === "object") {
+        return value;
+    }
+    return null;
+}
+
+function normaliseHydratedString(value) {
+    return typeof value === "string" ? value : "";
+}
+
 async function hydrateReportsForProject(projectId) {
     const entry = ensureReportTreeEntry(projectId);
     if (!entry) return;
@@ -3018,18 +3058,31 @@ async function hydrateReportsForProject(projectId) {
             if (!record || !record.path) continue;
             const state = ensureFileReportState(projectId, record.path);
             if (!state) continue;
-            state.status = record.report ? "ready" : "idle";
-            state.report = record.report || "";
-            state.error = "";
+            const hydratedStatus = normaliseHydratedString(record.status).trim();
+            state.status = hydratedStatus || (record.report ? "ready" : "idle");
+            state.report = normaliseHydratedReportText(record.report);
+            state.error = normaliseHydratedString(record.error);
             state.chunks = Array.isArray(record.chunks) ? record.chunks : [];
             state.segments = Array.isArray(record.segments) ? record.segments : [];
-            state.conversationId = record.conversationId || "";
-            state.analysis = record.analysis || null;
-            state.rawReport = typeof record.analysis?.result === "string" ? record.analysis.result : "";
-            state.dify = null;
-            state.dml = null;
-            state.difyErrorMessage = "";
-            state.dmlErrorMessage = "";
+            state.conversationId = normaliseHydratedString(record.conversationId);
+            state.analysis =
+                record.analysis && typeof record.analysis === "object" && !Array.isArray(record.analysis)
+                    ? record.analysis
+                    : null;
+            const hydratedRawReport = normaliseHydratedString(record.rawReport);
+            const analysisResult = normaliseHydratedString(record.analysis?.result);
+            const analysisOriginal = normaliseHydratedString(record.analysis?.originalResult);
+            state.rawReport = hydratedRawReport || analysisResult || analysisOriginal || "";
+            state.dify = normaliseHydratedReportObject(record.dify);
+            state.dml = normaliseHydratedReportObject(record.dml);
+            state.difyErrorMessage = normaliseHydratedString(record.difyErrorMessage);
+            state.dmlErrorMessage = normaliseHydratedString(record.dmlErrorMessage);
+            if (!state.difyErrorMessage) {
+                state.difyErrorMessage = normaliseHydratedString(record.analysis?.difyErrorMessage);
+            }
+            if (!state.dmlErrorMessage) {
+                state.dmlErrorMessage = normaliseHydratedString(record.analysis?.dmlErrorMessage);
+            }
             state.parsedReport = parseReportJson(state.report);
             state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
             normaliseReportAnalysisState(state);
