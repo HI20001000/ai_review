@@ -206,6 +206,8 @@ export function buildStaticRawSourceText(state) {
 }
 
 export default {
+    buildStaticRawSourceText,
+    buildStaticReportDetails,
     collectStaticReportIssues,
     extractStaticReport,
     mergeStaticReportIntoAnalysis,
