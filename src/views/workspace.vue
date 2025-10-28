@@ -1169,9 +1169,6 @@ function cloneIssueWithSource(issue, sourceKey, options = {}) {
     if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
         return issue;
     }
-    if (issue.source || issue.analysis_source || issue.analysisSource) {
-        return issue;
-    }
     return { ...issue, source: sourceKey };
 }
 
@@ -1214,6 +1211,13 @@ function collectIssuesForSource(state, sourceKeys) {
     return cloned;
 }
 
+function remapIssuesToSource(issues, sourceKey, options = {}) {
+    if (!Array.isArray(issues)) {
+        return [];
+    }
+    return issues.map((issue) => cloneIssueWithSource(issue, sourceKey, options));
+}
+
 function sortObjectKeys(value) {
     if (!value || typeof value !== "object") {
         return value;
@@ -1237,21 +1241,19 @@ function createIssueKey(issue) {
         } catch (_error) {
             return String(issue);
         }
-    });
+        results.push(candidate);
+    };
 
-    return dedupeIssues(results);
-}
-
-function collectAggregatedIssues(state) {
-    if (!state) return [];
-    const issues = [
-        ...collectIssuesForSource(state, ["static_analyzer"]),
-        ...collectIssuesForSource(state, ["dml_prompt"]),
-        ...collectIssuesForSource(state, ["dify_workflow"])
-    ];
-    const combined = dedupeIssues(issues);
-    if (combined.length > 0) {
-        return combined;
+    const parsedIssues = state.parsedReport?.issues;
+    if (Array.isArray(parsedIssues)) {
+        parsedIssues.forEach((issue) => {
+            const sourceValue =
+                issue?.source || issue?.analysis_source || issue?.analysisSource || issue?.from;
+            const normalised = normaliseReportSourceKey(sourceValue);
+            if (normalised && sourceSet.has(normalised)) {
+                pushIssue(issue);
+            }
+        });
     }
     if (typeof issue === "string") {
         return issue;
@@ -1418,21 +1420,24 @@ function collectAggregatedIssues(state) {
 
     const difyIssues = collectIssuesForSource(state, ["dify_workflow"]);
     if (difyIssues.length > 0) {
-        return dedupeIssues(difyIssues);
+        return dedupeIssues([
+            ...remapIssuesToSource(difyIssues, "static_analyzer", { force: true }),
+            ...aiIssues
+        ]);
     }
 
     const parsedIssues = Array.isArray(state.parsedReport?.issues)
-        ? dedupeIssues(state.parsedReport.issues)
+        ? remapIssuesToSource(state.parsedReport.issues, "static_analyzer")
         : [];
     if (parsedIssues.length > 0) {
-        return parsedIssues;
+        return dedupeIssues([...parsedIssues, ...aiIssues]);
     }
 
     const staticFallback = Array.isArray(state.analysis?.staticReport?.issues)
-        ? dedupeIssues(state.analysis.staticReport.issues)
+        ? remapIssuesToSource(state.analysis.staticReport.issues, "static_analyzer")
         : [];
     if (staticFallback.length > 0) {
-        return staticFallback;
+        return dedupeIssues([...staticFallback, ...aiIssues]);
     }
 
     const dmlIssues = Array.isArray(state.dml?.issues)
@@ -1441,8 +1446,14 @@ function collectAggregatedIssues(state) {
     if (dmlIssues.length > 0) {
         return dmlIssues;
     }
+    if (!state.issueSummary || typeof state.issueSummary !== "object") {
+        state.issueSummary = { totalIssues: total };
+        return;
+    }
+    state.issueSummary.totalIssues = total;
+}
 
-    return combined;
+    return [];
 }
 
 function updateIssueSummaryTotals(state) {
@@ -3476,16 +3487,14 @@ function normaliseReportAnalysisState(state) {
                     baseAnalysis.staticReport && typeof baseAnalysis.staticReport === "object"
                         ? baseAnalysis.staticReport
                         : null;
-                const mergedStatic = { ...staticReport };
-                if (existingStatic) {
-                    Object.assign(mergedStatic, existingStatic);
-                }
+                const mergedStatic = existingStatic ? { ...existingStatic } : {};
+                Object.assign(mergedStatic, staticReport);
                 if (staticReport.summary && typeof staticReport.summary === "object") {
                     mergedStatic.summary = {
-                        ...staticReport.summary,
                         ...(existingStatic?.summary && typeof existingStatic.summary === "object"
                             ? existingStatic.summary
-                            : {})
+                            : {}),
+                        ...staticReport.summary
                     };
                 } else if (existingStatic?.summary && typeof existingStatic.summary === "object") {
                     mergedStatic.summary = { ...existingStatic.summary };
