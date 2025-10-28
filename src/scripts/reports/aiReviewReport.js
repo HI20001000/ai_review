@@ -1,4 +1,5 @@
 import { collectIssuesForSource } from "./combinedReport.js";
+import { isPlainObject, normaliseReportObject } from "./shared.js";
 
 /**
  * Collect AI review issues from the workspace state.
@@ -87,6 +88,235 @@ function normaliseSqlText(value) {
 function normaliseNumber(value) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
+}
+
+function clonePlain(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => clonePlain(item));
+    }
+    if (isPlainObject(value)) {
+        const result = {};
+        for (const [key, entry] of Object.entries(value)) {
+            result[key] = clonePlain(entry);
+        }
+        return result;
+    }
+    return value;
+}
+
+function pickFirstString(candidates, options = {}) {
+    const list = Array.isArray(candidates) ? candidates : [candidates];
+    const allowEmpty = Boolean(options.allowEmpty);
+
+    for (const candidate of list) {
+        if (typeof candidate === "string") {
+            const trimmed = candidate.trim();
+            if (trimmed || (allowEmpty && candidate !== undefined && candidate !== null)) {
+                return allowEmpty ? candidate : trimmed;
+            }
+        } else if (candidate && typeof candidate === "object") {
+            const message = typeof candidate.message === "string" ? candidate.message.trim() : "";
+            if (message) {
+                return message;
+            }
+        }
+    }
+
+    return "";
+}
+
+function pickErrorMessage(candidates) {
+    const list = Array.isArray(candidates) ? candidates : [candidates];
+    for (const candidate of list) {
+        if (!candidate) continue;
+        if (typeof candidate === "string") {
+            const trimmed = candidate.trim();
+            if (trimmed) {
+                return trimmed;
+            }
+        } else if (candidate && typeof candidate === "object") {
+            const errorValue =
+                typeof candidate.error === "string"
+                    ? candidate.error
+                    : typeof candidate.message === "string"
+                    ? candidate.message
+                    : null;
+            if (typeof errorValue === "string" && errorValue.trim()) {
+                return errorValue.trim();
+            }
+        }
+    }
+    return "";
+}
+
+function normaliseTimestamp(value) {
+    if (!value) {
+        return null;
+    }
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : value.toISOString();
+    }
+    if (typeof value === "number") {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date.toISOString();
+    }
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return null;
+        }
+        const parsed = new Date(trimmed);
+        if (!Number.isNaN(parsed.getTime())) {
+            return parsed.toISOString();
+        }
+        return trimmed;
+    }
+    return null;
+}
+
+function normaliseIssues(issues) {
+    if (!Array.isArray(issues)) {
+        return [];
+    }
+
+    const results = [];
+    for (const issue of issues) {
+        if (!issue) continue;
+        if (isPlainObject(issue)) {
+            const clone = { ...issue };
+            const lineCandidate =
+                clone.line ?? clone.line_number ?? clone.lineNumber ?? clone.startLine ?? null;
+            const columnCandidate =
+                clone.column ?? clone.column_number ?? clone.columnNumber ?? clone.startColumn ?? null;
+            const severityCandidate = clone.severity ?? clone.level ?? null;
+
+            const lineNumber = normaliseNumber(lineCandidate);
+            if (lineNumber !== null) {
+                clone.line = lineNumber;
+            }
+            const columnNumber = normaliseNumber(columnCandidate);
+            if (columnNumber !== null) {
+                clone.column = columnNumber;
+            }
+            if (severityCandidate && typeof severityCandidate === "string") {
+                clone.severity = severityCandidate.trim();
+            }
+
+            const statement = pickFirstString(
+                [clone.statement, clone.sql, clone.segment, clone.text, clone.raw],
+                { allowEmpty: true }
+            );
+            if (statement) {
+                clone.statement = normaliseSqlText(statement);
+            }
+
+            if (typeof clone.source !== "string" && typeof clone.analysis_source === "string") {
+                clone.source = clone.analysis_source;
+            }
+
+            results.push(clone);
+        } else if (typeof issue === "string") {
+            const trimmed = issue.trim();
+            if (trimmed) {
+                results.push({ message: trimmed });
+            }
+        }
+    }
+    return results;
+}
+
+function normaliseSegments(segments, chunks) {
+    const segmentList = Array.isArray(segments) ? segments : [];
+    const chunkList = Array.isArray(chunks) ? chunks : [];
+
+    const results = [];
+    const appendSegment = (segment, index) => {
+        if (!segment && segment !== 0) return;
+
+        if (isPlainObject(segment)) {
+            const clone = { ...segment };
+            const text = pickFirstString(
+                [clone.text, clone.segment, clone.sql, clone.answer, clone.raw, clone.statement],
+                { allowEmpty: true }
+            );
+            if (text) {
+                clone.text = normaliseSqlText(text);
+            }
+            const indexValue = normaliseNumber(clone.index);
+            clone.index = indexValue !== null ? indexValue : index + 1;
+            if (typeof clone.id !== "string" || !clone.id.trim()) {
+                clone.id = String(clone.index);
+            }
+            const totalValue = normaliseNumber(clone.total);
+            if (totalValue !== null) {
+                clone.total = totalValue;
+            }
+            if (!Array.isArray(clone.lines) && clone.startLine !== undefined && clone.endLine !== undefined) {
+                const startLine = normaliseNumber(clone.startLine);
+                const endLine = normaliseNumber(clone.endLine);
+                if (startLine !== null || endLine !== null) {
+                    clone.lines = [startLine, endLine].filter((value) => value !== null);
+                }
+            }
+            results.push(clone);
+            return;
+        }
+
+        if (typeof segment === "string") {
+            const text = segment.trim();
+            if (text) {
+                results.push({
+                    id: String(index + 1),
+                    index: index + 1,
+                    text,
+                    total: segmentList.length || chunkList.length || null
+                });
+            }
+        }
+    };
+
+    if (segmentList.length) {
+        segmentList.forEach((segment, index) => appendSegment(segment, index));
+    }
+
+    if (results.length === 0 && chunkList.length) {
+        chunkList.forEach((chunk, index) => {
+            if (!chunk) return;
+            if (typeof chunk === "string") {
+                const trimmed = chunk.trim();
+                if (trimmed) {
+                    results.push({
+                        id: String(index + 1),
+                        index: index + 1,
+                        total: chunkList.length,
+                        text: trimmed
+                    });
+                }
+                return;
+            }
+
+            const normalised = isPlainObject(chunk) ? clonePlain(chunk) : {};
+            const text = pickFirstString(
+                [normalised.answer, normalised.rawAnalysis, normalised.raw, normalised.text],
+                { allowEmpty: true }
+            );
+            const label = text ? normaliseSqlText(text) : "";
+            const indexValue = normaliseNumber(normalised.index);
+            const totalValue = normaliseNumber(normalised.total);
+            results.push({
+                ...normalised,
+                id:
+                    typeof normalised.id === "string" && normalised.id.trim()
+                        ? normalised.id
+                        : String(indexValue !== null ? indexValue : index + 1),
+                index: indexValue !== null ? indexValue : index + 1,
+                total: totalValue !== null ? totalValue : chunkList.length,
+                text: label
+            });
+        });
+    }
+
+    return results;
 }
 
 /**
