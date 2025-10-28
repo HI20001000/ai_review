@@ -1165,7 +1165,7 @@ function findEntryBySourceKey(container, sourceKey) {
     return null;
 }
 
-const cloneIssueWithSource = (issue, sourceKey, options = {}) => {
+function cloneIssueWithSource(issue, sourceKey, options = {}) {
     if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
         return issue;
     }
@@ -1209,7 +1209,7 @@ function collectIssuesForSource(state, sourceKeys) {
         delete cloned.analysisSource;
     }
     return cloned;
-};
+}
 
 function remapIssuesToSource(issues, sourceKey, options = {}) {
     if (!Array.isArray(issues)) {
@@ -1484,10 +1484,6 @@ function collectAggregatedIssues(state) {
     if (dmlIssues.length > 0) {
         return dmlIssues;
     }
-    if (!state.issueSummary || typeof state.issueSummary !== "object") {
-        state.issueSummary = { totalIssues: total };
-        return;
-    }
     state.issueSummary.totalIssues = total;
 }
 
@@ -1612,6 +1608,116 @@ function buildSummaryRecord(summarySource, options) {
         if (trimmed) {
             record.message = trimmed;
         }
+    }
+
+    return record;
+}
+
+function buildSourceSummaryRecord(state, options) {
+    const summaryCandidate = extractSummaryCandidate(state, options.sourceKey);
+    return buildSummaryRecord(summaryCandidate, {
+        source: options.sourceKey,
+        label: options.label,
+        issues: options.issues
+    });
+}
+
+function buildCombinedSummaryRecord(state, options) {
+    const globalSummary = state?.parsedReport?.summary || null;
+    return buildSummaryRecord(globalSummary, {
+        source: "combined",
+        label: options.label || "聚合報告",
+        issues: options.issues
+    });
+}
+
+function buildAggregatedSummaryRecords(state, staticIssues, aiIssues, aggregatedIssues = null) {
+    const records = [];
+    records.push(
+        buildSourceSummaryRecord(state, {
+            sourceKey: "static_analyzer",
+            label: "靜態分析器",
+            issues: staticIssues
+        })
+    );
+    records.push(
+        buildSourceSummaryRecord(state, {
+            sourceKey: "dml_prompt",
+            label: "AI審查",
+            issues: aiIssues
+        })
+    );
+    records.push(
+        buildCombinedSummaryRecord(state, {
+            label: "聚合報告",
+            issues:
+                Array.isArray(aggregatedIssues) && aggregatedIssues.length
+                    ? aggregatedIssues
+                    : dedupeIssues([...staticIssues, ...aiIssues])
+        })
+    );
+    return records;
+}
+
+const activeReportCombinedRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state?.parsedReport) {
+        return "";
+    }
+
+    const state = report.state;
+    const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
+    const aiIssues = collectIssuesForSource(state, ["dml_prompt"]);
+    const aggregatedIssues = collectAggregatedIssues(state);
+    const summaryRecords = buildAggregatedSummaryRecords(
+        state,
+        staticIssues,
+        aiIssues,
+        aggregatedIssues
+    );
+
+    try {
+        return JSON.stringify({ summary: summaryRecords, issues: aggregatedIssues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify aggregated report payload", error);
+    }
+
+    const direct = state?.report;
+    if (typeof direct === "string" && direct.trim()) {
+        return direct;
+    }
+
+    const analysisResult = state?.analysis?.result;
+    if (typeof analysisResult === "string" && analysisResult.trim()) {
+        return analysisResult;
+    }
+
+    return "";
+});
+
+const activeReportStaticRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state?.parsedReport) return "";
+
+    const issues = collectIssuesForSource(report.state, ["static_analyzer"]);
+    try {
+        return JSON.stringify({ issues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify static issue payload", error);
+    }
+
+    return "";
+});
+
+const activeReportDifyRawSourceText = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state?.parsedReport) return "";
+
+    const issues = collectIssuesForSource(report.state, ["dml_prompt"]);
+    try {
+        return JSON.stringify({ issues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify AI review issue payload", error);
     }
 
     return record;
