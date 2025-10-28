@@ -13,6 +13,8 @@ import {
     buildCombinedReportPayload,
     buildIssueDistributions,
     buildSourceSummaries,
+    buildAggregatedSummaryRecords,
+    collectAggregatedIssues,
     collectIssueSummaryTotals
 } from "../scripts/reports/combinedReport.js";
 import {
@@ -290,13 +292,38 @@ const hasChunkDetails = computed(() => {
     return Array.isArray(chunks) && chunks.length > 1;
 });
 
+const activeReportIssueSources = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state) {
+        return {
+            state: null,
+            staticIssues: [],
+            aiIssues: [],
+            aggregatedIssues: []
+        };
+    }
+
+    const state = report.state;
+    return {
+        state,
+        staticIssues: collectStaticReportIssues(state),
+        aiIssues: collectAiReviewIssues(state),
+        aggregatedIssues: collectAggregatedIssues(state)
+    };
+});
+
 const activeReportCombinedRawSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) {
         return "";
     }
 
-    const parsedReport = isPlainObject(report.state?.parsedReport) ? report.state.parsedReport : null;
+    const { state, staticIssues, aiIssues, aggregatedIssues } = activeReportIssueSources.value;
+    if (!state) {
+        return "";
+    }
+
+    const parsedReport = isPlainObject(state?.parsedReport) ? state.parsedReport : null;
     const directCandidate = pickReportJsonStringCandidate(
         report.state?.report,
         report.state?.analysis?.result,
@@ -322,10 +349,6 @@ const activeReportCombinedRawSourceText = computed(() => {
         }
     }
 
-    const state = report.state;
-    const staticIssues = collectStaticReportIssues(state);
-    const aiIssues = collectAiReviewIssues(state);
-    const aggregatedIssues = collectAggregatedIssues(state);
     const summaryRecords = buildAggregatedSummaryRecords(
         state,
         staticIssues,
@@ -418,9 +441,13 @@ const activeReportDetails = computed(() => {
         !Array.isArray(combinedRawValue.value)
             ? combinedRawValue.value
             : null;
-    let aggregatedIssues = Array.isArray(aggregatedPayload?.issues) ? aggregatedPayload.issues : [];
-    if (!aggregatedIssues.length) {
-        aggregatedIssues = collectAggregatedIssues(report.state);
+    const { staticIssues, aiIssues, aggregatedIssues: derivedAggregatedIssues } =
+        activeReportIssueSources.value;
+    let aggregatedIssues = Array.isArray(aggregatedPayload?.issues)
+        ? aggregatedPayload.issues
+        : derivedAggregatedIssues;
+    if (!Array.isArray(aggregatedIssues)) {
+        aggregatedIssues = [];
     }
 
     let summaryRecords = Array.isArray(aggregatedPayload?.summary) ? aggregatedPayload.summary : null;
