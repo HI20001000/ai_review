@@ -747,7 +747,8 @@ const activeReportDetails = computed(() => {
             staticSummaryObject?.status_label,
             staticSummaryObject?.statusLabel,
             staticAnalysis?.summary?.status,
-            staticAnalysis?.status
+            staticAnalysis?.status,
+            report.state?.analysis?.enrichmentStatus
         ],
         errorCandidates: [
             staticSourceValue?.error_message,
@@ -765,7 +766,9 @@ const activeReportDetails = computed(() => {
             staticSummaryObject?.generatedAt,
             staticAnalysis?.generatedAt,
             staticAnalysis?.summary?.generated_at,
-            staticAnalysis?.summary?.generatedAt
+            staticAnalysis?.summary?.generatedAt,
+            report.state?.generatedAt,
+            report.state?.analysis?.generatedAt
         ]
     });
 
@@ -832,14 +835,17 @@ const activeReportDetails = computed(() => {
         statusCandidates: [
             dmlSourceValue?.status,
             dmlDetails?.status,
-            dmlSummary?.status
+            dmlSummary?.status,
+            report.state?.analysis?.dmlSummary?.status,
+            report.state?.analysis?.dmlReport?.summary?.status
         ],
         errorCandidates: [
             dmlSourceValue?.error_message,
             dmlSourceValue?.errorMessage,
             dmlDetails?.error,
             dmlSummary?.error_message,
-            dmlSummary?.errorMessage
+            dmlSummary?.errorMessage,
+            report.state?.analysis?.dmlErrorMessage
         ],
         generatedAtCandidates: [
             dmlSourceValue?.generated_at,
@@ -847,7 +853,8 @@ const activeReportDetails = computed(() => {
             dmlDetails?.generatedAt,
             dmlReport?.generatedAt,
             dmlSummary?.generated_at,
-            dmlSummary?.generatedAt
+            dmlSummary?.generatedAt,
+            report.state?.analysis?.dmlGeneratedAt
         ]
     });
 
@@ -1231,6 +1238,55 @@ const activeReportDifyRawSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
 
+    const normaliseJson = (value) => {
+        if (!value || typeof value !== "object") return "";
+        try {
+            return JSON.stringify(value);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify AI review payload", error);
+            return "";
+        }
+    };
+
+    const analysisDmlReport = report.state?.analysis?.dmlReport;
+    if (analysisDmlReport && typeof analysisDmlReport === "object") {
+        const stringified = normaliseJson(analysisDmlReport);
+        if (stringified) return stringified;
+    }
+
+    const dmlState = report.state?.dml && typeof report.state.dml === "object" ? report.state.dml : null;
+    if (dmlState) {
+        const rawReport = typeof dmlState.report === "string" && dmlState.report.trim() ? dmlState.report : "";
+        if (rawReport) {
+            return rawReport;
+        }
+        const dmlObject = dmlState.aggregated && typeof dmlState.aggregated === "object" ? dmlState.aggregated : dmlState;
+        const stringified = normaliseJson(dmlObject);
+        if (stringified) {
+            return stringified;
+        }
+    }
+
+    const parsedReport = report.state?.parsedReport;
+    if (parsedReport && typeof parsedReport === "object") {
+        const reports = parsedReport.reports && typeof parsedReport.reports === "object" ? parsedReport.reports : null;
+        if (reports) {
+            const dmlPrompt = reports.dml_prompt || reports.dmlPrompt || null;
+            if (dmlPrompt && typeof dmlPrompt === "object") {
+                const raw = typeof dmlPrompt.report === "string" && dmlPrompt.report.trim() ? dmlPrompt.report : "";
+                if (raw) {
+                    return raw;
+                }
+                const promptObject =
+                    dmlPrompt.aggregated && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : dmlPrompt;
+                const stringified = normaliseJson(promptObject);
+                if (stringified) {
+                    return stringified;
+                }
+            }
+        }
+    }
+
     const difyReport = report.state?.dify?.report;
     if (typeof difyReport === "string" && difyReport.trim()) {
         return difyReport;
@@ -1252,10 +1308,30 @@ const activeReportDifyRawSourceText = computed(() => {
 
     const analysisDify = report.state?.analysis?.difyReport;
     if (analysisDify && typeof analysisDify === "object") {
-        try {
-            return JSON.stringify(analysisDify);
-        } catch (error) {
-            console.warn("[reports] Failed to stringify analysis dify report", error);
+        const stringified = normaliseJson(analysisDify);
+        if (stringified) {
+            return stringified;
+        }
+    }
+
+    const parsedDify =
+        report.state?.parsedReport?.reports?.dify_workflow ||
+        report.state?.parsedReport?.reports?.difyWorkflow ||
+        null;
+    if (parsedDify && typeof parsedDify === "object") {
+        const raw = parsedDify.raw;
+        if (typeof raw === "string" && raw.trim()) {
+            return raw;
+        }
+        if (raw && typeof raw === "object") {
+            const stringified = normaliseJson(raw);
+            if (stringified) {
+                return stringified;
+            }
+        }
+        const stringified = normaliseJson(parsedDify);
+        if (stringified) {
+            return stringified;
         }
     }
 
@@ -3079,8 +3155,74 @@ function normaliseReportAnalysisState(state) {
         if (reports) {
             const staticReport = reports.static_analyzer || reports.staticAnalyzer;
             if (staticReport && typeof staticReport === "object") {
-                if (!baseAnalysis.staticReport) {
-                    baseAnalysis.staticReport = staticReport;
+                const existingStatic =
+                    baseAnalysis.staticReport && typeof baseAnalysis.staticReport === "object"
+                        ? baseAnalysis.staticReport
+                        : null;
+                const mergedStatic = { ...staticReport };
+                if (existingStatic) {
+                    Object.assign(mergedStatic, existingStatic);
+                }
+                if (staticReport.summary && typeof staticReport.summary === "object") {
+                    mergedStatic.summary = {
+                        ...staticReport.summary,
+                        ...(existingStatic?.summary && typeof existingStatic.summary === "object"
+                            ? existingStatic.summary
+                            : {})
+                    };
+                } else if (existingStatic?.summary && typeof existingStatic.summary === "object") {
+                    mergedStatic.summary = { ...existingStatic.summary };
+                }
+                baseAnalysis.staticReport = mergedStatic;
+
+                const enrichment = staticReport.enrichment;
+                if (enrichment !== undefined && enrichment !== null) {
+                    if (!difyTarget) {
+                        difyTarget = {};
+                    }
+                    if (typeof enrichment === "string" && enrichment.trim()) {
+                        if (!difyTarget.report || !difyTarget.report.trim()) {
+                            difyTarget.report = enrichment.trim();
+                        }
+                    } else if (enrichment && typeof enrichment === "object") {
+                        difyTarget.raw = enrichment;
+                        if (!difyTarget.report || !difyTarget.report.trim()) {
+                            try {
+                                difyTarget.report = JSON.stringify(enrichment);
+                            } catch (error) {
+                                console.warn("[Report] Failed to stringify static enrichment", error);
+                            }
+                        }
+                    }
+                }
+
+                const enrichmentStatus =
+                    typeof baseAnalysis.enrichmentStatus === "string"
+                        ? baseAnalysis.enrichmentStatus
+                        : typeof state.analysis?.enrichmentStatus === "string"
+                        ? state.analysis.enrichmentStatus
+                        : "";
+                const staticSummary =
+                    baseAnalysis.staticReport?.summary && typeof baseAnalysis.staticReport.summary === "object"
+                        ? baseAnalysis.staticReport.summary
+                        : null;
+                if (staticSummary) {
+                    if (enrichmentStatus) {
+                        const hasStatus =
+                            typeof staticSummary.status === "string" ||
+                            typeof staticSummary.status_label === "string" ||
+                            typeof staticSummary.statusLabel === "string";
+                        if (!hasStatus) {
+                            staticSummary.status = enrichmentStatus;
+                        }
+                    }
+                    if (
+                        !staticSummary.generated_at &&
+                        !staticSummary.generatedAt &&
+                        (state.generatedAt || state.analysis?.generatedAt)
+                    ) {
+                        staticSummary.generated_at = state.analysis?.generatedAt || state.generatedAt;
+                    }
                 }
                 const enrichment = staticReport.enrichment;
                 if (enrichment !== undefined && enrichment !== null) {
@@ -3107,6 +3249,28 @@ function normaliseReportAnalysisState(state) {
             const dmlReport = reports.dml_prompt || reports.dmlPrompt;
             if (dmlReport && typeof dmlReport === "object") {
                 state.dml = dmlReport;
+                const existingDml =
+                    baseAnalysis.dmlReport && typeof baseAnalysis.dmlReport === "object"
+                        ? baseAnalysis.dmlReport
+                        : null;
+                const mergedDml = { ...dmlReport };
+                if (existingDml) {
+                    Object.assign(mergedDml, existingDml);
+                }
+                if (dmlReport.summary && typeof dmlReport.summary === "object") {
+                    mergedDml.summary = {
+                        ...dmlReport.summary,
+                        ...(existingDml?.summary && typeof existingDml.summary === "object"
+                            ? existingDml.summary
+                            : {})
+                    };
+                } else if (existingDml?.summary && typeof existingDml.summary === "object") {
+                    mergedDml.summary = { ...existingDml.summary };
+                }
+                baseAnalysis.dmlReport = mergedDml;
+                if (!baseAnalysis.dmlSummary && mergedDml.summary) {
+                    baseAnalysis.dmlSummary = mergedDml.summary;
+                }
                 const summary =
                     dmlReport.summary && typeof dmlReport.summary === "object" ? dmlReport.summary : null;
                 if (!state.dmlErrorMessage) {
@@ -3178,23 +3342,32 @@ function normaliseReportAnalysisState(state) {
                 }
             }
         }
+    }
 
-        const summary = parsedReport.summary && typeof parsedReport.summary === "object" ? parsedReport.summary : null;
-        if (!state.difyErrorMessage && summary) {
-            const sources = summary.sources && typeof summary.sources === "object" ? summary.sources : null;
-            if (sources) {
-                const difySource = sources.dify_workflow || sources.difyWorkflow;
-                const difyError =
-                    typeof difySource?.error_message === "string"
-                        ? difySource.error_message
-                        : typeof difySource?.errorMessage === "string"
-                        ? difySource.errorMessage
-                        : "";
-                if (difyError && difyError.trim()) {
-                    state.difyErrorMessage = difyError.trim();
-                }
+    if (difyTarget) {
+        const hasReport = typeof difyTarget.report === "string" && difyTarget.report.trim().length > 0;
+        if (!hasReport && difyTarget.raw && typeof difyTarget.raw === "object") {
+            try {
+                difyTarget.report = JSON.stringify(difyTarget.raw);
+            } catch (error) {
+                console.warn("[Report] Failed to stringify dify raw object for state", error);
             }
         }
+        const filteredKeys = Object.keys(difyTarget).filter((key) => {
+            const value = difyTarget[key];
+            if (value === null || value === undefined) return false;
+            if (typeof value === "string") return value.trim().length > 0;
+            if (Array.isArray(value)) return value.length > 0;
+            if (typeof value === "object") return Object.keys(value).length > 0;
+            return true;
+        });
+        if (filteredKeys.length > 0) {
+            state.dify = difyTarget;
+        } else {
+            state.dify = null;
+        }
+    } else if (!state.dify) {
+        state.dify = null;
     }
 
     if (difyTarget) {
