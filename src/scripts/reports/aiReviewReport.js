@@ -1,5 +1,5 @@
 import { collectIssuesForSource } from "./combinedReport.js";
-import { isPlainObject, normaliseReportObject } from "./shared.js";
+import { dedupeIssues, isPlainObject, normaliseReportObject } from "./shared.js";
 
 /**
  * Collect AI review issues from the workspace state.
@@ -628,6 +628,29 @@ function normaliseAiReviewPayload(payload = {}) {
         }
     }
 
+    const fallbackMarkdown = pickFirstString(
+        [
+            summaryObject?.reportText,
+            summaryObject?.report,
+            reportObject?.reportText,
+            reportObject?.report,
+            aggregatedObject?.reportText,
+            aggregatedObject?.report,
+            payload.dmlReportText,
+            payload.dmlReport?.reportText,
+            payload.dmlReport?.report,
+            payload.dml?.reportText,
+            payload.dml?.report
+        ],
+        { allowEmpty: false }
+    );
+
+    const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
+    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
+    if (normalisedDerivedIssues.length) {
+        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
+    }
+
     const generatedAtCandidates = [
         payload.dmlGeneratedAt,
         analysis?.dmlGeneratedAt,
@@ -728,7 +751,54 @@ function assignAiReviewState(state, payload) {
     if (!state || !payload) {
         return payload;
     }
-    state.dml = payload.report;
+
+    const existingReport = state.dml && typeof state.dml === "object" ? state.dml : null;
+    const incomingReport = payload.report && typeof payload.report === "object" ? payload.report : null;
+    const nextReport = existingReport ? { ...existingReport } : {};
+
+    if (incomingReport) {
+        Object.assign(nextReport, incomingReport);
+    }
+
+    if (payload.summary && typeof payload.summary === "object") {
+        nextReport.summary = clonePlain(payload.summary);
+    }
+
+    if (payload.aggregated && typeof payload.aggregated === "object") {
+        nextReport.aggregated = clonePlain(payload.aggregated);
+    }
+
+    if (Array.isArray(payload.segments)) {
+        nextReport.segments = clonePlain(payload.segments);
+    }
+
+    if (Array.isArray(payload.issues)) {
+        nextReport.issues = clonePlain(payload.issues);
+    } else if (!Array.isArray(nextReport.issues)) {
+        nextReport.issues = [];
+    }
+
+    if (payload.generatedAt) {
+        nextReport.generatedAt = payload.generatedAt;
+    }
+
+    if (payload.conversationId) {
+        nextReport.conversationId = payload.conversationId;
+    }
+
+    if (payload.status) {
+        nextReport.status = payload.status;
+    }
+
+    if (typeof payload.errorMessage === "string" && payload.errorMessage.trim()) {
+        nextReport.error = payload.errorMessage.trim();
+    } else if (typeof nextReport.error !== "string") {
+        delete nextReport.error;
+    }
+
+    const hasReportEntries = Object.keys(nextReport).length > 0;
+    state.dml = hasReportEntries ? nextReport : null;
+
     if (typeof payload.errorMessage === "string") {
         state.dmlErrorMessage = payload.errorMessage;
     } else if (!state.dmlErrorMessage) {
@@ -739,6 +809,12 @@ function assignAiReviewState(state, payload) {
     if (mergedAnalysis !== state.analysis) {
         state.analysis = mergedAnalysis;
     }
+
+    if (state.dml && !Array.isArray(state.dml.issues)) {
+        state.dml.issues = [];
+    }
+
+    payload.report = state.dml || payload.report;
 
     return payload;
 }
