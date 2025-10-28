@@ -8,10 +8,12 @@ import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
 import { generateReportViaDify, fetchProjectReports } from "../scripts/services/reportService.js";
 import {
-    collectAggregatedIssues,
-    buildAggregatedSummaryRecords,
     buildSummaryDetailList,
-    updateIssueSummaryTotals
+    updateIssueSummaryTotals,
+    buildCombinedReportPayload,
+    buildIssueDistributions,
+    buildSourceSummaries,
+    collectIssueSummaryTotals
 } from "../scripts/reports/combinedReport.js";
 import {
     collectStaticReportIssues,
@@ -233,19 +235,9 @@ const readyReports = computed(() => {
     return list;
 });
 
-const projectIssueTotals = computed(() => {
-    const totals = new Map();
-    Object.entries(reportStates).forEach(([key, state]) => {
-        const summary = state?.issueSummary;
-        if (!summary || !Number.isFinite(summary.totalIssues)) return;
-        const parsed = parseReportKey(key);
-        if (!parsed.projectId) return;
-        const previous = totals.get(parsed.projectId);
-        const base = typeof previous === "number" && Number.isFinite(previous) ? previous : 0;
-        totals.set(parsed.projectId, base + summary.totalIssues);
-    });
-    return totals;
-});
+const projectIssueTotals = computed(() =>
+    collectIssueSummaryTotals(reportStates, { parseKey: parseReportKey })
+);
 const hasReadyReports = computed(() => readyReports.value.length > 0);
 const activeReport = computed(() => {
     const target = activeReportTarget.value;
@@ -293,18 +285,10 @@ const activeReportCombinedRawSourceText = computed(() => {
     }
 
     const state = report.state;
-    const staticIssues = collectStaticReportIssues(state);
-    const aiIssues = collectAiReviewIssues(state);
-    const aggregatedIssues = collectAggregatedIssues(state);
-    const summaryRecords = buildAggregatedSummaryRecords(
-        state,
-        staticIssues,
-        aiIssues,
-        aggregatedIssues
-    );
+    const payload = buildCombinedReportPayload(state);
 
     try {
-        return JSON.stringify({ summary: summaryRecords, issues: aggregatedIssues });
+        return JSON.stringify(payload);
     } catch (error) {
         console.warn("[reports] Failed to stringify aggregated report payload", error);
     }
@@ -378,9 +362,6 @@ const activeReportDetails = computed(() => {
     const staticReport = reports?.static_analyzer || reports?.staticAnalyzer || null;
     const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
 
-    const staticIssues = collectStaticReportIssues(report.state);
-    const aiIssues = collectAiReviewIssues(report.state);
-
     const combinedRawValue = activeReportCombinedRawValue.value;
     const aggregatedPayload =
         combinedRawValue &&
@@ -390,20 +371,16 @@ const activeReportDetails = computed(() => {
         !Array.isArray(combinedRawValue.value)
             ? combinedRawValue.value
             : null;
-    let aggregatedIssues = Array.isArray(aggregatedPayload?.issues) ? aggregatedPayload.issues : [];
-    if (!aggregatedIssues.length) {
-        aggregatedIssues = collectAggregatedIssues(report.state);
-    }
+    const fallbackPayload = buildCombinedReportPayload(report.state);
+    const aggregatedIssues =
+        Array.isArray(aggregatedPayload?.issues) && aggregatedPayload.issues.length
+            ? aggregatedPayload.issues
+            : fallbackPayload.issues;
 
-    let summaryRecords = Array.isArray(aggregatedPayload?.summary) ? aggregatedPayload.summary : null;
-    if (!Array.isArray(summaryRecords) || !summaryRecords.length) {
-        summaryRecords = buildAggregatedSummaryRecords(
-            report.state,
-            staticIssues,
-            aiIssues,
-            aggregatedIssues
-        );
-    }
+    const summaryRecords =
+        Array.isArray(aggregatedPayload?.summary) && aggregatedPayload.summary.length
+            ? aggregatedPayload.summary
+            : fallbackPayload.summary;
     const fallbackIssues = Array.isArray(parsed.issues)
         ? parsed.issues
         : Array.isArray(staticReport?.issues)
@@ -465,9 +442,6 @@ const activeReportDetails = computed(() => {
             ? staticReport.metadata
             : null;
     const staticMetadataDetails = buildSummaryDetailList(staticMetadata);
-
-    const severityCounts = new Map();
-    const ruleCounts = new Map();
 
     const toStringList = (value) => {
         if (Array.isArray(value)) {
@@ -597,14 +571,6 @@ const activeReportDetails = computed(() => {
             });
         }
 
-        details.forEach((detail) => {
-            const severityLabel = detail.severityLabel || "未標示";
-            severityCounts.set(severityLabel, (severityCounts.get(severityLabel) || 0) + 1);
-            if (detail.ruleId) {
-                ruleCounts.set(detail.ruleId, (ruleCounts.get(detail.ruleId) || 0) + 1);
-            }
-        });
-
         const objectName =
             (typeof issue?.object === "string" && issue.object.trim()) ||
             (typeof issue?.object_name === "string" && issue.object_name.trim()) ||
@@ -695,31 +661,9 @@ const activeReportDetails = computed(() => {
         };
     });
 
-    if (summaryObject?.by_rule && typeof summaryObject.by_rule === "object") {
-        for (const [rule, count] of Object.entries(summaryObject.by_rule)) {
-            const key = typeof rule === "string" && rule.trim() ? rule.trim() : "";
-            const numeric = Number(count);
-            if (!Number.isFinite(numeric)) continue;
-            const previous = ruleCounts.get(key) || 0;
-            ruleCounts.set(key || "未分類", Math.max(previous, numeric));
-        }
-    }
-
-    const severityBreakdown = Array.from(severityCounts.entries()).map(([label, count]) => ({
-        label,
-        count
-    }));
-
-    severityBreakdown.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-
-    const ruleBreakdown = Array.from(ruleCounts.entries())
-        .filter(([, count]) => Number.isFinite(count) && count > 0)
-        .map(([label, count]) => ({
-            label: label || "未分類",
-            count
-        }));
-
-    ruleBreakdown.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    const { severityBreakdown, ruleBreakdown } = buildIssueDistributions(normalisedIssues, {
+        summaryByRule: summaryObject?.by_rule || summaryObject?.byRule
+    });
 
     const globalSummary = parsed.summary && typeof parsed.summary === "object" ? parsed.summary : null;
     const combinedSummarySource =
@@ -730,218 +674,6 @@ const activeReportDetails = computed(() => {
         omitKeys: ["sources", "by_rule", "byRule", "source", "label"]
     });
 
-    const normaliseKey = (value) => (typeof value === "string" ? value.toLowerCase() : "");
-    const pickString = (...candidates) => {
-        for (const candidate of candidates) {
-            if (typeof candidate === "string") {
-                const trimmed = candidate.trim();
-                if (trimmed) {
-                    return trimmed;
-                }
-            }
-        }
-        return "";
-    };
-    const pickFirstValue = (...candidates) => {
-        for (const candidate of candidates) {
-            if (candidate !== null && candidate !== undefined && candidate !== "") {
-                return candidate;
-            }
-        }
-        return null;
-    };
-    const buildSourceMetrics = (...sources) => {
-        const metrics = [];
-        const seen = new Set();
-        const pushMetric = (label, rawValue, transform = (value) => value) => {
-            if (!label || rawValue === undefined || rawValue === null) return;
-            const value = transform(rawValue);
-            if (value === null || value === undefined || value === "") return;
-            if (seen.has(label)) return;
-            seen.add(label);
-            metrics.push({ label, value });
-        };
-
-        for (const source of sources) {
-            if (!source || typeof source !== "object") continue;
-            pushMetric(
-                "問題數",
-                source.total_issues ?? source.totalIssues,
-                (candidate) => {
-                    const numeric = Number(candidate);
-                    return Number.isFinite(numeric) ? numeric : Number(candidate ?? 0) || 0;
-                }
-            );
-            if (source.by_rule || source.byRule) {
-                const byRuleEntries = Object.entries(source.by_rule || source.byRule || {});
-                pushMetric("規則數", byRuleEntries.length, (count) => Number(count) || 0);
-            }
-            pushMetric(
-                "拆分語句",
-                source.total_segments ?? source.totalSegments,
-                (candidate) => {
-                    const numeric = Number(candidate);
-                    return Number.isFinite(numeric) ? numeric : Number(candidate ?? 0) || 0;
-                }
-            );
-            pushMetric(
-                "已分析段數",
-                source.analyzed_segments ?? source.analyzedSegments,
-                (candidate) => {
-                    const numeric = Number(candidate);
-                    return Number.isFinite(numeric) ? numeric : Number(candidate ?? 0) || 0;
-                }
-            );
-        }
-
-        return metrics;
-    };
-    const mergeMetrics = (base, extra) => {
-        if (!Array.isArray(base) || !base.length) return Array.isArray(extra) ? [...extra] : [];
-        if (!Array.isArray(extra) || !extra.length) return [...base];
-        const merged = [...base];
-        const seen = new Set(base.map((item) => item.label));
-        extra.forEach((item) => {
-            if (!item || typeof item !== "object") return;
-            if (seen.has(item.label)) return;
-            seen.add(item.label);
-            merged.push(item);
-        });
-        return merged;
-    };
-
-    const sourceSummaries = [];
-    if (globalSummary?.sources && typeof globalSummary.sources === "object") {
-        for (const [key, value] of Object.entries(globalSummary.sources)) {
-            if (!value || typeof value !== "object") continue;
-            const keyLower = normaliseKey(key);
-            let label = key;
-            if (keyLower === "static_analyzer" || keyLower === "staticanalyzer") {
-                label = "靜態分析器";
-            } else if (keyLower === "dml_prompt" || keyLower === "dmlprompt") {
-                label = "AI審查";
-            } else if (keyLower === "dify_workflow" || keyLower === "difyworkflow") {
-                label = "聚合報告";
-            }
-
-            const metrics = buildSourceMetrics(value);
-            const status = pickString(value.status);
-            const errorMessage = pickString(value.error_message, value.errorMessage);
-            const generatedAt = pickFirstValue(value.generated_at, value.generatedAt);
-
-            sourceSummaries.push({
-                key,
-                keyLower,
-                label,
-                metrics,
-                status,
-                errorMessage,
-                generatedAt
-            });
-        }
-    }
-
-    const enhanceSourceSummary = (keyLower, label, options = {}) => {
-        const entry = sourceSummaries.find((item) => item.keyLower === keyLower);
-        const metrics = buildSourceMetrics(...(options.metricsSources || []));
-        const status = pickString(...(options.statusCandidates || []));
-        const errorMessage = pickString(...(options.errorCandidates || []));
-        const generatedAt = pickFirstValue(...(options.generatedAtCandidates || []));
-
-        if (entry) {
-            entry.label = label;
-            if (metrics.length) {
-                entry.metrics = mergeMetrics(entry.metrics, metrics);
-            }
-            if (!entry.status) {
-                entry.status = status;
-            }
-            if (!entry.errorMessage) {
-                entry.errorMessage = errorMessage;
-            }
-            if (!entry.generatedAt) {
-                entry.generatedAt = generatedAt;
-            }
-        } else if (metrics.length || status || errorMessage || generatedAt) {
-            sourceSummaries.push({
-                key: options.key || keyLower,
-                keyLower,
-                label,
-                metrics,
-                status,
-                errorMessage,
-                generatedAt
-            });
-        }
-    };
-
-    const applySummaryRecords = (records) => {
-        if (!Array.isArray(records)) return;
-        records.forEach((record) => {
-            if (!record || typeof record !== "object") return;
-            const keyLower = normaliseKey(record.source);
-            if (!keyLower) return;
-            const label =
-                typeof record.label === "string" && record.label.trim()
-                    ? record.label.trim()
-                    : record.source || keyLower;
-            const existingIndex = sourceSummaries.findIndex((item) => item.keyLower === keyLower);
-            if (existingIndex !== -1) {
-                sourceSummaries.splice(existingIndex, 1);
-            }
-            enhanceSourceSummary(keyLower, label, {
-                key: record.source || keyLower,
-                metricsSources: [record],
-                statusCandidates: [record.status],
-                errorCandidates: [record.error_message, record.errorMessage, record.message],
-                generatedAtCandidates: [record.generated_at, record.generatedAt]
-            });
-        });
-    };
-
-    applySummaryRecords(summaryRecords);
-
-    const staticSourceValue =
-        globalSummary?.sources?.static_analyzer || globalSummary?.sources?.staticAnalyzer || null;
-    const staticAnalysis =
-        report.state?.analysis?.staticReport && typeof report.state.analysis.staticReport === "object"
-            ? report.state.analysis.staticReport
-            : null;
-    enhanceSourceSummary("static_analyzer", "靜態分析器", {
-        metricsSources: [staticSourceValue, staticSummaryObject],
-        statusCandidates: [
-            staticSourceValue?.status,
-            staticSummaryObject?.status,
-            staticSummaryObject?.status_label,
-            staticSummaryObject?.statusLabel,
-            staticAnalysis?.summary?.status,
-            staticAnalysis?.status,
-            report.state?.analysis?.enrichmentStatus
-        ],
-        errorCandidates: [
-            staticSourceValue?.error_message,
-            staticSourceValue?.errorMessage,
-            staticSummaryObject?.error_message,
-            staticSummaryObject?.errorMessage,
-            staticAnalysis?.summary?.error_message,
-            staticAnalysis?.summary?.errorMessage,
-            staticAnalysis?.error
-        ],
-        generatedAtCandidates: [
-            staticSourceValue?.generated_at,
-            staticSourceValue?.generatedAt,
-            staticSummaryObject?.generated_at,
-            staticSummaryObject?.generatedAt,
-            staticAnalysis?.generatedAt,
-            staticAnalysis?.summary?.generated_at,
-            staticAnalysis?.summary?.generatedAt,
-            report.state?.generatedAt,
-            report.state?.analysis?.generatedAt
-        ]
-    });
-
-    const dmlSourceValue = globalSummary?.sources?.dml_prompt || globalSummary?.sources?.dmlPrompt || null;
-
     let dmlDetails = null;
     let dmlSummary = null;
     if (dmlReport && typeof dmlReport === "object") {
@@ -950,60 +682,21 @@ const activeReportDetails = computed(() => {
         dmlDetails = aiDetails.details;
     }
 
-    enhanceSourceSummary("dml_prompt", "AI審查", {
-        metricsSources: [dmlSourceValue, dmlDetails?.summary, dmlDetails?.aggregated],
-        statusCandidates: [
-            dmlSourceValue?.status,
-            dmlDetails?.status,
-            dmlSummary?.status,
-            report.state?.analysis?.dmlSummary?.status,
-            report.state?.analysis?.dmlReport?.summary?.status
-        ],
-        errorCandidates: [
-            dmlSourceValue?.error_message,
-            dmlSourceValue?.errorMessage,
-            dmlDetails?.error,
-            dmlSummary?.error_message,
-            dmlSummary?.errorMessage,
-            report.state?.analysis?.dmlErrorMessage
-        ],
-        generatedAtCandidates: [
-            dmlSourceValue?.generated_at,
-            dmlSourceValue?.generatedAt,
-            dmlDetails?.generatedAt,
-            dmlReport?.generatedAt,
-            dmlSummary?.generated_at,
-            dmlSummary?.generatedAt,
-            report.state?.analysis?.dmlGeneratedAt
-        ]
+    const analysisState =
+        report.state?.analysis && typeof report.state.analysis === "object"
+            ? report.state.analysis
+            : null;
+    const sourceSummaries = buildSourceSummaries({
+        summaryRecords,
+        globalSummary,
+        staticSummary: staticSummaryObject,
+        analysisState,
+        state: report.state,
+        dmlReport,
+        dmlSummary,
+        dmlDetails,
+        combinedSummarySource
     });
-
-    const combinedSummarySourceValue =
-        globalSummary?.sources?.dify_workflow || globalSummary?.sources?.difyWorkflow || null;
-    enhanceSourceSummary("dify_workflow", "聚合報告", {
-        metricsSources: [combinedSummarySourceValue, globalSummary],
-        statusCandidates: [
-            combinedSummarySourceValue?.status,
-            globalSummary?.status,
-            report.state?.analysis?.dify?.status
-        ],
-        errorCandidates: [
-            combinedSummarySourceValue?.error_message,
-            combinedSummarySourceValue?.errorMessage,
-            globalSummary?.error_message,
-            globalSummary?.errorMessage,
-            report.state?.analysis?.difyErrorMessage,
-            report.state?.difyErrorMessage
-        ],
-        generatedAtCandidates: [
-            combinedSummarySourceValue?.generated_at,
-            combinedSummarySourceValue?.generatedAt,
-            globalSummary?.generated_at,
-            globalSummary?.generatedAt
-        ]
-    });
-
-    const finalSourceSummaries = sourceSummaries.map(({ keyLower, ...item }) => item);
 
     return {
         totalIssues: Number.isFinite(total) ? Number(total) : null,
@@ -1018,7 +711,7 @@ const activeReportDetails = computed(() => {
         severityBreakdown,
         ruleBreakdown,
         raw: parsed,
-        sourceSummaries: finalSourceSummaries,
+        sourceSummaries,
         combinedSummary: combinedSummarySource,
         combinedSummaryDetails,
         staticReport,
