@@ -1,99 +1,18 @@
-export function normaliseReportSourceKey(value) {
-    if (typeof value !== "string") return "";
-    return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
-}
+import {
+    cloneIssueWithSource,
+    dedupeIssues,
+    findEntryBySourceKey,
+    normaliseReportSourceKey,
+    remapIssuesToSource
+} from "./shared.js";
 
-export function findEntryBySourceKey(container, sourceKey) {
-    if (!container || typeof container !== "object") {
-        return null;
-    }
-    const target = normaliseReportSourceKey(sourceKey);
-    if (!target) return null;
-    for (const [key, value] of Object.entries(container)) {
-        if (normaliseReportSourceKey(key) === target) {
-            return value && typeof value === "object" ? value : null;
-        }
-    }
-    return null;
-}
-
-export function cloneIssueWithSource(issue, sourceKey, options = {}) {
-    let result = issue;
-
-    if (issue && typeof issue === "object" && !Array.isArray(issue)) {
-        const target = normaliseReportSourceKey(sourceKey);
-
-        if (target) {
-            const existingKeys = [
-                normaliseReportSourceKey(issue.source),
-                normaliseReportSourceKey(issue.analysis_source),
-                normaliseReportSourceKey(issue.analysisSource)
-            ].filter(Boolean);
-
-            if (options.force) {
-                const base = issue.source === sourceKey ? issue : { ...issue, source: sourceKey };
-                const { analysis_source: _analysisSource, analysisSource: _analysisSourceCamel, ...rest } = base;
-                result = { ...rest, source: sourceKey };
-            } else if (existingKeys.includes(target)) {
-                result = issue.source === sourceKey ? issue : { ...issue, source: sourceKey };
-            } else if (existingKeys.length === 0) {
-                result = { ...issue, source: sourceKey };
-            }
-        }
-    }
-
-    return result;
-}
-
-export function remapIssuesToSource(issues, sourceKey, options = {}) {
-    if (!Array.isArray(issues)) {
-        return [];
-    }
-    return issues.map((issue) => cloneIssueWithSource(issue, sourceKey, options));
-}
-
-function sortObjectKeys(value) {
-    if (!value || typeof value !== "object") {
-        return value;
-    }
-    if (Array.isArray(value)) {
-        return value.map((item) => sortObjectKeys(item));
-    }
-    const sorted = {};
-    Object.keys(value)
-        .sort()
-        .forEach((key) => {
-            sorted[key] = sortObjectKeys(value[key]);
-        });
-    return sorted;
-}
-
-function createIssueKey(issue) {
-    if (issue && typeof issue === "object") {
-        try {
-            return JSON.stringify(sortObjectKeys(issue));
-        } catch (error) {
-            console.warn("[reports] Failed to stringify issue for dedupe", error, issue);
-        }
-    }
-    if (typeof issue === "string") {
-        return issue;
-    }
-    return String(issue);
-}
-
-export function dedupeIssues(list) {
-    const seen = new Set();
-    const result = [];
-    for (const issue of list || []) {
-        const key = createIssueKey(issue);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        result.push(issue);
-    }
-    return result;
-}
-
+/**
+ * Collect issues originating from the provided report sources.
+ *
+ * @param {Record<string, any>} state - Workspace state containing parsed reports and in-memory analysis.
+ * @param {string | string[]} sourceKeys - Report source identifiers to gather issues for.
+ * @returns {Array<any>} Flattened issue list tagged with the originating source.
+ */
 export function collectIssuesForSource(state, sourceKeys) {
     if (!state) return [];
     const sources = Array.isArray(sourceKeys) ? sourceKeys : [sourceKeys];
@@ -271,6 +190,12 @@ export function collectIssuesForSource(state, sourceKeys) {
     return dedupeIssues(results);
 }
 
+/**
+ * Gather a best-effort set of aggregated issues across static analysis, AI reviews and Dify workflows.
+ *
+ * @param {Record<string, any>} state - Workspace report state.
+ * @returns {Array<any>} Aggregated and deduplicated issue list.
+ */
 export function collectAggregatedIssues(state) {
     if (!state) return [];
     const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
@@ -312,6 +237,12 @@ export function collectAggregatedIssues(state) {
     return [];
 }
 
+/**
+ * Update the `issueSummary.totalIssues` property on the supplied state in place.
+ *
+ * @param {Record<string, any>} state - Workspace report state subject to mutation.
+ * @returns {void}
+ */
 export function updateIssueSummaryTotals(state) {
     if (!state) return;
     const combinedIssues = collectAggregatedIssues(state);
@@ -326,6 +257,13 @@ export function updateIssueSummaryTotals(state) {
     state.issueSummary.totalIssues = total;
 }
 
+/**
+ * Extract a summary object matching the requested report source from state.
+ *
+ * @param {Record<string, any>} state - Workspace report state.
+ * @param {string} sourceKey - Desired source identifier.
+ * @returns {Record<string, any> | null} Summary candidate or null when not available.
+ */
 export function extractSummaryCandidate(state, sourceKey) {
     if (!state) return null;
     if (sourceKey) {
@@ -369,6 +307,13 @@ function normaliseTimestampValue(value) {
     return null;
 }
 
+/**
+ * Build a normalised summary record suitable for UI presentation.
+ *
+ * @param {Record<string, any> | string | null} summarySource - Source summary data.
+ * @param {{ source: string, label: string, issues?: Array<any> }} options - Render options.
+ * @returns {Record<string, any>} Normalised summary payload.
+ */
 export function buildSummaryRecord(summarySource, options) {
     const issues = Array.isArray(options.issues) ? options.issues : [];
     const record = {
@@ -423,6 +368,13 @@ export function buildSummaryRecord(summarySource, options) {
     return record;
 }
 
+/**
+ * Build a summary record scoped to a particular report source.
+ *
+ * @param {Record<string, any>} state - Workspace report state.
+ * @param {{ sourceKey: string, label: string, issues?: Array<any> }} options - Source configuration.
+ * @returns {Record<string, any>} Summary record.
+ */
 export function buildSourceSummaryRecord(state, options) {
     const summaryCandidate = extractSummaryCandidate(state, options.sourceKey);
     return buildSummaryRecord(summaryCandidate, {
@@ -432,6 +384,13 @@ export function buildSourceSummaryRecord(state, options) {
     });
 }
 
+/**
+ * Construct a combined summary record derived from the global report summary.
+ *
+ * @param {Record<string, any>} state - Workspace report state.
+ * @param {{ label?: string, issues?: Array<any> }} options - Presentation overrides.
+ * @returns {Record<string, any>} Summary record for the combined view.
+ */
 export function buildCombinedSummaryRecord(state, options) {
     const globalSummary = state?.parsedReport?.summary || null;
     return buildSummaryRecord(globalSummary, {
@@ -441,6 +400,15 @@ export function buildCombinedSummaryRecord(state, options) {
     });
 }
 
+/**
+ * Produce a trio of summary records for static, AI and combined report contexts.
+ *
+ * @param {Record<string, any>} state - Workspace report state.
+ * @param {Array<any>} staticIssues - Static report issues.
+ * @param {Array<any>} aiIssues - AI review issues.
+ * @param {Array<any> | null} [aggregatedIssues] - Optional pre-aggregated issues.
+ * @returns {Array<Record<string, any>>} Summary records in display order.
+ */
 export function buildAggregatedSummaryRecords(state, staticIssues, aiIssues, aggregatedIssues = null) {
     const records = [];
     records.push(
@@ -469,6 +437,13 @@ export function buildAggregatedSummaryRecords(state, staticIssues, aiIssues, agg
     return records;
 }
 
+/**
+ * Convert a summary-like object into labelled detail rows for UI consumption.
+ *
+ * @param {Record<string, any>} source - Summary object to flatten.
+ * @param {{ omitKeys?: string[] }} [options] - Keys to omit from the output.
+ * @returns {Array<{ label: string, value: string }>} Detail rows.
+ */
 export function buildSummaryDetailList(source, options = {}) {
     if (!source || typeof source !== "object" || Array.isArray(source)) {
         return [];
@@ -886,11 +861,6 @@ export function collectIssueSummaryTotals(reportStates, options = {}) {
 }
 
 export default {
-    normaliseReportSourceKey,
-    findEntryBySourceKey,
-    cloneIssueWithSource,
-    remapIssuesToSource,
-    dedupeIssues,
     collectIssuesForSource,
     collectAggregatedIssues,
     updateIssueSummaryTotals,

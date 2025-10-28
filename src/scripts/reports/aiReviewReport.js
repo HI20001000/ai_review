@@ -1,161 +1,21 @@
 import { collectIssuesForSource } from "./combinedReport.js";
 
-function clonePlain(value, seen = new WeakMap()) {
-    if (!value || typeof value !== "object") {
-        return value;
-    }
-    if (seen.has(value)) {
-        return seen.get(value);
-    }
-    if (Array.isArray(value)) {
-        const result = [];
-        seen.set(value, result);
-        for (const item of value) {
-            result.push(clonePlain(item, seen));
-        }
-        return result;
-    }
-    const result = {};
-    seen.set(value, result);
-    for (const [key, item] of Object.entries(value)) {
-        result[key] = clonePlain(item, seen);
-    }
-    return result;
-}
-
-function normaliseReportObject(value) {
-    if (!value) {
-        return null;
-    }
-    if (typeof value === "string") {
-        const trimmed = value.trim();
-        if (!trimmed) {
-            return null;
-        }
-        if (/^[\[{]/.test(trimmed)) {
-            try {
-                const parsed = JSON.parse(trimmed);
-                if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-                    return parsed;
-                }
-            } catch (error) {
-                console.warn("[aiReview] Failed to parse AI review object", error, value);
-                return { report: trimmed };
-            }
-        }
-        return { report: trimmed };
-    }
-    if (typeof value === "object" && !Array.isArray(value)) {
-        return value;
-    }
-    return null;
-}
-
-function normaliseTimestamp(value) {
-    if (!value) return null;
-    if (value instanceof Date) {
-        const time = value.getTime();
-        return Number.isFinite(time) ? new Date(time).toISOString() : null;
-    }
-    if (typeof value === "number" && Number.isFinite(value)) {
-        return new Date(value).toISOString();
-    }
-    if (typeof value === "string") {
-        const trimmed = value.trim();
-        if (!trimmed) {
-            return null;
-        }
-        const parsed = Date.parse(trimmed);
-        if (!Number.isNaN(parsed)) {
-            return new Date(parsed).toISOString();
-        }
-        return trimmed;
-    }
-    return null;
-}
-
-function normaliseIssues(value) {
-    if (!Array.isArray(value)) {
-        return [];
-    }
-    return value.map((item) => (item && typeof item === "object" ? clonePlain(item) : item));
-}
-
-function pickErrorMessage(candidates) {
-    let fallback = "";
-    for (const candidate of candidates) {
-        if (typeof candidate === "string") {
-            const trimmed = candidate.trim();
-            if (trimmed) {
-                return trimmed;
-            }
-            if (!fallback) {
-                fallback = candidate;
-            }
-        }
-    }
-    return fallback;
-}
-
-function pickFirstString(candidates, { allowEmpty = false } = {}) {
-    let fallback = "";
-    for (const candidate of candidates) {
-        if (typeof candidate === "string") {
-            const trimmed = candidate.trim();
-            if (trimmed) {
-                return trimmed;
-            }
-            if (allowEmpty && fallback === "") {
-                fallback = candidate;
-            }
-        }
-    }
-    if (allowEmpty && fallback !== "") {
-        return fallback;
-    }
-    return "";
-}
-
-function normaliseSqlText(value) {
-    if (typeof value === "string") {
-        return value;
-    }
-    if (value === null || value === undefined) {
-        return "";
-    }
-    return String(value);
-}
-
-function normaliseNumber(value) {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : null;
-}
-
-function normaliseSegments(segments, chunks) {
-    const segmentList = Array.isArray(segments) ? segments : [];
-    const chunkList = Array.isArray(chunks) ? chunks : [];
-    return segmentList.map((segment, index) => {
-        const chunk = chunkList[index] || null;
-        const sql = normaliseSqlText(segment?.text ?? segment?.sql);
-        const analysisText = typeof chunk?.answer === "string" ? chunk.answer : "";
-        return {
-            key: `${index}-segment`,
-            index: normaliseNumber(segment?.index) ?? index + 1,
-            sql,
-            startLine: normaliseNumber(segment?.startLine),
-            endLine: normaliseNumber(segment?.endLine),
-            startColumn: normaliseNumber(segment?.startColumn),
-            endColumn: normaliseNumber(segment?.endColumn),
-            analysis: analysisText,
-            raw: chunk?.raw || null
-        };
-    });
-}
-
+/**
+ * Collect AI review issues from the workspace state.
+ *
+ * @param {Record<string, any>} state - Workspace state containing parsed reports and analysis snapshots.
+ * @returns {Array<any>} Issues raised by the AI review pipeline.
+ */
 export function collectAiReviewIssues(state) {
     return collectIssuesForSource(state, ["dml_prompt"]);
 }
 
+/**
+ * Extract the AI review report from a report collection.
+ *
+ * @param {Record<string, any>} reports - Raw reports keyed by source.
+ * @returns {Record<string, any> | null} The AI review report when available.
+ */
 export function extractAiReviewReport(reports) {
     if (!reports || typeof reports !== "object") {
         return null;
@@ -163,6 +23,12 @@ export function extractAiReviewReport(reports) {
     return reports.dml_prompt || reports.dmlPrompt || null;
 }
 
+/**
+ * Merge the AI review report into the provided analysis object.
+ *
+ * @param {{ state: Record<string, any>, baseAnalysis: Record<string, any>, reports: Record<string, any> }} params - Merge inputs.
+ * @returns {{ dmlReport: Record<string, any> | null }} Normalised AI report information.
+ */
 export function mergeAiReviewReportIntoAnalysis({ state, baseAnalysis, reports }) {
     const dmlReport = extractAiReviewReport(reports);
     if (!dmlReport || typeof dmlReport !== "object") {
@@ -208,6 +74,27 @@ export function mergeAiReviewReportIntoAnalysis({ state, baseAnalysis, reports }
     return { dmlReport: mergedDml };
 }
 
+function normaliseSqlText(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+    if (value === null || value === undefined) {
+        return "";
+    }
+    return String(value);
+}
+
+function normaliseNumber(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
+/**
+ * Transform the AI review report into UI friendly detail records.
+ *
+ * @param {Record<string, any>} dmlReport - Raw AI review report payload.
+ * @returns {{ summary: Record<string, any> | null, details: Record<string, any> | null }}
+ */
 export function buildAiReviewDetails(dmlReport) {
     if (!dmlReport || typeof dmlReport !== "object") {
         return { summary: null, details: null };
