@@ -1169,6 +1169,8 @@ const cloneIssueWithSource = (issue, sourceKey, options = {}) => {
     if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
         return issue;
     }
+    return { ...issue, source: sourceKey };
+}
 
     const target = normaliseReportSourceKey(sourceKey);
     if (!target) {
@@ -1192,6 +1194,14 @@ const cloneIssueWithSource = (issue, sourceKey, options = {}) => {
             return issue;
         }
     }
+    return result;
+}
+
+function collectIssuesForSource(state, sourceKeys) {
+    if (!state) return [];
+    const sources = Array.isArray(sourceKeys) ? sourceKeys : [sourceKeys];
+    const sourceSet = new Set(sources.map((key) => normaliseReportSourceKey(key)));
+    const results = [];
 
     const cloned = { ...issue, source: sourceKey };
     if (options.force) {
@@ -1231,6 +1241,22 @@ function createIssueKey(issue) {
         } catch (_error) {
             return String(issue);
         }
+        results.push(candidate);
+    };
+
+    const parsedIssues = state.parsedReport?.issues;
+    if (Array.isArray(parsedIssues)) {
+        parsedIssues.forEach((issue) => {
+            const sourceValue =
+                issue?.source || issue?.analysis_source || issue?.analysisSource || issue?.from;
+            const normalised = normaliseReportSourceKey(sourceValue);
+            if (normalised && sourceSet.has(normalised)) {
+                pushIssue(issue);
+            }
+        });
+    }
+    if (typeof issue === "string") {
+        return issue;
     }
     if (typeof issue === "string") {
         return issue;
@@ -1458,6 +1484,12 @@ function collectAggregatedIssues(state) {
     if (dmlIssues.length > 0) {
         return dmlIssues;
     }
+    if (!state.issueSummary || typeof state.issueSummary !== "object") {
+        state.issueSummary = { totalIssues: total };
+        return;
+    }
+    state.issueSummary.totalIssues = total;
+}
 
     return [];
 }
