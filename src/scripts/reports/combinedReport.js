@@ -377,11 +377,83 @@ export function buildSummaryRecord(summarySource, options) {
  */
 export function buildSourceSummaryRecord(state, options) {
     const summaryCandidate = extractSummaryCandidate(state, options.sourceKey);
-    return buildSummaryRecord(summaryCandidate, {
+    const record = buildSummaryRecord(summaryCandidate, {
         source: options.sourceKey,
         label: options.label,
         issues: options.issues
     });
+
+    const normalisedKey = normaliseReportSourceKey(options.sourceKey);
+    if (!record.status) {
+        if (normalisedKey === normaliseReportSourceKey("static_analyzer")) {
+            const fallbackStatus = pickStringCandidate(
+                state?.analysis?.staticReport?.summary?.status,
+                state?.analysis?.staticReport?.status,
+                state?.analysis?.enrichmentStatus
+            );
+            if (fallbackStatus) {
+                record.status = fallbackStatus;
+            }
+        } else if (normalisedKey === normaliseReportSourceKey("dml_prompt")) {
+            const fallbackStatus = pickStringCandidate(
+                state?.analysis?.dmlSummary?.status,
+                state?.analysis?.dmlReport?.summary?.status,
+                state?.analysis?.dmlStatus,
+                state?.dml?.summary?.status
+            );
+            if (fallbackStatus) {
+                record.status = fallbackStatus;
+            }
+        }
+    }
+
+    if (!record.generated_at) {
+        if (normalisedKey === normaliseReportSourceKey("static_analyzer")) {
+            const generatedAt = pickFirstCandidate(
+                state?.analysis?.staticReport?.generatedAt,
+                state?.analysis?.generatedAt,
+                state?.generatedAt
+            );
+            if (generatedAt) {
+                record.generated_at = generatedAt;
+            }
+        } else if (normalisedKey === normaliseReportSourceKey("dml_prompt")) {
+            const generatedAt = pickFirstCandidate(
+                state?.analysis?.dmlGeneratedAt,
+                state?.analysis?.dmlReport?.generatedAt,
+                state?.dml?.generatedAt
+            );
+            if (generatedAt) {
+                record.generated_at = generatedAt;
+            }
+        }
+    }
+
+    if (!record.error_message) {
+        if (normalisedKey === normaliseReportSourceKey("static_analyzer")) {
+            const errorMessage = pickStringCandidate(
+                state?.analysis?.staticReport?.summary?.error_message,
+                state?.analysis?.staticReport?.summary?.errorMessage,
+                state?.analysis?.staticReport?.error,
+                state?.analysis?.enrichmentError
+            );
+            if (errorMessage) {
+                record.error_message = errorMessage;
+            }
+        } else if (normalisedKey === normaliseReportSourceKey("dml_prompt")) {
+            const errorMessage = pickStringCandidate(
+                state?.analysis?.dmlErrorMessage,
+                state?.analysis?.dmlReport?.summary?.error_message,
+                state?.analysis?.dmlReport?.summary?.errorMessage,
+                state?.dmlErrorMessage
+            );
+            if (errorMessage) {
+                record.error_message = errorMessage;
+            }
+        }
+    }
+
+    return record;
 }
 
 /**
@@ -393,11 +465,48 @@ export function buildSourceSummaryRecord(state, options) {
  */
 export function buildCombinedSummaryRecord(state, options) {
     const globalSummary = state?.parsedReport?.summary || null;
-    return buildSummaryRecord(globalSummary, {
+    const record = buildSummaryRecord(globalSummary, {
         source: "combined",
         label: options.label || "聚合報告",
         issues: options.issues
     });
+
+    if (!record.status) {
+        const fallbackStatus = pickStringCandidate(
+            state?.analysis?.dify?.status,
+            state?.analysis?.difySummary?.status,
+            state?.analysis?.difyReport?.summary?.status,
+            state?.dify?.status
+        );
+        if (fallbackStatus) {
+            record.status = fallbackStatus;
+        }
+    }
+
+    if (!record.generated_at) {
+        const generatedAt = pickFirstCandidate(
+            state?.analysis?.difySummary?.generated_at,
+            state?.analysis?.difySummary?.generatedAt,
+            state?.analysis?.dify?.generatedAt
+        );
+        if (generatedAt) {
+            record.generated_at = generatedAt;
+        }
+    }
+
+    if (!record.error_message) {
+        const errorMessage = pickStringCandidate(
+            state?.analysis?.difyErrorMessage,
+            state?.analysis?.difySummary?.error_message,
+            state?.analysis?.difySummary?.errorMessage,
+            state?.difyErrorMessage
+        );
+        if (errorMessage) {
+            record.error_message = errorMessage;
+        }
+    }
+
+    return record;
 }
 
 /**
@@ -640,6 +749,76 @@ function mergeMetricLists(base, extra) {
     return merged;
 }
 
+const DIFY_STATUS_SOURCES = new Set([
+    "static_analyzer",
+    "staticanalyzer",
+    "dml_prompt",
+    "dmlprompt",
+    "dify_workflow",
+    "difyworkflow"
+]);
+
+const DIFY_STATUS_BASE_LABELS = {
+    static_analyzer: "Dify 補充",
+    staticanalyzer: "Dify 補充",
+    dml_prompt: "Dify 審查",
+    dmlprompt: "Dify 審查",
+    dify_workflow: "Dify 聚合",
+    difyworkflow: "Dify 聚合"
+};
+
+function interpretStatusKind(normalised) {
+    if (!normalised) return "empty";
+    if (/(success|succeed|succeeded|completed|complete|done|ok|ready|finish|finished)/.test(normalised)) {
+        return "success";
+    }
+    if (/(cancel|canceled|cancelled|aborted)/.test(normalised)) {
+        return "cancelled";
+    }
+    if (/(fail|error|errored|denied|rejected|fault|invalid)/.test(normalised)) {
+        return "error";
+    }
+    if (/(pending|process|progress|running|working|generat|queue|queued|prepar|start|loading|execut)/.test(normalised)) {
+        return "processing";
+    }
+    if (/(idle|wait|waiting|none|standby|initial)/.test(normalised)) {
+        return "idle";
+    }
+    return "unknown";
+}
+
+function formatStatusForSource(keyLower, status) {
+    const trimmed = typeof status === "string" ? status.trim() : "";
+    if (!DIFY_STATUS_SOURCES.has(keyLower)) {
+        return { raw: trimmed, display: trimmed };
+    }
+
+    const baseLabel = DIFY_STATUS_BASE_LABELS[keyLower] || "Dify";
+    if (!trimmed) {
+        return { raw: "", display: `${baseLabel} 尚未執行` };
+    }
+
+    const normalised = trimmed.toLowerCase();
+    const kind = interpretStatusKind(normalised);
+    if (kind === "success") {
+        return { raw: trimmed, display: `${baseLabel} 完成` };
+    }
+    if (kind === "error") {
+        return { raw: trimmed, display: `${baseLabel} 失敗` };
+    }
+    if (kind === "cancelled") {
+        return { raw: trimmed, display: `${baseLabel} 已取消` };
+    }
+    if (kind === "processing") {
+        return { raw: trimmed, display: `${baseLabel} 處理中` };
+    }
+    if (kind === "idle") {
+        return { raw: trimmed, display: `${baseLabel} 尚未執行` };
+    }
+
+    return { raw: trimmed, display: `${baseLabel}：${trimmed}` };
+}
+
 export function buildSourceSummaries(options = {}) {
     const {
         summaryRecords = [],
@@ -672,13 +851,15 @@ export function buildSourceSummaries(options = {}) {
             const status = pickStringCandidate(value.status);
             const errorMessage = pickStringCandidate(value.error_message, value.errorMessage);
             const generatedAt = pickFirstCandidate(value.generated_at, value.generatedAt);
+            const statusResult = formatStatusForSource(keyLower, status);
 
             sourceSummaries.push({
                 key,
                 keyLower,
                 label,
                 metrics,
-                status,
+                status: statusResult.display,
+                statusRaw: statusResult.raw,
                 errorMessage,
                 generatedAt
             });
@@ -691,14 +872,19 @@ export function buildSourceSummaries(options = {}) {
         const status = pickStringCandidate(...(enhanceOptions.statusCandidates || []));
         const errorMessage = pickStringCandidate(...(enhanceOptions.errorCandidates || []));
         const generatedAt = pickFirstCandidate(...(enhanceOptions.generatedAtCandidates || []));
+        const statusResult = formatStatusForSource(keyLower, status);
 
         if (entry) {
             entry.label = label;
             if (metrics.length) {
                 entry.metrics = mergeMetricLists(entry.metrics, metrics);
             }
-            if (!entry.status) {
-                entry.status = status;
+            if (statusResult.raw) {
+                entry.statusRaw = statusResult.raw;
+                entry.status = statusResult.display;
+            } else if (!entry.status) {
+                entry.statusRaw = statusResult.raw;
+                entry.status = statusResult.display;
             }
             if (!entry.errorMessage) {
                 entry.errorMessage = errorMessage;
@@ -706,13 +892,14 @@ export function buildSourceSummaries(options = {}) {
             if (!entry.generatedAt) {
                 entry.generatedAt = generatedAt;
             }
-        } else if (metrics.length || status || errorMessage || generatedAt) {
+        } else if (metrics.length || statusResult.display || errorMessage || generatedAt) {
             sourceSummaries.push({
                 key: enhanceOptions.key || keyLower,
                 keyLower,
                 label,
                 metrics,
-                status,
+                status: statusResult.display,
+                statusRaw: statusResult.raw,
                 errorMessage,
                 generatedAt
             });
@@ -816,11 +1003,13 @@ export function buildSourceSummaries(options = {}) {
     const combinedSummarySourceValue =
         globalSummary?.sources?.dify_workflow || globalSummary?.sources?.difyWorkflow || null;
     enhanceSourceSummary("dify_workflow", "聚合報告", {
-        metricsSources: [combinedSummarySourceValue, globalSummary, combinedSummarySource],
+        metricsSources: [combinedSummarySourceValue, globalSummary, combinedSummarySource, analysisState?.difySummary],
         statusCandidates: [
             combinedSummarySourceValue?.status,
             globalSummary?.status,
-            analysisState?.dify?.status
+            analysisState?.dify?.status,
+            analysisState?.difySummary?.status,
+            analysisState?.difyReport?.summary?.status
         ],
         errorCandidates: [
             combinedSummarySourceValue?.error_message,
@@ -828,13 +1017,20 @@ export function buildSourceSummaries(options = {}) {
             globalSummary?.error_message,
             globalSummary?.errorMessage,
             analysisState?.difyErrorMessage,
+            analysisState?.difySummary?.error_message,
+            analysisState?.difySummary?.errorMessage,
+            analysisState?.difyReport?.summary?.error_message,
+            analysisState?.difyReport?.summary?.errorMessage,
             state?.difyErrorMessage
         ],
         generatedAtCandidates: [
             combinedSummarySourceValue?.generated_at,
             combinedSummarySourceValue?.generatedAt,
             globalSummary?.generated_at,
-            globalSummary?.generatedAt
+            globalSummary?.generatedAt,
+            analysisState?.difySummary?.generated_at,
+            analysisState?.difySummary?.generatedAt,
+            analysisState?.dify?.generatedAt
         ]
     });
 
