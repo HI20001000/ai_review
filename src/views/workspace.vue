@@ -30,7 +30,7 @@ import {
 } from "../scripts/reports/aiReviewReport.js";
 import {
     isPlainObject,
-    pickJsonStringCandidate,
+    pickJsonStringCandidate as pickReportJsonStringCandidate,
     pickReportObjectCandidate,
     stringifyReportCandidate,
     parseReportJson
@@ -295,7 +295,7 @@ const activeReportCombinedRawSourceText = computed(() => {
     }
 
     const parsedReport = isPlainObject(report.state?.parsedReport) ? report.state.parsedReport : null;
-    const directCandidate = pickJsonStringCandidate(
+    const directCandidate = pickReportJsonStringCandidate(
         report.state?.report,
         report.state?.analysis?.result,
         report.state?.analysis?.rawReport,
@@ -330,15 +330,11 @@ const activeReportCombinedRawSourceText = computed(() => {
         aiIssues,
         aggregatedIssues
     );
-    if (directCandidate) {
-        const directParsed = parseReportJson(directCandidate) || null;
-        if (
-            !parsedReport ||
-            (isPlainObject(directParsed) &&
-                (isPlainObject(directParsed.reports) || !isPlainObject(parsedReport.reports)))
-        ) {
-            return directCandidate;
-        }
+
+    try {
+        return JSON.stringify({ summary: summaryRecords, issues: aggregatedIssues });
+    } catch (error) {
+        console.warn("[reports] Failed to stringify aggregated report payload", error);
     }
 
     return "";
@@ -369,7 +365,7 @@ const activeReportDifyRawSourceText = computed(() => {
         }
     }
 
-    const fallbackText = pickJsonStringCandidate(report.state?.dify?.report);
+    const fallbackText = pickReportJsonStringCandidate(report.state?.dify?.report);
     if (fallbackText) {
         return fallbackText;
     }
