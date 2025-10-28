@@ -647,28 +647,6 @@ function normaliseAiReviewPayload(payload = {}) {
         issues = Array.isArray(aggregatedObject?.issues) ? aggregatedObject.issues : null;
     }
     issues = normaliseIssues(issues);
-    if (!issues.length) {
-        const fallbackMarkdown = pickFirstString(
-            [
-                summaryObject?.reportText,
-                summaryObject?.report,
-                reportObject?.reportText,
-                reportObject?.report,
-                aggregatedObject?.reportText,
-                aggregatedObject?.report,
-                payload.dmlReportText,
-                payload.dmlReport?.reportText,
-                payload.dmlReport?.report,
-                payload.dml?.reportText,
-                payload.dml?.report
-            ],
-            { allowEmpty: false }
-        );
-        const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
-        if (derivedIssues.length) {
-            issues = normaliseIssues(derivedIssues);
-        }
-    }
 
     const fallbackMarkdown = pickFirstString(
         [
@@ -689,6 +667,11 @@ function normaliseAiReviewPayload(payload = {}) {
 
     const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
     const normalisedDerivedIssues = normaliseIssues(derivedIssues);
+
+    if (!issues.length && normalisedDerivedIssues.length) {
+        issues = normalisedDerivedIssues;
+    }
+
     if (normalisedDerivedIssues.length) {
         issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
     }
@@ -728,211 +711,6 @@ function normaliseAiReviewPayload(payload = {}) {
             issues = dedupeIssues([...aggregatedIssues, ...issues]);
         }
         delete aggregatedObject.issues;
-    }
-
-    const fallbackMarkdown = pickFirstString(
-        [
-            summaryObject?.reportText,
-            summaryObject?.report,
-            reportObject?.reportText,
-            reportObject?.report,
-            aggregatedObject?.reportText,
-            aggregatedObject?.report,
-            payload.dmlReportText,
-            payload.dmlReport?.reportText,
-            payload.dmlReport?.report,
-            payload.dml?.reportText,
-            payload.dml?.report
-        ],
-        { allowEmpty: false }
-    );
-
-    const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
-    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-    if (normalisedDerivedIssues.length) {
-        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
-    }
-
-    const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
-
-    const parsedChunkIssues = [];
-    if (parsedJsonReport && Array.isArray(parsedJsonReport.chunks)) {
-        parsedJsonReport.chunks.forEach((chunk) => {
-            if (!chunk) return;
-            const chunkIndex = normaliseNumber(chunk.index);
-            if (Array.isArray(chunk.issues)) {
-                chunk.issues.forEach((issue) => {
-                    if (!issue) return;
-                    if (isPlainObject(issue)) {
-                        const enriched = { ...issue };
-                        if (chunkIndex !== null && enriched.chunk_index === undefined) {
-                            enriched.chunk_index = chunkIndex;
-                        }
-                        parsedChunkIssues.push(enriched);
-                        return;
-                    }
-                    parsedChunkIssues.push(issue);
-                });
-            }
-        });
-    }
-
-    const parsedJsonIssues = dedupeIssues([...parsedIssues, ...normaliseIssues(parsedChunkIssues)]);
-    if (parsedJsonIssues.length) {
-        issues = dedupeIssues([...parsedJsonIssues, ...issues]);
-    }
-
-    if (aggregatedObject && Array.isArray(aggregatedObject.issues)) {
-        const aggregatedIssues = normaliseIssues(aggregatedObject.issues);
-        if (aggregatedIssues.length) {
-            issues = dedupeIssues([...aggregatedIssues, ...issues]);
-        }
-        delete aggregatedObject.issues;
-    }
-
-    const fallbackReportText = pickFirstString(
-        [
-            summaryObject?.reportText,
-            summaryObject?.report,
-            reportObject?.reportText,
-            reportObject?.report,
-            aggregatedObject?.reportText,
-            aggregatedObject?.report,
-            payload.dmlReportText,
-            payload.dmlReport?.reportText,
-            payload.dmlReport?.report,
-            payload.dml?.reportText,
-            payload.dml?.report
-        ],
-        { allowEmpty: false }
-    );
-
-    const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackReportText);
-    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-    if (normalisedDerivedIssues.length) {
-        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
-    }
-
-    const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
-
-    const parsedChunkIssues = [];
-    if (parsedJsonReport && Array.isArray(parsedJsonReport.chunks)) {
-        parsedJsonReport.chunks.forEach((chunk) => {
-            if (!chunk) return;
-            const chunkIndex = normaliseNumber(chunk.index);
-            if (Array.isArray(chunk.issues)) {
-                chunk.issues.forEach((issue) => {
-                    if (!issue) return;
-                    if (isPlainObject(issue)) {
-                        const enriched = { ...issue };
-                        if (chunkIndex !== null && enriched.chunk_index === undefined) {
-                            enriched.chunk_index = chunkIndex;
-                        }
-                        parsedChunkIssues.push(enriched);
-                        return;
-                    }
-                    parsedChunkIssues.push(issue);
-                });
-            }
-        });
-    }
-
-    const parsedJsonIssues = dedupeIssues([...parsedIssues, ...normaliseIssues(parsedChunkIssues)]);
-    if (parsedJsonIssues.length) {
-        issues = dedupeIssues([...parsedJsonIssues, ...issues]);
-    }
-
-    if (aggregatedObject && Array.isArray(aggregatedObject.issues)) {
-        const aggregatedIssues = normaliseIssues(aggregatedObject.issues);
-        if (aggregatedIssues.length) {
-            issues = dedupeIssues([...aggregatedIssues, ...issues]);
-        }
-        delete aggregatedObject.issues;
-    }
-
-    const derivedIssues = deriveIssuesFromMarkdownSegments(
-        segments,
-        pickFirstString(
-            [
-                summaryObject?.reportText,
-                summaryObject?.report,
-                reportObject?.reportText,
-                reportObject?.report,
-                aggregatedObject?.reportText,
-                aggregatedObject?.report,
-                payload.dmlReportText,
-                payload.dmlReport?.reportText,
-                payload.dmlReport?.report,
-                payload.dml?.reportText,
-                payload.dml?.report
-            ],
-            { allowEmpty: false }
-        )
-    );
-    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-    if (normalisedDerivedIssues.length) {
-        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
-    }
-
-    const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
-
-    const parsedChunkIssues = [];
-    if (parsedJsonReport && Array.isArray(parsedJsonReport.chunks)) {
-        parsedJsonReport.chunks.forEach((chunk) => {
-            if (!chunk) return;
-            const chunkIndex = normaliseNumber(chunk.index);
-            if (Array.isArray(chunk.issues)) {
-                chunk.issues.forEach((issue) => {
-                    if (!issue) return;
-                    if (isPlainObject(issue)) {
-                        const enriched = { ...issue };
-                        if (chunkIndex !== null && enriched.chunk_index === undefined) {
-                            enriched.chunk_index = chunkIndex;
-                        }
-                        parsedChunkIssues.push(enriched);
-                        return;
-                    }
-                    parsedChunkIssues.push(issue);
-                });
-            }
-        });
-    }
-
-    const parsedJsonIssues = dedupeIssues([...parsedIssues, ...normaliseIssues(parsedChunkIssues)]);
-    if (parsedJsonIssues.length) {
-        issues = dedupeIssues([...parsedJsonIssues, ...issues]);
-    }
-
-    if (aggregatedObject && Array.isArray(aggregatedObject.issues)) {
-        const aggregatedIssues = normaliseIssues(aggregatedObject.issues);
-        if (aggregatedIssues.length) {
-            issues = dedupeIssues([...aggregatedIssues, ...issues]);
-        }
-        delete aggregatedObject.issues;
-    }
-
-    const derivedIssues = deriveIssuesFromMarkdownSegments(
-        segments,
-        pickFirstString(
-            [
-                summaryObject?.reportText,
-                summaryObject?.report,
-                reportObject?.reportText,
-                reportObject?.report,
-                aggregatedObject?.reportText,
-                aggregatedObject?.report,
-                payload.dmlReportText,
-                payload.dmlReport?.reportText,
-                payload.dmlReport?.report,
-                payload.dml?.reportText,
-                payload.dml?.report
-            ],
-            { allowEmpty: false }
-        )
-    );
-    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-    if (normalisedDerivedIssues.length) {
-        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
     }
 
     const generatedAtCandidates = [
