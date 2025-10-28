@@ -183,6 +183,74 @@ export function pickReportObjectCandidate(...candidates) {
 }
 
 /**
+ * Normalise an arbitrary report payload into a plain object.
+ *
+ * @param {unknown} value
+ * @param {{ fallbackKey?: string }} [options]
+ * @returns {Record<string, any> | null}
+ */
+export function normaliseReportObject(value, options = {}) {
+    if (isPlainObject(value)) {
+        return value;
+    }
+    if (Array.isArray(value)) {
+        return { issues: value };
+    }
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return null;
+        }
+        const parsed = parseReportJson(trimmed);
+        if (parsed) {
+            return parsed;
+        }
+        const fallbackKey =
+            typeof options.fallbackKey === "string" && options.fallbackKey.trim()
+                ? options.fallbackKey
+                : "report";
+        return { [fallbackKey]: trimmed };
+    }
+    return null;
+}
+
+/**
+ * Normalise an AI review payload into a predictable structure.
+ *
+ * @param {unknown} value
+ * @returns {Record<string, any> | null}
+ */
+export function normaliseAiReviewPayload(value) {
+    const base = normaliseReportObject(value);
+    if (!base) {
+        return null;
+    }
+
+    const result = { ...base };
+    result.summary = isPlainObject(result.summary) ? result.summary : null;
+    result.aggregated = isPlainObject(result.aggregated) ? result.aggregated : null;
+    result.metadata = isPlainObject(result.metadata) ? result.metadata : null;
+    result.issues = Array.isArray(result.issues) ? result.issues : [];
+    result.chunks = Array.isArray(result.chunks) ? result.chunks : [];
+    result.segments = Array.isArray(result.segments) ? result.segments : [];
+    if (typeof result.report !== "string") {
+        result.report = result.report === undefined || result.report === null ? "" : String(result.report);
+    }
+    if (typeof result.reportText !== "string") {
+        result.reportText =
+            result.reportText === undefined || result.reportText === null ? "" : String(result.reportText);
+    }
+    if (typeof result.error !== "string") {
+        result.error = result.error === undefined || result.error === null ? "" : String(result.error);
+    }
+    if (typeof result.status !== "string") {
+        result.status = result.status === undefined || result.status === null ? "" : String(result.status);
+    }
+
+    return result;
+}
+
+/**
  * Safely stringify a report candidate for export or preview usage.
  *
  * @param {unknown} value
@@ -235,6 +303,8 @@ export default {
     isPlainObject,
     pickJsonStringCandidate,
     pickReportObjectCandidate,
+    normaliseReportObject,
+    normaliseAiReviewPayload,
     stringifyReportCandidate,
     parseReportJson
 };

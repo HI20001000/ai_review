@@ -32,6 +32,8 @@ import {
     isPlainObject,
     pickJsonStringCandidate as pickReportJsonStringCandidate,
     pickReportObjectCandidate,
+    normaliseReportObject,
+    normaliseAiReviewPayload,
     stringifyReportCandidate,
     parseReportJson
 } from "../scripts/reports/shared.js";
@@ -2959,24 +2961,6 @@ function normaliseHydratedReportText(value) {
     return String(value);
 }
 
-function normaliseHydratedReportObject(value) {
-    if (!value) return null;
-    if (typeof value === "string") {
-        const trimmed = value.trim();
-        if (!trimmed) return null;
-        try {
-            return JSON.parse(trimmed);
-        } catch (error) {
-            console.warn("[Report] Failed to parse hydrated report object", error, value);
-            return { report: trimmed };
-        }
-    }
-    if (typeof value === "object") {
-        return value;
-    }
-    return null;
-}
-
 function normaliseHydratedString(value) {
     return typeof value === "string" ? value : "";
 }
@@ -3008,7 +2992,14 @@ async function hydrateReportsForProject(projectId) {
             const analysisResult = normaliseHydratedString(record.analysis?.result);
             const analysisOriginal = normaliseHydratedString(record.analysis?.originalResult);
             state.rawReport = hydratedRawReport || analysisResult || analysisOriginal || "";
-            state.dify = normaliseHydratedReportObject(record.dify);
+            state.dify = normaliseReportObject(record.dify);
+            if (!state.dify) {
+                state.dify = normaliseReportObject(record.analysis?.dify);
+            }
+            state.dml = normaliseAiReviewPayload(record.dml);
+            if (!state.dml) {
+                state.dml = normaliseAiReviewPayload(record.analysis?.dmlReport);
+            }
             state.difyErrorMessage = normaliseHydratedString(record.difyErrorMessage);
             if (!state.difyErrorMessage) {
                 state.difyErrorMessage = normaliseHydratedString(record.analysis?.difyErrorMessage);
@@ -3183,7 +3174,14 @@ async function generateReportForFile(project, node, options = {}) {
         state.segments = Array.isArray(payload?.segments) ? payload.segments : [];
         state.conversationId = payload?.conversationId || "";
         state.rawReport = typeof payload?.rawReport === "string" ? payload.rawReport : "";
-        state.dify = payload?.dify || null;
+        state.dify = normaliseReportObject(payload?.dify);
+        if (!state.dify) {
+            state.dify = normaliseReportObject(payload?.analysis?.dify);
+        }
+        state.dml = normaliseAiReviewPayload(payload?.dml);
+        if (!state.dml) {
+            state.dml = normaliseAiReviewPayload(payload?.analysis?.dmlReport);
+        }
         state.difyErrorMessage = typeof payload?.difyErrorMessage === "string" ? payload.difyErrorMessage : "";
         state.analysis = payload?.analysis || null;
         applyAiReviewResultToState(state, payload);
