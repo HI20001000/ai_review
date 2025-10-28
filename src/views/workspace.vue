@@ -1169,6 +1169,11 @@ function cloneIssueWithSource(issue, sourceKey, options = {}) {
     if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
         return issue;
     }
+    if (issue.source || issue.analysis_source || issue.analysisSource) {
+        return issue;
+    }
+    return { ...issue, source: sourceKey };
+}
 
     const target = normaliseReportSourceKey(sourceKey);
     if (!target) {
@@ -1192,6 +1197,14 @@ function cloneIssueWithSource(issue, sourceKey, options = {}) {
             return issue;
         }
     }
+    return result;
+}
+
+function collectIssuesForSource(state, sourceKeys) {
+    if (!state) return [];
+    const sources = Array.isArray(sourceKeys) ? sourceKeys : [sourceKeys];
+    const sourceSet = new Set(sources.map((key) => normaliseReportSourceKey(key)));
+    const results = [];
 
     const cloned = { ...issue, source: sourceKey };
     if (options.force) {
@@ -1224,6 +1237,21 @@ function createIssueKey(issue) {
         } catch (_error) {
             return String(issue);
         }
+    });
+
+    return dedupeIssues(results);
+}
+
+function collectAggregatedIssues(state) {
+    if (!state) return [];
+    const issues = [
+        ...collectIssuesForSource(state, ["static_analyzer"]),
+        ...collectIssuesForSource(state, ["dml_prompt"]),
+        ...collectIssuesForSource(state, ["dify_workflow"])
+    ];
+    const combined = dedupeIssues(issues);
+    if (combined.length > 0) {
+        return combined;
     }
     if (typeof issue === "string") {
         return issue;
