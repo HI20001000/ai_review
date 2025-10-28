@@ -13,11 +13,14 @@ import {
     buildCombinedReportPayload,
     buildIssueDistributions,
     buildSourceSummaries,
+    buildAggregatedSummaryRecords,
+    collectAggregatedIssues,
     collectIssueSummaryTotals
 } from "../scripts/reports/combinedReport.js";
 import {
     collectStaticReportIssues,
     mergeStaticReportIntoAnalysis,
+    buildStaticReportDetails,
     buildStaticRawSourceText
 } from "../scripts/reports/staticReport.js";
 import {
@@ -273,6 +276,10 @@ const activeReport = computed(() => {
     };
 });
 
+const isActiveReportProcessing = computed(
+    () => activeReport.value?.state?.status === "processing"
+);
+
 const viewerHasContent = computed(() => {
     const report = activeReport.value;
     if (!report) return false;
@@ -290,13 +297,38 @@ const hasChunkDetails = computed(() => {
     return Array.isArray(chunks) && chunks.length > 1;
 });
 
+const activeReportIssueSources = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state) {
+        return {
+            state: null,
+            staticIssues: [],
+            aiIssues: [],
+            aggregatedIssues: []
+        };
+    }
+
+    const state = report.state;
+    return {
+        state,
+        staticIssues: collectStaticReportIssues(state),
+        aiIssues: collectAiReviewIssues(state),
+        aggregatedIssues: collectAggregatedIssues(state)
+    };
+});
+
 const activeReportCombinedRawSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) {
         return "";
     }
 
-    const parsedReport = isPlainObject(report.state?.parsedReport) ? report.state.parsedReport : null;
+    const { state, staticIssues, aiIssues, aggregatedIssues } = activeReportIssueSources.value;
+    if (!state) {
+        return "";
+    }
+
+    const parsedReport = isPlainObject(state?.parsedReport) ? state.parsedReport : null;
     const directCandidate = pickReportJsonStringCandidate(
         report.state?.report,
         report.state?.analysis?.result,
@@ -322,10 +354,6 @@ const activeReportCombinedRawSourceText = computed(() => {
         }
     }
 
-    const state = report.state;
-    const staticIssues = collectStaticReportIssues(state);
-    const aiIssues = collectAiReviewIssues(state);
-    const aggregatedIssues = collectAggregatedIssues(state);
     const summaryRecords = buildAggregatedSummaryRecords(
         state,
         staticIssues,
@@ -348,7 +376,7 @@ const activeReportStaticRawSourceText = computed(() => {
     return buildStaticRawSourceText(report.state);
 });
 
-const activeReportDifyRawSourceText = computed(() => {
+const activeReportAiRawSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
 
@@ -394,9 +422,9 @@ const activeReportStaticRawText = computed(() => formatReportRawText(activeRepor
 const activeReportStaticRawValue = computed(() => parseReportRawValue(activeReportStaticRawSourceText.value));
 const canExportActiveReportStaticRaw = computed(() => activeReportStaticRawValue.value.success);
 
-const activeReportDifyRawText = computed(() => formatReportRawText(activeReportDifyRawSourceText.value));
-const activeReportDifyRawValue = computed(() => parseReportRawValue(activeReportDifyRawSourceText.value));
-const canExportActiveReportDifyRaw = computed(() => activeReportDifyRawValue.value.success);
+const activeReportAiRawText = computed(() => formatReportRawText(activeReportAiRawSourceText.value));
+const activeReportAiRawValue = computed(() => parseReportRawValue(activeReportAiRawSourceText.value));
+const canExportActiveReportAiRaw = computed(() => activeReportAiRawValue.value.success);
 
 const isExportingReportJsonExcel = ref(false);
 
@@ -418,9 +446,13 @@ const activeReportDetails = computed(() => {
         !Array.isArray(combinedRawValue.value)
             ? combinedRawValue.value
             : null;
-    let aggregatedIssues = Array.isArray(aggregatedPayload?.issues) ? aggregatedPayload.issues : [];
-    if (!aggregatedIssues.length) {
-        aggregatedIssues = collectAggregatedIssues(report.state);
+    const { staticIssues, aiIssues, aggregatedIssues: derivedAggregatedIssues } =
+        activeReportIssueSources.value;
+    let aggregatedIssues = Array.isArray(aggregatedPayload?.issues)
+        ? aggregatedPayload.issues
+        : derivedAggregatedIssues;
+    if (!Array.isArray(aggregatedIssues)) {
+        aggregatedIssues = [];
     }
 
     let summaryRecords = Array.isArray(aggregatedPayload?.summary) ? aggregatedPayload.summary : null;
@@ -992,9 +1024,9 @@ const canShowCodeIssues = computed(() => {
 
 const canShowCombinedReportJson = computed(() => activeReportCombinedRawText.value.trim().length > 0);
 const canShowStaticReportJson = computed(() => activeReportStaticRawText.value.trim().length > 0);
-const canShowDifyReportJson = computed(() => activeReportDifyRawText.value.trim().length > 0);
+const canShowAiReportJson = computed(() => activeReportAiRawText.value.trim().length > 0);
 
-const activeReportDifyErrorMessage = computed(() => {
+const activeReportAiErrorMessage = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
 
@@ -1013,21 +1045,21 @@ const activeReportDifyErrorMessage = computed(() => {
     return "";
 });
 
-const shouldShowDifyUnavailableNotice = computed(() => {
+const shouldShowAiUnavailableNotice = computed(() => {
     const report = activeReport.value;
     if (!report) return false;
     if (!canShowStaticReportJson.value) return false;
-    if (canShowDifyReportJson.value) return false;
+    if (canShowAiReportJson.value) return false;
     return true;
 });
 
-const reportDifyUnavailableNotice = computed(() => {
-    if (!shouldShowDifyUnavailableNotice.value) return "";
-    const detail = activeReportDifyErrorMessage.value;
+const reportAiUnavailableNotice = computed(() => {
+    if (!shouldShowAiUnavailableNotice.value) return "";
+    const detail = activeReportAiErrorMessage.value;
     if (detail) {
-        return `無法取得 AI審查報告（Dify）：${detail}。目前僅顯示靜態分析器報告。`;
+        return `無法取得 AI審查報告：${detail}。目前僅顯示靜態分析器報告。`;
     }
-    return "無法取得 AI審查報告（Dify），僅顯示靜態分析器報告。";
+    return "無法取得 AI審查報告，僅顯示靜態分析器報告。";
 });
 
 const shouldShowReportIssuesSection = computed(
@@ -1035,7 +1067,7 @@ const shouldShowReportIssuesSection = computed(
         Boolean(activeReportDetails.value) ||
         canShowCombinedReportJson.value ||
         canShowStaticReportJson.value ||
-        canShowDifyReportJson.value
+        canShowAiReportJson.value
 );
 
 const activeReportIssueCount = computed(() => {
@@ -1048,12 +1080,12 @@ const activeReportIssueCount = computed(() => {
 
 function setReportIssuesViewMode(mode) {
     if (!mode) return;
-    if (mode !== "code" && mode !== "combined" && mode !== "static" && mode !== "dify") return;
+    if (mode !== "code" && mode !== "combined" && mode !== "static" && mode !== "ai") return;
     if (mode === reportIssuesViewMode.value) return;
     if (mode === "code" && !canShowCodeIssues.value) return;
     if (mode === "combined" && !canShowCombinedReportJson.value) return;
     if (mode === "static" && !canShowStaticReportJson.value) return;
-    if (mode === "dify" && !canShowDifyReportJson.value) return;
+    if (mode === "ai" && !canShowAiReportJson.value) return;
     reportIssuesViewMode.value = mode;
 }
 
@@ -1072,7 +1104,7 @@ function ensureReportIssuesViewMode(preferred) {
     if (preferred) {
         order.push(preferred);
     }
-    order.push("code", "combined", "static", "dify");
+    order.push("code", "combined", "static", "ai");
 
     for (const mode of order) {
         if (mode === "code" && canShowCodeIssues.value) {
@@ -1093,9 +1125,9 @@ function ensureReportIssuesViewMode(preferred) {
             }
             return;
         }
-        if (mode === "dify" && canShowDifyReportJson.value) {
-            if (reportIssuesViewMode.value !== "dify") {
-                reportIssuesViewMode.value = "dify";
+        if (mode === "ai" && canShowAiReportJson.value) {
+            if (reportIssuesViewMode.value !== "ai") {
+                reportIssuesViewMode.value = "ai";
             }
             return;
         }
@@ -1150,7 +1182,7 @@ watch(activeReport, (report) => {
 });
 
 watch(
-    [canShowCodeIssues, canShowCombinedReportJson, canShowStaticReportJson, canShowDifyReportJson],
+    [canShowCodeIssues, canShowCombinedReportJson, canShowStaticReportJson, canShowAiReportJson],
     () => {
         ensureReportIssuesViewMode(reportIssuesViewMode.value);
     },
@@ -1166,8 +1198,8 @@ watch(
 );
 
 function getReportJsonValueForMode(mode) {
-    if (mode === "dify") {
-        return activeReportDifyRawValue.value;
+    if (mode === "ai") {
+        return activeReportAiRawValue.value;
     }
     if (mode === "combined") {
         return activeReportCombinedRawValue.value;
@@ -1179,7 +1211,7 @@ function getReportJsonLabel(mode) {
     if (mode === "combined") {
         return "聚合報告 JSON";
     }
-    if (mode === "dify") {
+    if (mode === "ai") {
         return "AI審查 JSON";
     }
     return "靜態分析器 JSON";
@@ -1885,8 +1917,8 @@ function buildActiveReportExcelFileName(mode = "raw") {
     let suffix = "raw";
     if (mode === "static") {
         suffix = "static";
-    } else if (mode === "dify") {
-        suffix = "dify";
+    } else if (mode === "ai") {
+        suffix = "ai";
     }
 
     return `${finalName}_${suffix}.xlsx`;
@@ -3806,17 +3838,26 @@ onBeforeUnmount(() => {
                                 {{ entry.project.name }} / {{ entry.path }}
                             </button>
                         </div>
-                        <div class="reportViewerContent">
+                        <div
+                            class="reportViewerContent"
+                            :class="{ 'reportViewerContent--loading': isActiveReportProcessing }"
+                            :aria-busy="isActiveReportProcessing ? 'true' : 'false'"
+                        >
+                            <div
+                                v-if="isActiveReportProcessing"
+                                class="reportViewerProcessingOverlay reportViewerLoading"
+                                role="status"
+                                aria-live="polite"
+                            >
+                                <span class="reportViewerSpinner" aria-hidden="true"></span>
+                                <p class="reportViewerProcessingText">正在透過 Dify 執行 AI審查，請稍候…</p>
+                            </div>
                             <template v-if="activeReport">
                                 <div class="reportViewerHeader">
                                     <h3 class="reportTitle">{{ activeReport.project.name }} / {{ activeReport.path }}</h3>
                                     <p class="reportViewerTimestamp">更新於 {{ activeReport.state.updatedAtDisplay || '-' }}</p>
                                 </div>
-                                <div v-if="activeReport.state.status === 'processing'" class="reportViewerLoading">
-                                    <span class="reportViewerSpinner" aria-hidden="true"></span>
-                                    <p class="reportViewerLoadingText">正在透過 Dify 執行 AI審查，請稍候…</p>
-                                </div>
-                                <div v-else-if="activeReport.state.status === 'error'" class="reportErrorPanel">
+                                <div v-if="activeReport.state.status === 'error'" class="reportErrorPanel">
                                     <p class="reportErrorText">生成失敗：{{ activeReport.state.error || '未知原因' }}</p>
                                     <p class="reportErrorHint">請檢查檔案權限、Dify 設定或稍後再試。</p>
                                 </div>
@@ -4111,9 +4152,9 @@ onBeforeUnmount(() => {
                                                         <button
                                                             type="button"
                                                             class="reportIssuesToggleButton"
-                                                            :class="{ active: reportIssuesViewMode === 'dify' }"
-                                                            :disabled="!canShowDifyReportJson"
-                                                            @click="setReportIssuesViewMode('dify')"
+                                                            :class="{ active: reportIssuesViewMode === 'ai' }"
+                                                            :disabled="!canShowAiReportJson"
+                                                            @click="setReportIssuesViewMode('ai')"
                                                         >
                                                             AI審查 JSON
                                                         </button>
@@ -4136,10 +4177,10 @@ onBeforeUnmount(() => {
                                                             </div>
                                                             <div v-else>
                                                                 <div
-                                                                    v-if="shouldShowDifyUnavailableNotice"
+                                                                    v-if="shouldShowAiUnavailableNotice"
                                                                     class="reportIssuesNotice reportIssuesNotice--warning"
                                                                 >
-                                                                    {{ reportDifyUnavailableNotice }}
+                                                                    {{ reportAiUnavailableNotice }}
                                                                 </div>
                                                                 <div
                                                                     v-if="hasReportIssueLines"
@@ -4255,23 +4296,23 @@ onBeforeUnmount(() => {
                                                         </div>
                                                         <p v-else class="reportIssuesEmpty">尚未取得靜態分析器報告內容。</p>
                                                     </template>
-                                                    <template v-else-if="reportIssuesViewMode === 'dify'">
-                                                        <div v-if="activeReportDifyRawText.trim().length" class="reportRow">
-                                                            <div v-if="canExportActiveReportDifyRaw" class="reportRowActions">
+                                                    <template v-else-if="reportIssuesViewMode === 'ai'">
+                                                        <div v-if="activeReportAiRawText.trim().length" class="reportRow">
+                                                            <div v-if="canExportActiveReportAiRaw" class="reportRowActions">
                                                                 <button
                                                                     type="button"
                                                                     class="reportRowActionButton"
                                                                     :disabled="isExportingReportJsonExcel"
-                                                                    @click="exportActiveReportJsonToExcel('dify')"
+                                                                    @click="exportActiveReportJsonToExcel('ai')"
                                                                 >
                                                                     <span v-if="isExportingReportJsonExcel">匯出中…</span>
                                                                     <span v-else>匯出 Excel</span>
                                                                 </button>
                                                             </div>
                                                             <pre class="reportRowContent codeScroll themed-scrollbar">
-                                                                {{ activeReportDifyRawText }}
+                                                                {{ activeReportAiRawText }}
                                                             </pre>
-                                                            <p v-if="!canExportActiveReportDifyRaw" class="reportRowNotice">
+                                                            <p v-if="!canExportActiveReportAiRaw" class="reportRowNotice">
                                                                 AI審查 JSON 不是有效的 JSON 格式，因此無法匯出 Excel。
                                                             </p>
                                                         </div>
@@ -4678,6 +4719,38 @@ body,
     padding: 16px;
     box-sizing: border-box;
     min-width: 0;
+    position: relative;
+}
+
+.reportViewerContent--loading > :not(.reportViewerProcessingOverlay) {
+    filter: blur(1px);
+    pointer-events: none;
+}
+
+.reportViewerProcessingOverlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.78);
+    backdrop-filter: blur(2px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 32px 16px;
+    z-index: 10;
+    pointer-events: all;
+}
+
+.reportViewerProcessingOverlay .reportViewerSpinner {
+    width: 48px;
+    height: 48px;
+}
+
+.reportViewerProcessingText {
+    margin: 0;
+    font-size: 14px;
+    color: #cbd5f5;
 }
 
 .reportViewerLoading {
