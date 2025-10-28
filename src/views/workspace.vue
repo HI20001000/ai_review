@@ -15,13 +15,21 @@ import {
 } from "../scripts/reports/combinedReport.js";
 import {
     collectStaticReportIssues,
-    mergeStaticReportIntoAnalysis
+    mergeStaticReportIntoAnalysis,
+    buildStaticRawSourceText
 } from "../scripts/reports/staticReport.js";
 import {
     collectAiReviewIssues,
     mergeAiReviewReportIntoAnalysis,
     buildAiReviewDetails
 } from "../scripts/reports/aiReviewReport.js";
+import {
+    isPlainObject,
+    pickJsonStringCandidate,
+    pickReportObjectCandidate,
+    stringifyReportCandidate,
+    parseReportJson
+} from "../scripts/reports/shared.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
 
@@ -288,8 +296,34 @@ const hasChunkDetails = computed(() => {
 
 const activeReportCombinedRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) {
+    if (!report) {
         return "";
+    }
+
+    const parsedReport = isPlainObject(report.state?.parsedReport) ? report.state.parsedReport : null;
+    const directCandidate = pickJsonStringCandidate(
+        report.state?.report,
+        report.state?.analysis?.result,
+        report.state?.analysis?.rawReport,
+        report.state?.analysis?.originalResult,
+        report.state?.rawReport
+    );
+    if (directCandidate) {
+        const directParsed = parseReportJson(directCandidate) || null;
+        if (
+            !parsedReport ||
+            (isPlainObject(directParsed) &&
+                (isPlainObject(directParsed.reports) || !isPlainObject(parsedReport.reports)))
+        ) {
+            return directCandidate;
+        }
+    }
+
+    if (parsedReport) {
+        const stringified = stringifyReportCandidate(parsedReport, "combined report payload");
+        if (stringified) {
+            return stringified;
+        }
     }
 
     const state = report.state;
@@ -309,36 +343,38 @@ const activeReportCombinedRawSourceText = computed(() => {
         console.warn("[reports] Failed to stringify aggregated report payload", error);
     }
 
-    const direct = state?.report;
-    if (typeof direct === "string" && direct.trim()) {
-        return direct;
-    }
-
-    const analysisResult = state?.analysis?.result;
-    if (typeof analysisResult === "string" && analysisResult.trim()) {
-        return analysisResult;
-    }
-
     return "";
 });
 
 const activeReportStaticRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) return "";
-
-    const issues = collectStaticReportIssues(report.state);
-    try {
-        return JSON.stringify({ issues });
-    } catch (error) {
-        console.warn("[reports] Failed to stringify static issue payload", error);
-    }
-
-    return "";
+    if (!report) return "";
+    return buildStaticRawSourceText(report.state);
 });
 
 const activeReportDifyRawSourceText = computed(() => {
     const report = activeReport.value;
-    if (!report || !report.state?.parsedReport) return "";
+    if (!report) return "";
+
+    const parsedReport = isPlainObject(report.state?.parsedReport) ? report.state.parsedReport : null;
+    const reports = parsedReport && isPlainObject(parsedReport.reports) ? parsedReport.reports : null;
+    const dmlSource = pickReportObjectCandidate(
+        report.state?.dml,
+        reports?.dml_prompt,
+        reports?.dmlPrompt,
+        report.state?.analysis?.dmlReport
+    );
+    if (dmlSource) {
+        const stringified = stringifyReportCandidate(dmlSource, "AI review report");
+        if (stringified) {
+            return stringified;
+        }
+    }
+
+    const fallbackText = pickJsonStringCandidate(report.state?.dify?.report);
+    if (fallbackText) {
+        return fallbackText;
+    }
 
     const issues = collectAiReviewIssues(report.state);
     try {
@@ -1542,10 +1578,6 @@ function parseReportRawValue(rawText) {
     }
 
     return { success: false, value: null };
-}
-
-function isPlainObject(value) {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function buildWorksheetFromValue(value) {
@@ -2921,25 +2953,6 @@ function createDefaultReportState() {
         sourceLoading: false,
         sourceError: ""
     };
-}
-
-function parseReportJson(reportText) {
-    if (typeof reportText !== "string") return null;
-    const trimmed = reportText.trim();
-    if (!trimmed) return null;
-    if (!/^\s*[\[{]/.test(trimmed)) return null;
-    try {
-        const parsed = JSON.parse(trimmed);
-        if (Array.isArray(parsed)) {
-            return { issues: parsed };
-        }
-        if (parsed && typeof parsed === "object") {
-            return parsed;
-        }
-        return null;
-    } catch (_error) {
-        return null;
-    }
 }
 
 function computeIssueSummary(reportText, parsedOverride = null) {
