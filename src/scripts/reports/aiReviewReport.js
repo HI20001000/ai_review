@@ -1,9 +1,21 @@
 import { collectIssuesForSource } from "./combinedReport.js";
 
+/**
+ * Collect AI review issues from the workspace state.
+ *
+ * @param {Record<string, any>} state - Workspace state containing parsed reports and analysis snapshots.
+ * @returns {Array<any>} Issues raised by the AI review pipeline.
+ */
 export function collectAiReviewIssues(state) {
     return collectIssuesForSource(state, ["dml_prompt"]);
 }
 
+/**
+ * Extract the AI review report from a report collection.
+ *
+ * @param {Record<string, any>} reports - Raw reports keyed by source.
+ * @returns {Record<string, any> | null} The AI review report when available.
+ */
 export function extractAiReviewReport(reports) {
     if (!reports || typeof reports !== "object") {
         return null;
@@ -11,6 +23,12 @@ export function extractAiReviewReport(reports) {
     return reports.dml_prompt || reports.dmlPrompt || null;
 }
 
+/**
+ * Merge the AI review report into the provided analysis object.
+ *
+ * @param {{ state: Record<string, any>, baseAnalysis: Record<string, any>, reports: Record<string, any> }} params - Merge inputs.
+ * @returns {{ dmlReport: Record<string, any> | null }} Normalised AI report information.
+ */
 export function mergeAiReviewReportIntoAnalysis({ state, baseAnalysis, reports }) {
     const dmlReport = extractAiReviewReport(reports);
     if (!dmlReport || typeof dmlReport !== "object") {
@@ -70,6 +88,12 @@ function normaliseNumber(value) {
     return Number.isFinite(numeric) ? numeric : null;
 }
 
+/**
+ * Transform the AI review report into UI friendly detail records.
+ *
+ * @param {Record<string, any>} dmlReport - Raw AI review report payload.
+ * @returns {{ summary: Record<string, any> | null, details: Record<string, any> | null }}
+ */
 export function buildAiReviewDetails(dmlReport) {
     if (!dmlReport || typeof dmlReport !== "object") {
         return { summary: null, details: null };
