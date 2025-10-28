@@ -22,7 +22,10 @@ import {
 import {
     collectAiReviewIssues,
     mergeAiReviewReportIntoAnalysis,
-    buildAiReviewDetails
+    applyAiReviewResultToState,
+    hydrateAiReviewStateFromRecord,
+    buildAiReviewSourceSummaryConfig,
+    buildAiReviewPersistencePayload
 } from "../scripts/reports/aiReviewReport.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
@@ -673,28 +676,255 @@ const activeReportDetails = computed(() => {
         omitKeys: ["sources", "by_rule", "byRule", "source", "label"]
     });
 
-    let dmlDetails = null;
-    let dmlSummary = null;
-    if (dmlReport && typeof dmlReport === "object") {
-        const aiDetails = buildAiReviewDetails(dmlReport);
-        dmlSummary = aiDetails.summary;
-        dmlDetails = aiDetails.details;
+    const normaliseKey = (value) => (typeof value === "string" ? value.toLowerCase() : "");
+    const pickString = (...candidates) => {
+        for (const candidate of candidates) {
+            if (typeof candidate === "string") {
+                const trimmed = candidate.trim();
+                if (trimmed) {
+                    return trimmed;
+                }
+            }
+        }
+        return "";
+    };
+    const pickFirstValue = (...candidates) => {
+        for (const candidate of candidates) {
+            if (candidate !== null && candidate !== undefined && candidate !== "") {
+                return candidate;
+            }
+        }
+        return null;
+    };
+    const buildSourceMetrics = (...sources) => {
+        const metrics = [];
+        const seen = new Set();
+        const pushMetric = (label, rawValue, transform = (value) => value) => {
+            if (!label || rawValue === undefined || rawValue === null) return;
+            const value = transform(rawValue);
+            if (value === null || value === undefined || value === "") return;
+            if (seen.has(label)) return;
+            seen.add(label);
+            metrics.push({ label, value });
+        };
+
+        for (const source of sources) {
+            if (!source || typeof source !== "object") continue;
+            pushMetric(
+                "問題數",
+                source.total_issues ?? source.totalIssues,
+                (candidate) => {
+                    const numeric = Number(candidate);
+                    return Number.isFinite(numeric) ? numeric : Number(candidate ?? 0) || 0;
+                }
+            );
+            if (source.by_rule || source.byRule) {
+                const byRuleEntries = Object.entries(source.by_rule || source.byRule || {});
+                pushMetric("規則數", byRuleEntries.length, (count) => Number(count) || 0);
+            }
+            pushMetric(
+                "拆分語句",
+                source.total_segments ?? source.totalSegments,
+                (candidate) => {
+                    const numeric = Number(candidate);
+                    return Number.isFinite(numeric) ? numeric : Number(candidate ?? 0) || 0;
+                }
+            );
+            pushMetric(
+                "已分析段數",
+                source.analyzed_segments ?? source.analyzedSegments,
+                (candidate) => {
+                    const numeric = Number(candidate);
+                    return Number.isFinite(numeric) ? numeric : Number(candidate ?? 0) || 0;
+                }
+            );
+        }
+
+        return metrics;
+    };
+    const mergeMetrics = (base, extra) => {
+        if (!Array.isArray(base) || !base.length) return Array.isArray(extra) ? [...extra] : [];
+        if (!Array.isArray(extra) || !extra.length) return [...base];
+        const merged = [...base];
+        const seen = new Set(base.map((item) => item.label));
+        extra.forEach((item) => {
+            if (!item || typeof item !== "object") return;
+            if (seen.has(item.label)) return;
+            seen.add(item.label);
+            merged.push(item);
+        });
+        return merged;
+    };
+
+    const sourceSummaries = [];
+    if (globalSummary?.sources && typeof globalSummary.sources === "object") {
+        for (const [key, value] of Object.entries(globalSummary.sources)) {
+            if (!value || typeof value !== "object") continue;
+            const keyLower = normaliseKey(key);
+            let label = key;
+            if (keyLower === "static_analyzer" || keyLower === "staticanalyzer") {
+                label = "靜態分析器";
+            } else if (keyLower === "dml_prompt" || keyLower === "dmlprompt") {
+                label = "AI審查";
+            } else if (keyLower === "dify_workflow" || keyLower === "difyworkflow") {
+                label = "聚合報告";
+            }
+
+            const metrics = buildSourceMetrics(value);
+            const status = pickString(value.status);
+            const errorMessage = pickString(value.error_message, value.errorMessage);
+            const generatedAt = pickFirstValue(value.generated_at, value.generatedAt);
+
+            sourceSummaries.push({
+                key,
+                keyLower,
+                label,
+                metrics,
+                status,
+                errorMessage,
+                generatedAt
+            });
+        }
     }
 
-    const analysisState =
-        report.state?.analysis && typeof report.state.analysis === "object"
-            ? report.state.analysis
+    const enhanceSourceSummary = (keyLower, label, options = {}) => {
+        const entry = sourceSummaries.find((item) => item.keyLower === keyLower);
+        const metrics = buildSourceMetrics(...(options.metricsSources || []));
+        const status = pickString(...(options.statusCandidates || []));
+        const errorMessage = pickString(...(options.errorCandidates || []));
+        const generatedAt = pickFirstValue(...(options.generatedAtCandidates || []));
+
+        if (entry) {
+            entry.label = label;
+            if (metrics.length) {
+                entry.metrics = mergeMetrics(entry.metrics, metrics);
+            }
+            if (!entry.status) {
+                entry.status = status;
+            }
+            if (!entry.errorMessage) {
+                entry.errorMessage = errorMessage;
+            }
+            if (!entry.generatedAt) {
+                entry.generatedAt = generatedAt;
+            }
+        } else if (metrics.length || status || errorMessage || generatedAt) {
+            sourceSummaries.push({
+                key: options.key || keyLower,
+                keyLower,
+                label,
+                metrics,
+                status,
+                errorMessage,
+                generatedAt
+            });
+        }
+    };
+
+    const applySummaryRecords = (records) => {
+        if (!Array.isArray(records)) return;
+        records.forEach((record) => {
+            if (!record || typeof record !== "object") return;
+            const keyLower = normaliseKey(record.source);
+            if (!keyLower) return;
+            const label =
+                typeof record.label === "string" && record.label.trim()
+                    ? record.label.trim()
+                    : record.source || keyLower;
+            const existingIndex = sourceSummaries.findIndex((item) => item.keyLower === keyLower);
+            if (existingIndex !== -1) {
+                sourceSummaries.splice(existingIndex, 1);
+            }
+            enhanceSourceSummary(keyLower, label, {
+                key: record.source || keyLower,
+                metricsSources: [record],
+                statusCandidates: [record.status],
+                errorCandidates: [record.error_message, record.errorMessage, record.message],
+                generatedAtCandidates: [record.generated_at, record.generatedAt]
+            });
+        });
+    };
+
+    applySummaryRecords(summaryRecords);
+
+    const staticSourceValue =
+        globalSummary?.sources?.static_analyzer || globalSummary?.sources?.staticAnalyzer || null;
+    const staticAnalysis =
+        report.state?.analysis?.staticReport && typeof report.state.analysis.staticReport === "object"
+            ? report.state.analysis.staticReport
             : null;
-    const sourceSummaries = buildSourceSummaries({
-        summaryRecords,
-        globalSummary,
-        staticSummary: staticSummaryObject,
-        analysisState,
-        state: report.state,
-        dmlReport,
-        dmlSummary,
-        dmlDetails,
-        combinedSummarySource
+    enhanceSourceSummary("static_analyzer", "靜態分析器", {
+        metricsSources: [staticSourceValue, staticSummaryObject],
+        statusCandidates: [
+            staticSourceValue?.status,
+            staticSummaryObject?.status,
+            staticSummaryObject?.status_label,
+            staticSummaryObject?.statusLabel,
+            staticAnalysis?.summary?.status,
+            staticAnalysis?.status,
+            report.state?.analysis?.enrichmentStatus
+        ],
+        errorCandidates: [
+            staticSourceValue?.error_message,
+            staticSourceValue?.errorMessage,
+            staticSummaryObject?.error_message,
+            staticSummaryObject?.errorMessage,
+            staticAnalysis?.summary?.error_message,
+            staticAnalysis?.summary?.errorMessage,
+            staticAnalysis?.error
+        ],
+        generatedAtCandidates: [
+            staticSourceValue?.generated_at,
+            staticSourceValue?.generatedAt,
+            staticSummaryObject?.generated_at,
+            staticSummaryObject?.generatedAt,
+            staticAnalysis?.generatedAt,
+            staticAnalysis?.summary?.generated_at,
+            staticAnalysis?.summary?.generatedAt,
+            report.state?.generatedAt,
+            report.state?.analysis?.generatedAt
+        ]
+    });
+
+    const dmlSourceValue = globalSummary?.sources?.dml_prompt || globalSummary?.sources?.dmlPrompt || null;
+    const aiSourceSummary = buildAiReviewSourceSummaryConfig({
+        report: dmlReport,
+        globalSource: dmlSourceValue,
+        analysis: report.state?.analysis
+    });
+    const dmlSummary = aiSourceSummary.summary;
+    const dmlDetails = aiSourceSummary.details;
+
+    enhanceSourceSummary("dml_prompt", "AI審查", {
+        metricsSources: aiSourceSummary.metricsSources,
+        statusCandidates: aiSourceSummary.statusCandidates,
+        errorCandidates: aiSourceSummary.errorCandidates,
+        generatedAtCandidates: aiSourceSummary.generatedAtCandidates
+    });
+
+    const combinedSummarySourceValue =
+        globalSummary?.sources?.dify_workflow || globalSummary?.sources?.difyWorkflow || null;
+    enhanceSourceSummary("dify_workflow", "聚合報告", {
+        metricsSources: [combinedSummarySourceValue, globalSummary],
+        statusCandidates: [
+            combinedSummarySourceValue?.status,
+            globalSummary?.status,
+            report.state?.analysis?.dify?.status
+        ],
+        errorCandidates: [
+            combinedSummarySourceValue?.error_message,
+            combinedSummarySourceValue?.errorMessage,
+            globalSummary?.error_message,
+            globalSummary?.errorMessage,
+            report.state?.analysis?.difyErrorMessage,
+            report.state?.difyErrorMessage
+        ],
+        generatedAtCandidates: [
+            combinedSummarySourceValue?.generated_at,
+            combinedSummarySourceValue?.generatedAt,
+            globalSummary?.generated_at,
+            globalSummary?.generatedAt
+        ]
     });
 
     return {
@@ -2752,6 +2982,11 @@ function normaliseReportAnalysisState(state) {
             }
         }
 
+        const aiPersistencePatch = buildAiReviewPersistencePayload(state);
+        if (aiPersistencePatch) {
+            Object.assign(baseAnalysis, aiPersistencePatch);
+        }
+
         const parsedSummaryData =
             parsedReport.summary && typeof parsedReport.summary === "object" ? parsedReport.summary : null;
         if (!state.difyErrorMessage && parsedSummaryData) {
@@ -3026,17 +3261,13 @@ async function hydrateReportsForProject(projectId) {
             const analysisOriginal = normaliseHydratedString(record.analysis?.originalResult);
             state.rawReport = hydratedRawReport || analysisResult || analysisOriginal || "";
             state.dify = normaliseHydratedReportObject(record.dify);
-            state.dml = normaliseHydratedReportObject(record.dml);
             state.difyErrorMessage = normaliseHydratedString(record.difyErrorMessage);
-            state.dmlErrorMessage = normaliseHydratedString(record.dmlErrorMessage);
             if (!state.difyErrorMessage) {
                 state.difyErrorMessage = normaliseHydratedString(record.analysis?.difyErrorMessage);
             }
-            if (!state.dmlErrorMessage) {
-                state.dmlErrorMessage = normaliseHydratedString(record.analysis?.dmlErrorMessage);
-            }
             state.parsedReport = parseReportJson(state.report);
             state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
+            hydrateAiReviewStateFromRecord(state, record);
             normaliseReportAnalysisState(state);
             updateIssueSummaryTotals(state);
             const timestamp = parseHydratedTimestamp(record.generatedAt || record.updatedAt || record.createdAt);
@@ -3205,10 +3436,9 @@ async function generateReportForFile(project, node, options = {}) {
         state.conversationId = payload?.conversationId || "";
         state.rawReport = typeof payload?.rawReport === "string" ? payload.rawReport : "";
         state.dify = payload?.dify || null;
-        state.dml = payload?.dml || null;
         state.difyErrorMessage = typeof payload?.difyErrorMessage === "string" ? payload.difyErrorMessage : "";
-        state.dmlErrorMessage = typeof payload?.dmlErrorMessage === "string" ? payload.dmlErrorMessage : "";
         state.analysis = payload?.analysis || null;
+        applyAiReviewResultToState(state, payload);
         state.parsedReport = parseReportJson(state.report);
         state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
         normaliseReportAnalysisState(state);
