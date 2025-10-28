@@ -1165,7 +1165,7 @@ function findEntryBySourceKey(container, sourceKey) {
     return null;
 }
 
-function cloneIssueWithSource(issue, sourceKey, options = {}) {
+const cloneIssueWithSource = (issue, sourceKey, options = {}) => {
     if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
         return issue;
     }
@@ -1209,7 +1209,7 @@ function collectIssuesForSource(state, sourceKeys) {
         delete cloned.analysisSource;
     }
     return cloned;
-}
+};
 
 function remapIssuesToSource(issues, sourceKey, options = {}) {
     if (!Array.isArray(issues)) {
@@ -1258,6 +1258,9 @@ function createIssueKey(issue) {
     if (typeof issue === "string") {
         return issue;
     }
+    if (typeof issue === "string") {
+        return issue;
+    }
     return String(issue);
 }
 
@@ -1290,6 +1293,26 @@ function collectIssuesForSource(state, sourceKeys) {
         results.push(candidate);
     };
 
+    const removeIssuesBySource = (normalisedKey) => {
+        if (!normalisedKey) {
+            return;
+        }
+        for (let index = results.length - 1; index >= 0; index -= 1) {
+            const existing = results[index];
+            if (!existing || typeof existing !== "object") {
+                continue;
+            }
+            const existingKey =
+                normaliseReportSourceKey(existing.source) ||
+                normaliseReportSourceKey(existing.analysis_source) ||
+                normaliseReportSourceKey(existing.analysisSource) ||
+                normaliseReportSourceKey(existing.from);
+            if (existingKey === normalisedKey) {
+                results.splice(index, 1);
+            }
+        }
+    };
+
     const parsedIssues = state.parsedReport?.issues;
     if (Array.isArray(parsedIssues)) {
         parsedIssues.forEach((issue) => {
@@ -1297,6 +1320,9 @@ function collectIssuesForSource(state, sourceKeys) {
                 issue?.source || issue?.analysis_source || issue?.analysisSource || issue?.from;
             const normalised = normaliseReportSourceKey(sourceValue);
             if (normalised && sourceSet.has(normalised)) {
+                if (normalised === normaliseReportSourceKey("static_analyzer")) {
+                    return;
+                }
                 pushIssue(issue);
             }
         });
@@ -1309,39 +1335,47 @@ function collectIssuesForSource(state, sourceKeys) {
             const normalisedKey = normaliseReportSourceKey(sourceKey);
 
             if (normalisedKey === normaliseReportSourceKey("static_analyzer")) {
-                let enrichedCount = 0;
+                const staticKey = normaliseReportSourceKey("static_analyzer");
+                const enrichedIssues = [];
 
                 const difyEntry = findEntryBySourceKey(reports, "dify_workflow");
+                if (Array.isArray(difyEntry?.issues) && difyEntry.issues.length) {
+                    enrichedIssues.push(
+                        ...remapIssuesToSource(difyEntry.issues, sourceKey, { force: true })
+                    );
+                }
+
                 const difyAggregated =
                     difyEntry?.aggregated && typeof difyEntry.aggregated === "object"
                         ? difyEntry.aggregated
                         : null;
-                if (difyAggregated && Array.isArray(difyAggregated.issues) && difyAggregated.issues.length) {
-                    difyAggregated.issues.forEach((issue) => pushIssue(issue, sourceKey, true));
-                    enrichedCount += difyAggregated.issues.length;
-                }
-
-                if (!enrichedCount && Array.isArray(difyEntry?.issues) && difyEntry.issues.length) {
-                    difyEntry.issues.forEach((issue) => pushIssue(issue, sourceKey, true));
-                    enrichedCount += difyEntry.issues.length;
+                if (!enrichedIssues.length && difyAggregated && Array.isArray(difyAggregated.issues)) {
+                    enrichedIssues.push(
+                        ...remapIssuesToSource(difyAggregated.issues, sourceKey, { force: true })
+                    );
                 }
 
                 const aggregated =
                     reportEntry?.aggregated && typeof reportEntry.aggregated === "object"
                         ? reportEntry.aggregated
                         : null;
-                if (!enrichedCount && aggregated && Array.isArray(aggregated.issues) && aggregated.issues.length) {
-                    aggregated.issues.forEach((issue) => pushIssue(issue, sourceKey));
-                    enrichedCount += aggregated.issues.length;
+                if (!enrichedIssues.length && aggregated && Array.isArray(aggregated.issues)) {
+                    enrichedIssues.push(...remapIssuesToSource(aggregated.issues, sourceKey));
                 }
 
-                if (!enrichedCount && Array.isArray(state.dify?.issues) && state.dify.issues.length) {
-                    state.dify.issues.forEach((issue) => pushIssue(issue, sourceKey, true));
-                    enrichedCount += state.dify.issues.length;
+                if (!enrichedIssues.length && Array.isArray(state.dify?.issues) && state.dify.issues.length) {
+                    enrichedIssues.push(
+                        ...remapIssuesToSource(state.dify.issues, sourceKey, { force: true })
+                    );
                 }
 
-                if (!enrichedCount && reportEntry && Array.isArray(reportEntry.issues)) {
-                    reportEntry.issues.forEach((issue) => pushIssue(issue, sourceKey));
+                if (!enrichedIssues.length && reportEntry && Array.isArray(reportEntry.issues)) {
+                    enrichedIssues.push(...remapIssuesToSource(reportEntry.issues, sourceKey));
+                }
+
+                if (enrichedIssues.length) {
+                    removeIssuesBySource(staticKey);
+                    dedupeIssues(enrichedIssues).forEach((issue) => pushIssue(issue));
                 }
             } else {
                 if (reportEntry && Array.isArray(reportEntry.issues)) {
@@ -1396,12 +1430,16 @@ function collectIssuesForSource(state, sourceKeys) {
                     ? staticReport.aggregated.issues
                     : null;
             if (Array.isArray(aggregatedIssues) && aggregatedIssues.length) {
-                aggregatedIssues.forEach((issue) => pushIssue(issue, sourceKey));
+                dedupeIssues(remapIssuesToSource(aggregatedIssues, sourceKey)).forEach((issue) =>
+                    pushIssue(issue)
+                );
                 return;
             }
 
             if (Array.isArray(staticReport?.issues)) {
-                staticReport.issues.forEach((issue) => pushIssue(issue, sourceKey));
+                dedupeIssues(remapIssuesToSource(staticReport.issues, sourceKey)).forEach((issue) =>
+                    pushIssue(issue)
+                );
             }
         }
     });
