@@ -8,10 +8,12 @@ import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
 import { generateReportViaDify, fetchProjectReports } from "../scripts/services/reportService.js";
 import {
-    collectAggregatedIssues,
-    buildAggregatedSummaryRecords,
     buildSummaryDetailList,
-    updateIssueSummaryTotals
+    updateIssueSummaryTotals,
+    buildCombinedReportPayload,
+    buildIssueDistributions,
+    buildSourceSummaries,
+    collectIssueSummaryTotals
 } from "../scripts/reports/combinedReport.js";
 import {
     collectStaticReportIssues,
@@ -22,7 +24,10 @@ import {
 import {
     collectAiReviewIssues,
     mergeAiReviewReportIntoAnalysis,
-    buildAiReviewDetails
+    applyAiReviewResultToState,
+    hydrateAiReviewStateFromRecord,
+    buildAiReviewSourceSummaryConfig,
+    buildAiReviewPersistencePayload
 } from "../scripts/reports/aiReviewReport.js";
 import PanelRail from "../components/workspace/PanelRail.vue";
 import ChatAiWindow from "../components/ChatAiWindow.vue";
@@ -61,7 +66,6 @@ const {
     loadProjectsFromDB,
     cleanupLegacyHandles,
     openProject,
-    collapseProject,
     deleteProject,
     handleDrop,
     handleDragOver,
@@ -235,19 +239,9 @@ const readyReports = computed(() => {
     return list;
 });
 
-const projectIssueTotals = computed(() => {
-    const totals = new Map();
-    Object.entries(reportStates).forEach(([key, state]) => {
-        const summary = state?.issueSummary;
-        if (!summary || !Number.isFinite(summary.totalIssues)) return;
-        const parsed = parseReportKey(key);
-        if (!parsed.projectId) return;
-        const previous = totals.get(parsed.projectId);
-        const base = typeof previous === "number" && Number.isFinite(previous) ? previous : 0;
-        totals.set(parsed.projectId, base + summary.totalIssues);
-    });
-    return totals;
-});
+const projectIssueTotals = computed(() =>
+    collectIssueSummaryTotals(reportStates, { parseKey: parseReportKey })
+);
 const hasReadyReports = computed(() => readyReports.value.length > 0);
 const activeReport = computed(() => {
     const target = activeReportTarget.value;
@@ -295,18 +289,10 @@ const activeReportCombinedRawSourceText = computed(() => {
     }
 
     const state = report.state;
-    const staticIssues = collectStaticReportIssues(state);
-    const aiIssues = collectAiReviewIssues(state);
-    const aggregatedIssues = collectAggregatedIssues(state);
-    const summaryRecords = buildAggregatedSummaryRecords(
-        state,
-        staticIssues,
-        aiIssues,
-        aggregatedIssues
-    );
+    const payload = buildCombinedReportPayload(state);
 
     try {
-        return JSON.stringify({ summary: summaryRecords, issues: aggregatedIssues });
+        return JSON.stringify(payload);
     } catch (error) {
         console.warn("[reports] Failed to stringify aggregated report payload", error);
     }
@@ -370,9 +356,6 @@ const activeReportDetails = computed(() => {
 
     const reports = parsed.reports && typeof parsed.reports === "object" ? parsed.reports : null;
     const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
-
-    const staticIssues = collectStaticReportIssues(report.state);
-    const aiIssues = collectAiReviewIssues(report.state);
 
     const combinedRawValue = activeReportCombinedRawValue.value;
     const aggregatedPayload =
@@ -613,41 +596,19 @@ const activeReportDetails = computed(() => {
     }
 
     const dmlSourceValue = globalSummary?.sources?.dml_prompt || globalSummary?.sources?.dmlPrompt || null;
-
-    let dmlDetails = null;
-    let dmlSummary = null;
-    if (dmlReport && typeof dmlReport === "object") {
-        const aiDetails = buildAiReviewDetails(dmlReport);
-        dmlSummary = aiDetails.summary;
-        dmlDetails = aiDetails.details;
-    }
+    const aiSourceSummary = buildAiReviewSourceSummaryConfig({
+        report: dmlReport,
+        globalSource: dmlSourceValue,
+        analysis: report.state?.analysis
+    });
+    const dmlSummary = aiSourceSummary.summary;
+    const dmlDetails = aiSourceSummary.details;
 
     enhanceSourceSummary("dml_prompt", "AI審查", {
-        metricsSources: [dmlSourceValue, dmlDetails?.summary, dmlDetails?.aggregated],
-        statusCandidates: [
-            dmlSourceValue?.status,
-            dmlDetails?.status,
-            dmlSummary?.status,
-            report.state?.analysis?.dmlSummary?.status,
-            report.state?.analysis?.dmlReport?.summary?.status
-        ],
-        errorCandidates: [
-            dmlSourceValue?.error_message,
-            dmlSourceValue?.errorMessage,
-            dmlDetails?.error,
-            dmlSummary?.error_message,
-            dmlSummary?.errorMessage,
-            report.state?.analysis?.dmlErrorMessage
-        ],
-        generatedAtCandidates: [
-            dmlSourceValue?.generated_at,
-            dmlSourceValue?.generatedAt,
-            dmlDetails?.generatedAt,
-            dmlReport?.generatedAt,
-            dmlSummary?.generated_at,
-            dmlSummary?.generatedAt,
-            report.state?.analysis?.dmlGeneratedAt
-        ]
+        metricsSources: aiSourceSummary.metricsSources,
+        statusCandidates: aiSourceSummary.statusCandidates,
+        errorCandidates: aiSourceSummary.errorCandidates,
+        generatedAtCandidates: aiSourceSummary.generatedAtCandidates
     });
 
     const combinedSummarySourceValue =
@@ -675,8 +636,6 @@ const activeReportDetails = computed(() => {
         ]
     });
 
-    const finalSourceSummaries = sourceSummaries.map(({ keyLower, ...item }) => item);
-
     return {
         totalIssues: Number.isFinite(total) ? Number(total) : null,
         summary,
@@ -690,7 +649,7 @@ const activeReportDetails = computed(() => {
         severityBreakdown,
         ruleBreakdown,
         raw: parsed,
-        sourceSummaries: finalSourceSummaries,
+        sourceSummaries,
         combinedSummary: combinedSummarySource,
         combinedSummaryDetails,
         staticReport,
@@ -2732,6 +2691,11 @@ function normaliseReportAnalysisState(state) {
             }
         }
 
+        const aiPersistencePatch = buildAiReviewPersistencePayload(state);
+        if (aiPersistencePatch) {
+            Object.assign(baseAnalysis, aiPersistencePatch);
+        }
+
         const parsedSummaryData =
             parsedReport.summary && typeof parsedReport.summary === "object" ? parsedReport.summary : null;
         if (!state.difyErrorMessage && parsedSummaryData) {
@@ -3006,17 +2970,13 @@ async function hydrateReportsForProject(projectId) {
             const analysisOriginal = normaliseHydratedString(record.analysis?.originalResult);
             state.rawReport = hydratedRawReport || analysisResult || analysisOriginal || "";
             state.dify = normaliseHydratedReportObject(record.dify);
-            state.dml = normaliseHydratedReportObject(record.dml);
             state.difyErrorMessage = normaliseHydratedString(record.difyErrorMessage);
-            state.dmlErrorMessage = normaliseHydratedString(record.dmlErrorMessage);
             if (!state.difyErrorMessage) {
                 state.difyErrorMessage = normaliseHydratedString(record.analysis?.difyErrorMessage);
             }
-            if (!state.dmlErrorMessage) {
-                state.dmlErrorMessage = normaliseHydratedString(record.analysis?.dmlErrorMessage);
-            }
             state.parsedReport = parseReportJson(state.report);
             state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
+            hydrateAiReviewStateFromRecord(state, record);
             normaliseReportAnalysisState(state);
             updateIssueSummaryTotals(state);
             const timestamp = parseHydratedTimestamp(record.generatedAt || record.updatedAt || record.createdAt);
@@ -3185,10 +3145,9 @@ async function generateReportForFile(project, node, options = {}) {
         state.conversationId = payload?.conversationId || "";
         state.rawReport = typeof payload?.rawReport === "string" ? payload.rawReport : "";
         state.dify = payload?.dify || null;
-        state.dml = payload?.dml || null;
         state.difyErrorMessage = typeof payload?.difyErrorMessage === "string" ? payload.difyErrorMessage : "";
-        state.dmlErrorMessage = typeof payload?.dmlErrorMessage === "string" ? payload.dmlErrorMessage : "";
         state.analysis = payload?.analysis || null;
+        applyAiReviewResultToState(state, payload);
         state.parsedReport = parseReportJson(state.report);
         state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
         normaliseReportAnalysisState(state);
