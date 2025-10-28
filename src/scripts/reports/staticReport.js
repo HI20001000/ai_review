@@ -158,6 +158,8 @@ export function preferStaticIssues(state, reports, sourceKey = "static_analyzer"
 }
 
 export default {
+    buildStaticRawSourceText,
+    buildStaticReportDetails,
     collectStaticReportIssues,
     extractStaticReport,
     mergeStaticReportIntoAnalysis,
