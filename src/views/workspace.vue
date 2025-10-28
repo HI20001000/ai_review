@@ -8,10 +8,12 @@ import { useAiAssistant } from "../scripts/composables/useAiAssistant.js";
 import * as fileSystemService from "../scripts/services/fileSystemService.js";
 import { generateReportViaDify, fetchProjectReports } from "../scripts/services/reportService.js";
 import {
-    collectAggregatedIssues,
-    buildAggregatedSummaryRecords,
     buildSummaryDetailList,
-    updateIssueSummaryTotals
+    updateIssueSummaryTotals,
+    buildCombinedReportPayload,
+    buildIssueDistributions,
+    buildSourceSummaries,
+    collectIssueSummaryTotals
 } from "../scripts/reports/combinedReport.js";
 import {
     collectStaticReportIssues,
@@ -62,7 +64,6 @@ const {
     loadProjectsFromDB,
     cleanupLegacyHandles,
     openProject,
-    collapseProject,
     deleteProject,
     handleDrop,
     handleDragOver,
@@ -236,19 +237,9 @@ const readyReports = computed(() => {
     return list;
 });
 
-const projectIssueTotals = computed(() => {
-    const totals = new Map();
-    Object.entries(reportStates).forEach(([key, state]) => {
-        const summary = state?.issueSummary;
-        if (!summary || !Number.isFinite(summary.totalIssues)) return;
-        const parsed = parseReportKey(key);
-        if (!parsed.projectId) return;
-        const previous = totals.get(parsed.projectId);
-        const base = typeof previous === "number" && Number.isFinite(previous) ? previous : 0;
-        totals.set(parsed.projectId, base + summary.totalIssues);
-    });
-    return totals;
-});
+const projectIssueTotals = computed(() =>
+    collectIssueSummaryTotals(reportStates, { parseKey: parseReportKey })
+);
 const hasReadyReports = computed(() => readyReports.value.length > 0);
 const activeReport = computed(() => {
     const target = activeReportTarget.value;
@@ -296,18 +287,10 @@ const activeReportCombinedRawSourceText = computed(() => {
     }
 
     const state = report.state;
-    const staticIssues = collectStaticReportIssues(state);
-    const aiIssues = collectAiReviewIssues(state);
-    const aggregatedIssues = collectAggregatedIssues(state);
-    const summaryRecords = buildAggregatedSummaryRecords(
-        state,
-        staticIssues,
-        aiIssues,
-        aggregatedIssues
-    );
+    const payload = buildCombinedReportPayload(state);
 
     try {
-        return JSON.stringify({ summary: summaryRecords, issues: aggregatedIssues });
+        return JSON.stringify(payload);
     } catch (error) {
         console.warn("[reports] Failed to stringify aggregated report payload", error);
     }
@@ -381,9 +364,6 @@ const activeReportDetails = computed(() => {
     const staticReport = reports?.static_analyzer || reports?.staticAnalyzer || null;
     const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
 
-    const staticIssues = collectStaticReportIssues(report.state);
-    const aiIssues = collectAiReviewIssues(report.state);
-
     const combinedRawValue = activeReportCombinedRawValue.value;
     const aggregatedPayload =
         combinedRawValue &&
@@ -393,20 +373,16 @@ const activeReportDetails = computed(() => {
         !Array.isArray(combinedRawValue.value)
             ? combinedRawValue.value
             : null;
-    let aggregatedIssues = Array.isArray(aggregatedPayload?.issues) ? aggregatedPayload.issues : [];
-    if (!aggregatedIssues.length) {
-        aggregatedIssues = collectAggregatedIssues(report.state);
-    }
+    const fallbackPayload = buildCombinedReportPayload(report.state);
+    const aggregatedIssues =
+        Array.isArray(aggregatedPayload?.issues) && aggregatedPayload.issues.length
+            ? aggregatedPayload.issues
+            : fallbackPayload.issues;
 
-    let summaryRecords = Array.isArray(aggregatedPayload?.summary) ? aggregatedPayload.summary : null;
-    if (!Array.isArray(summaryRecords) || !summaryRecords.length) {
-        summaryRecords = buildAggregatedSummaryRecords(
-            report.state,
-            staticIssues,
-            aiIssues,
-            aggregatedIssues
-        );
-    }
+    const summaryRecords =
+        Array.isArray(aggregatedPayload?.summary) && aggregatedPayload.summary.length
+            ? aggregatedPayload.summary
+            : fallbackPayload.summary;
     const fallbackIssues = Array.isArray(parsed.issues)
         ? parsed.issues
         : Array.isArray(staticReport?.issues)
@@ -468,9 +444,6 @@ const activeReportDetails = computed(() => {
             ? staticReport.metadata
             : null;
     const staticMetadataDetails = buildSummaryDetailList(staticMetadata);
-
-    const severityCounts = new Map();
-    const ruleCounts = new Map();
 
     const toStringList = (value) => {
         if (Array.isArray(value)) {
@@ -600,14 +573,6 @@ const activeReportDetails = computed(() => {
             });
         }
 
-        details.forEach((detail) => {
-            const severityLabel = detail.severityLabel || "未標示";
-            severityCounts.set(severityLabel, (severityCounts.get(severityLabel) || 0) + 1);
-            if (detail.ruleId) {
-                ruleCounts.set(detail.ruleId, (ruleCounts.get(detail.ruleId) || 0) + 1);
-            }
-        });
-
         const objectName =
             (typeof issue?.object === "string" && issue.object.trim()) ||
             (typeof issue?.object_name === "string" && issue.object_name.trim()) ||
@@ -698,31 +663,9 @@ const activeReportDetails = computed(() => {
         };
     });
 
-    if (summaryObject?.by_rule && typeof summaryObject.by_rule === "object") {
-        for (const [rule, count] of Object.entries(summaryObject.by_rule)) {
-            const key = typeof rule === "string" && rule.trim() ? rule.trim() : "";
-            const numeric = Number(count);
-            if (!Number.isFinite(numeric)) continue;
-            const previous = ruleCounts.get(key) || 0;
-            ruleCounts.set(key || "未分類", Math.max(previous, numeric));
-        }
-    }
-
-    const severityBreakdown = Array.from(severityCounts.entries()).map(([label, count]) => ({
-        label,
-        count
-    }));
-
-    severityBreakdown.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-
-    const ruleBreakdown = Array.from(ruleCounts.entries())
-        .filter(([, count]) => Number.isFinite(count) && count > 0)
-        .map(([label, count]) => ({
-            label: label || "未分類",
-            count
-        }));
-
-    ruleBreakdown.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    const { severityBreakdown, ruleBreakdown } = buildIssueDistributions(normalisedIssues, {
+        summaryByRule: summaryObject?.by_rule || summaryObject?.byRule
+    });
 
     const globalSummary = parsed.summary && typeof parsed.summary === "object" ? parsed.summary : null;
     const combinedSummarySource =
@@ -984,8 +927,6 @@ const activeReportDetails = computed(() => {
         ]
     });
 
-    const finalSourceSummaries = sourceSummaries.map(({ keyLower, ...item }) => item);
-
     return {
         totalIssues: Number.isFinite(total) ? Number(total) : null,
         summary,
@@ -999,7 +940,7 @@ const activeReportDetails = computed(() => {
         severityBreakdown,
         ruleBreakdown,
         raw: parsed,
-        sourceSummaries: finalSourceSummaries,
+        sourceSummaries,
         combinedSummary: combinedSummarySource,
         combinedSummaryDetails,
         staticReport,
