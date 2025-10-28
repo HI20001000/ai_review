@@ -20,6 +20,7 @@ import {
 import {
     collectStaticReportIssues,
     mergeStaticReportIntoAnalysis,
+    buildStaticReportDetails,
     buildStaticRawSourceText
 } from "../scripts/reports/staticReport.js";
 import {
