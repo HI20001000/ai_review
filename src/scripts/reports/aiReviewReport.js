@@ -647,6 +647,51 @@ function normaliseAiReviewPayload(payload = {}) {
         issues = Array.isArray(aggregatedObject?.issues) ? aggregatedObject.issues : null;
     }
     issues = normaliseIssues(issues);
+    if (!issues.length) {
+        const fallbackMarkdown = pickFirstString(
+            [
+                summaryObject?.reportText,
+                summaryObject?.report,
+                reportObject?.reportText,
+                reportObject?.report,
+                aggregatedObject?.reportText,
+                aggregatedObject?.report,
+                payload.dmlReportText,
+                payload.dmlReport?.reportText,
+                payload.dmlReport?.report,
+                payload.dml?.reportText,
+                payload.dml?.report
+            ],
+            { allowEmpty: false }
+        );
+        const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
+        if (derivedIssues.length) {
+            issues = normaliseIssues(derivedIssues);
+        }
+    }
+
+    const fallbackMarkdown = pickFirstString(
+        [
+            summaryObject?.reportText,
+            summaryObject?.report,
+            reportObject?.reportText,
+            reportObject?.report,
+            aggregatedObject?.reportText,
+            aggregatedObject?.report,
+            payload.dmlReportText,
+            payload.dmlReport?.reportText,
+            payload.dmlReport?.report,
+            payload.dml?.reportText,
+            payload.dml?.report
+        ],
+        { allowEmpty: false }
+    );
+
+    const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
+    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
+    if (normalisedDerivedIssues.length) {
+        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
+    }
 
     const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
 
