@@ -1,5 +1,11 @@
 import { collectIssuesForSource } from "./combinedReport.js";
-import { dedupeIssues, isPlainObject, normaliseReportObject } from "./shared.js";
+import {
+    dedupeIssues,
+    isPlainObject,
+    normaliseReportObject,
+    pickJsonStringCandidate,
+    parseReportJson
+} from "./shared.js";
 
 /**
  * Collect AI review issues from the workspace state.
@@ -578,12 +584,42 @@ function normaliseAiReviewPayload(payload = {}) {
             ? reportObject.summary
             : null);
 
-    const aggregatedObject =
+    let aggregatedObject =
         normaliseReportObject(payload.dmlAggregated) ||
         normaliseReportObject(analysis?.dmlAggregated) ||
         (reportObject?.aggregated && typeof reportObject.aggregated === "object"
             ? reportObject.aggregated
             : null);
+
+    const reportJsonText = pickJsonStringCandidate(
+        payload.dmlJson,
+        payload.dmlReportJson,
+        payload.reportJson,
+        payload.dmlReport?.report,
+        payload.dml?.report,
+        reportObject?.report,
+        payload.dmlReportText,
+        payload.dmlReport?.reportText,
+        payload.dml?.reportText,
+        payload.reportText
+    );
+
+    let parsedJsonReport = reportJsonText ? parseReportJson(reportJsonText) : null;
+    if (!parsedJsonReport && isPlainObject(reportObject?.report)) {
+        parsedJsonReport = reportObject.report;
+    }
+
+    if (!summaryObject && parsedJsonReport?.summary && isPlainObject(parsedJsonReport.summary)) {
+        summaryObject = parsedJsonReport.summary;
+    }
+
+    if (!aggregatedObject && parsedJsonReport?.aggregated && isPlainObject(parsedJsonReport.aggregated)) {
+        aggregatedObject = parsedJsonReport.aggregated;
+    }
+
+    if (aggregatedObject) {
+        aggregatedObject = clonePlain(aggregatedObject);
+    }
 
     let segments = Array.isArray(payload.dmlSegments) ? payload.dmlSegments : null;
     if (!segments || !segments.length) {
@@ -591,6 +627,12 @@ function normaliseAiReviewPayload(payload = {}) {
     }
     if (!segments || !segments.length) {
         segments = Array.isArray(analysis?.dmlSegments) ? analysis.dmlSegments : null;
+    }
+    if ((!segments || !segments.length) && Array.isArray(parsedJsonReport?.segments)) {
+        segments = parsedJsonReport.segments;
+    }
+    if ((!segments || !segments.length) && Array.isArray(parsedJsonReport?.chunks)) {
+        segments = parsedJsonReport.chunks;
     }
     segments = Array.isArray(segments) ? clonePlain(segments) : [];
 
@@ -626,6 +668,66 @@ function normaliseAiReviewPayload(payload = {}) {
         if (derivedIssues.length) {
             issues = normaliseIssues(derivedIssues);
         }
+    }
+
+    const fallbackMarkdown = pickFirstString(
+        [
+            summaryObject?.reportText,
+            summaryObject?.report,
+            reportObject?.reportText,
+            reportObject?.report,
+            aggregatedObject?.reportText,
+            aggregatedObject?.report,
+            payload.dmlReportText,
+            payload.dmlReport?.reportText,
+            payload.dmlReport?.report,
+            payload.dml?.reportText,
+            payload.dml?.report
+        ],
+        { allowEmpty: false }
+    );
+
+    const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
+    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
+    if (normalisedDerivedIssues.length) {
+        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
+    }
+
+    const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
+
+    const parsedChunkIssues = [];
+    if (parsedJsonReport && Array.isArray(parsedJsonReport.chunks)) {
+        parsedJsonReport.chunks.forEach((chunk) => {
+            if (!chunk) return;
+            const chunkIndex = normaliseNumber(chunk.index);
+            if (Array.isArray(chunk.issues)) {
+                chunk.issues.forEach((issue) => {
+                    if (!issue) return;
+                    if (isPlainObject(issue)) {
+                        const enriched = { ...issue };
+                        if (chunkIndex !== null && enriched.chunk_index === undefined) {
+                            enriched.chunk_index = chunkIndex;
+                        }
+                        parsedChunkIssues.push(enriched);
+                        return;
+                    }
+                    parsedChunkIssues.push(issue);
+                });
+            }
+        });
+    }
+
+    const parsedJsonIssues = dedupeIssues([...parsedIssues, ...normaliseIssues(parsedChunkIssues)]);
+    if (parsedJsonIssues.length) {
+        issues = dedupeIssues([...parsedJsonIssues, ...issues]);
+    }
+
+    if (aggregatedObject && Array.isArray(aggregatedObject.issues)) {
+        const aggregatedIssues = normaliseIssues(aggregatedObject.issues);
+        if (aggregatedIssues.length) {
+            issues = dedupeIssues([...aggregatedIssues, ...issues]);
+        }
+        delete aggregatedObject.issues;
     }
 
     const fallbackMarkdown = pickFirstString(
@@ -699,9 +801,21 @@ function normaliseAiReviewPayload(payload = {}) {
         reportObject?.error
     ]);
 
-    const report = reportObject ? clonePlain(reportObject) : null;
+    let report = reportObject ? clonePlain(reportObject) : null;
     const summary = summaryObject ? clonePlain(summaryObject) : null;
     const aggregated = aggregatedObject ? clonePlain(aggregatedObject) : null;
+
+    if (report) {
+        report.issues = clonePlain(issues);
+        if (!report.summary && summary) {
+            report.summary = clonePlain(summary);
+        }
+        if (!report.aggregated && aggregated) {
+            report.aggregated = clonePlain(aggregated);
+        }
+    } else if (issues.length) {
+        report = { issues: clonePlain(issues) };
+    }
 
     const analysisPatch = {};
     if (report) analysisPatch.dmlReport = report;
