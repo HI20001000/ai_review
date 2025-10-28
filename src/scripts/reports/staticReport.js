@@ -328,6 +328,11 @@ export function mergeStaticReportIntoAnalysis({ state, baseAnalysis, reports, di
         return { difyTarget, staticReport: null };
     }
 
+    const enrichment =
+        staticReport && typeof staticReport.enrichment === "object" && !Array.isArray(staticReport.enrichment)
+            ? staticReport.enrichment
+            : null;
+
     const existingStatic =
         baseAnalysis.staticReport && typeof baseAnalysis.staticReport === "object"
             ? baseAnalysis.staticReport
@@ -348,21 +353,21 @@ export function mergeStaticReportIntoAnalysis({ state, baseAnalysis, reports, di
 
     baseAnalysis.staticReport = mergedStatic;
 
-    const enrichment = staticReport.enrichment;
+    const enrichmentPayload = enrichment;
     let nextDifyTarget = difyTarget;
-    if (enrichment !== undefined && enrichment !== null) {
+    if (enrichmentPayload !== undefined && enrichmentPayload !== null) {
         if (!nextDifyTarget) {
             nextDifyTarget = {};
         }
-        if (typeof enrichment === "string" && enrichment.trim()) {
+        if (typeof enrichmentPayload === "string" && enrichmentPayload.trim()) {
             if (!nextDifyTarget.report || !nextDifyTarget.report.trim()) {
-                nextDifyTarget.report = enrichment.trim();
+                nextDifyTarget.report = enrichmentPayload.trim();
             }
-        } else if (enrichment && typeof enrichment === "object") {
-            nextDifyTarget.raw = enrichment;
+        } else if (enrichmentPayload && typeof enrichmentPayload === "object") {
+            nextDifyTarget.raw = enrichmentPayload;
             if (!nextDifyTarget.report || !nextDifyTarget.report.trim()) {
                 try {
-                    nextDifyTarget.report = JSON.stringify(enrichment);
+                    nextDifyTarget.report = JSON.stringify(enrichmentPayload);
                 } catch (error) {
                     console.warn("[Report] Failed to stringify static enrichment", error);
                 }
@@ -488,31 +493,63 @@ export function buildStaticReportDetails({
     const reports = isPlainObject(parsed?.reports) ? parsed.reports : null;
     const staticReport = extractStaticReport(reports);
 
-    const fallbackIssues = Array.isArray(parsed?.issues)
-        ? parsed.issues
-        : Array.isArray(staticReport?.issues)
-        ? staticReport.issues
-        : [];
+    const enrichment =
+        isPlainObject(staticReport?.enrichment) && !Array.isArray(staticReport.enrichment)
+            ? staticReport.enrichment
+            : null;
+    const enrichmentSummary =
+        enrichment && typeof enrichment.summary === "object" && !Array.isArray(enrichment.summary)
+            ? enrichment.summary
+            : null;
+    const enrichmentIssues = Array.isArray(enrichment?.issues) ? enrichment.issues : [];
 
-    const aggregatedList = Array.isArray(aggregatedIssues) ? aggregatedIssues : [];
+    let fallbackIssues = [];
+    if (Array.isArray(parsed?.issues) && parsed.issues.length) {
+        fallbackIssues = [...parsed.issues];
+    } else if (Array.isArray(staticReport?.issues) && staticReport.issues.length) {
+        fallbackIssues = [...staticReport.issues];
+    }
+    if (enrichmentIssues.length) {
+        fallbackIssues = fallbackIssues.length
+            ? [...fallbackIssues, ...enrichmentIssues]
+            : [...enrichmentIssues];
+    }
+
+    const aggregatedList = Array.isArray(aggregatedIssues) ? dedupeIssues(aggregatedIssues) : [];
     const useAggregatedIssues = aggregatedList.length > 0 || fallbackIssues.length === 0;
-    const rawIssues = useAggregatedIssues ? aggregatedList : fallbackIssues;
+    let rawIssues = useAggregatedIssues ? aggregatedList : fallbackIssues;
+    if (!useAggregatedIssues) {
+        rawIssues = dedupeIssues(Array.isArray(rawIssues) ? rawIssues : []);
+        if (enrichmentIssues.length) {
+            rawIssues = dedupeIssues([...rawIssues, ...enrichmentIssues]);
+        }
+    }
 
     const rawStaticSummary =
         isPlainObject(staticReport) && staticReport.summary !== undefined ? staticReport.summary : null;
-    const summaryCandidate = parsed?.summary !== undefined ? parsed.summary : rawStaticSummary;
-    const summary = summaryCandidate ?? null;
-    const summaryObject = isPlainObject(summary) ? summary : null;
-    const staticSummaryObject = isPlainObject(rawStaticSummary) ? rawStaticSummary : summaryObject;
+    const staticSummaryBase = isPlainObject(rawStaticSummary) ? rawStaticSummary : null;
+    const parsedSummaryObject =
+        parsed && typeof parsed.summary === "object" && !Array.isArray(parsed.summary) ? parsed.summary : null;
 
-    const staticSummaryDetails = buildSummaryDetailList(staticSummaryObject, {
+    const summaryParts = [];
+    if (staticSummaryBase) summaryParts.push(staticSummaryBase);
+    if (parsedSummaryObject) summaryParts.push(parsedSummaryObject);
+    if (enrichmentSummary) summaryParts.push(enrichmentSummary);
+
+    const mergedSummaryObject = summaryParts.length ? Object.assign({}, ...summaryParts) : null;
+    const summaryCandidate = parsed?.summary !== undefined ? parsed.summary : rawStaticSummary;
+    const summary = mergedSummaryObject || summaryCandidate || null;
+    const summaryObject = mergedSummaryObject;
+    const summaryDetailsSource = summaryObject || staticSummaryBase || parsedSummaryObject || null;
+
+    const staticSummaryDetails = buildSummaryDetailList(summaryDetailsSource, {
         omitKeys: ["by_rule", "byRule", "sources"]
     });
     const staticMetadata = isPlainObject(staticReport?.metadata) ? staticReport.metadata : null;
     const staticMetadataDetails = buildSummaryDetailList(staticMetadata);
 
     const { issues, severityBreakdown, ruleBreakdown } = buildStaticIssueDetails(rawIssues, {
-        summaryObject: staticSummaryObject
+        summaryObject: summaryDetailsSource
     });
 
     const summaryKeyed =
@@ -533,8 +570,8 @@ export function buildStaticReportDetails({
     if (!Number.isFinite(total)) {
         total = useAggregatedIssues ? aggregatedList.length : safeState.issueSummary?.totalIssues;
     }
-    if (!Number.isFinite(total) && summaryObject) {
-        const candidate = Number(summaryObject.total_issues ?? summaryObject.totalIssues);
+    if (!Number.isFinite(total) && summaryDetailsSource) {
+        const candidate = Number(summaryDetailsSource.total_issues ?? summaryDetailsSource.totalIssues);
         if (Number.isFinite(candidate)) {
             total = candidate;
         }
@@ -552,7 +589,14 @@ export function buildStaticReportDetails({
         total = computedTotal;
     }
 
-    const summaryText = typeof summary === "string" ? summary.trim() : "";
+    const summaryText = pickFirstString(
+        summaryObject?.message,
+        enrichment?.message,
+        parsedSummaryObject?.message,
+        staticSummaryBase?.message,
+        typeof summary === "string" ? summary : "",
+        typeof summaryCandidate === "string" ? summaryCandidate : ""
+    );
 
     const staticAnalysis = isPlainObject(safeState.analysis?.staticReport)
         ? safeState.analysis.staticReport
@@ -563,12 +607,16 @@ export function buildStaticReportDetails({
         : null;
 
     const sourceSummaryConfig = {
-        metricsSources: [staticSourceValue, staticSummaryObject],
+        metricsSources: [staticSourceValue, summaryDetailsSource, enrichmentSummary].filter(Boolean),
         statusCandidates: [
             staticSourceValue?.status,
-            staticSummaryObject?.status,
-            staticSummaryObject?.status_label,
-            staticSummaryObject?.statusLabel,
+            summaryDetailsSource?.status,
+            summaryDetailsSource?.status_label,
+            summaryDetailsSource?.statusLabel,
+            enrichmentSummary?.status,
+            enrichmentSummary?.status_label,
+            enrichmentSummary?.statusLabel,
+            enrichment?.status,
             staticAnalysis?.summary?.status,
             staticAnalysis?.status,
             safeState.analysis?.enrichmentStatus
@@ -576,8 +624,11 @@ export function buildStaticReportDetails({
         errorCandidates: [
             staticSourceValue?.error_message,
             staticSourceValue?.errorMessage,
-            staticSummaryObject?.error_message,
-            staticSummaryObject?.errorMessage,
+            summaryDetailsSource?.error_message,
+            summaryDetailsSource?.errorMessage,
+            enrichmentSummary?.error_message,
+            enrichmentSummary?.errorMessage,
+            enrichment?.error,
             staticAnalysis?.summary?.error_message,
             staticAnalysis?.summary?.errorMessage,
             staticAnalysis?.error
@@ -585,8 +636,12 @@ export function buildStaticReportDetails({
         generatedAtCandidates: [
             staticSourceValue?.generated_at,
             staticSourceValue?.generatedAt,
-            staticSummaryObject?.generated_at,
-            staticSummaryObject?.generatedAt,
+            summaryDetailsSource?.generated_at,
+            summaryDetailsSource?.generatedAt,
+            enrichmentSummary?.generated_at,
+            enrichmentSummary?.generatedAt,
+            enrichment?.generated_at,
+            enrichment?.generatedAt,
             staticAnalysis?.generatedAt,
             staticAnalysis?.summary?.generated_at,
             staticAnalysis?.summary?.generatedAt,
@@ -600,7 +655,7 @@ export function buildStaticReportDetails({
         summary,
         summaryObject,
         summaryText,
-        staticSummary: staticSummaryObject,
+        staticSummary: summaryDetailsSource,
         staticSummaryDetails,
         staticMetadata,
         staticMetadataDetails,
