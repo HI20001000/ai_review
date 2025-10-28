@@ -583,10 +583,11 @@ const activeReportDetails = computed(() => {
         for (const [key, value] of Object.entries(globalSummary.sources)) {
             if (!value || typeof value !== "object") continue;
             const keyLower = key.toLowerCase();
-            let label = key;
             if (keyLower === "static_analyzer" || keyLower === "staticanalyzer") {
-                label = "靜態分析器";
-            } else if (keyLower === "dml_prompt" || keyLower === "dmlprompt") {
+                continue;
+            }
+            let label = key;
+            if (keyLower === "dml_prompt" || keyLower === "dmlprompt") {
                 label = "DML 提示詞分析";
             } else if (keyLower === "dify_workflow" || keyLower === "difyworkflow") {
                 label = "Dify 工作流";
@@ -955,6 +956,33 @@ const activeReportStaticRawSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
 
+    const enrichedStatic = report.state?.analysis?.staticReport?.enrichment;
+    if (typeof enrichedStatic === "string" && enrichedStatic.trim()) {
+        return enrichedStatic;
+    }
+    if (enrichedStatic && typeof enrichedStatic === "object") {
+        try {
+            return JSON.stringify(enrichedStatic);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify static enrichment", error);
+        }
+    }
+
+    const parsedEnrichment =
+        report.state?.parsedReport?.reports?.static_analyzer?.enrichment ||
+        report.state?.parsedReport?.reports?.staticAnalyzer?.enrichment ||
+        null;
+    if (typeof parsedEnrichment === "string" && parsedEnrichment.trim()) {
+        return parsedEnrichment;
+    }
+    if (parsedEnrichment && typeof parsedEnrichment === "object") {
+        try {
+            return JSON.stringify(parsedEnrichment);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify parsed static enrichment", error);
+        }
+    }
+
     const direct = report.state?.rawReport;
     if (typeof direct === "string" && direct.trim()) {
         return direct;
@@ -1027,6 +1055,29 @@ const activeReportDifyRawSourceText = computed(() => {
             return JSON.stringify(analysisDify);
         } catch (error) {
             console.warn("[reports] Failed to stringify analysis dify report", error);
+        }
+    }
+
+    const parsedDify =
+        report.state?.parsedReport?.reports?.dify_workflow ||
+        report.state?.parsedReport?.reports?.difyWorkflow ||
+        null;
+    if (parsedDify && typeof parsedDify === "object") {
+        const raw = parsedDify.raw;
+        if (typeof raw === "string" && raw.trim()) {
+            return raw;
+        }
+        if (raw && typeof raw === "object") {
+            try {
+                return JSON.stringify(raw);
+            } catch (error) {
+                console.warn("[reports] Failed to stringify parsed dify raw", error);
+            }
+        }
+        try {
+            return JSON.stringify(parsedDify);
+        } catch (error) {
+            console.warn("[reports] Failed to stringify parsed dify workflow", error);
         }
     }
 
@@ -2805,6 +2856,8 @@ function normaliseReportAnalysisState(state) {
         state.analysis && typeof state.analysis === "object" && !Array.isArray(state.analysis)
             ? { ...state.analysis }
             : {};
+    let difyTarget =
+        state.dify && typeof state.dify === "object" && !Array.isArray(state.dify) ? { ...state.dify } : null;
 
     if (rawReport) {
         if (typeof baseAnalysis.rawReport !== "string") {
@@ -2828,6 +2881,26 @@ function normaliseReportAnalysisState(state) {
                 if (!baseAnalysis.staticReport) {
                     baseAnalysis.staticReport = staticReport;
                 }
+                const enrichment = staticReport.enrichment;
+                if (enrichment !== undefined && enrichment !== null) {
+                    if (!difyTarget) {
+                        difyTarget = {};
+                    }
+                    if (typeof enrichment === "string" && enrichment.trim()) {
+                        if (!difyTarget.report || !difyTarget.report.trim()) {
+                            difyTarget.report = enrichment.trim();
+                        }
+                    } else if (enrichment && typeof enrichment === "object") {
+                        difyTarget.raw = enrichment;
+                        if (!difyTarget.report || !difyTarget.report.trim()) {
+                            try {
+                                difyTarget.report = JSON.stringify(enrichment);
+                            } catch (error) {
+                                console.warn("[Report] Failed to stringify static enrichment", error);
+                            }
+                        }
+                    }
+                }
             }
 
             const dmlReport = reports.dml_prompt || reports.dmlPrompt;
@@ -2845,7 +2918,89 @@ function normaliseReportAnalysisState(state) {
                     state.dmlErrorMessage = dmlError || "";
                 }
             }
+
+            const difyReport = reports.dify_workflow || reports.difyWorkflow;
+            if (difyReport && typeof difyReport === "object") {
+                if (!difyTarget) {
+                    difyTarget = {};
+                }
+                const difyRaw = difyReport.raw;
+                if (typeof difyRaw === "string" && difyRaw.trim()) {
+                    if (!difyTarget.report || !difyTarget.report.trim()) {
+                        difyTarget.report = difyRaw.trim();
+                    }
+                } else if (difyRaw && typeof difyRaw === "object") {
+                    difyTarget.raw = difyRaw;
+                    if (!difyTarget.report || !difyTarget.report.trim()) {
+                        try {
+                            difyTarget.report = JSON.stringify(difyRaw);
+                        } catch (error) {
+                            console.warn("[Report] Failed to stringify dify raw payload", error);
+                        }
+                    }
+                } else if (!difyTarget.report || !difyTarget.report.trim()) {
+                    try {
+                        const fallback = { ...difyReport };
+                        delete fallback.raw;
+                        difyTarget.report = JSON.stringify(fallback);
+                    } catch (error) {
+                        console.warn("[Report] Failed to stringify dify workflow report", error);
+                    }
+                }
+                if (!difyTarget.summary && difyReport.summary && typeof difyReport.summary === "object") {
+                    difyTarget.summary = difyReport.summary;
+                }
+                if (!difyTarget.issues && Array.isArray(difyReport.issues)) {
+                    difyTarget.issues = difyReport.issues;
+                }
+                if (!difyTarget.metadata && difyReport.metadata && typeof difyReport.metadata === "object") {
+                    difyTarget.metadata = difyReport.metadata;
+                }
+            }
         }
+
+        const summary = parsedReport.summary && typeof parsedReport.summary === "object" ? parsedReport.summary : null;
+        if (!state.difyErrorMessage && summary) {
+            const sources = summary.sources && typeof summary.sources === "object" ? summary.sources : null;
+            if (sources) {
+                const difySource = sources.dify_workflow || sources.difyWorkflow;
+                const difyError =
+                    typeof difySource?.error_message === "string"
+                        ? difySource.error_message
+                        : typeof difySource?.errorMessage === "string"
+                        ? difySource.errorMessage
+                        : "";
+                if (difyError && difyError.trim()) {
+                    state.difyErrorMessage = difyError.trim();
+                }
+            }
+        }
+    }
+
+    if (difyTarget) {
+        const hasReport = typeof difyTarget.report === "string" && difyTarget.report.trim().length > 0;
+        if (!hasReport && difyTarget.raw && typeof difyTarget.raw === "object") {
+            try {
+                difyTarget.report = JSON.stringify(difyTarget.raw);
+            } catch (error) {
+                console.warn("[Report] Failed to stringify dify raw object for state", error);
+            }
+        }
+        const filteredKeys = Object.keys(difyTarget).filter((key) => {
+            const value = difyTarget[key];
+            if (value === null || value === undefined) return false;
+            if (typeof value === "string") return value.trim().length > 0;
+            if (Array.isArray(value)) return value.length > 0;
+            if (typeof value === "object") return Object.keys(value).length > 0;
+            return true;
+        });
+        if (filteredKeys.length > 0) {
+            state.dify = difyTarget;
+        } else {
+            state.dify = null;
+        }
+    } else if (!state.dify) {
+        state.dify = null;
     }
 
     state.analysis = Object.keys(baseAnalysis).length ? baseAnalysis : null;
@@ -3006,6 +3161,46 @@ function parseHydratedTimestamp(value) {
     return null;
 }
 
+function normaliseHydratedReportText(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+    if (value === null || value === undefined) {
+        return "";
+    }
+    if (typeof value === "object") {
+        try {
+            return JSON.stringify(value);
+        } catch (error) {
+            console.warn("[Report] Failed to stringify hydrated report payload", error, value);
+            return "";
+        }
+    }
+    return String(value);
+}
+
+function normaliseHydratedReportObject(value) {
+    if (!value) return null;
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        try {
+            return JSON.parse(trimmed);
+        } catch (error) {
+            console.warn("[Report] Failed to parse hydrated report object", error, value);
+            return { report: trimmed };
+        }
+    }
+    if (typeof value === "object") {
+        return value;
+    }
+    return null;
+}
+
+function normaliseHydratedString(value) {
+    return typeof value === "string" ? value : "";
+}
+
 async function hydrateReportsForProject(projectId) {
     const entry = ensureReportTreeEntry(projectId);
     if (!entry) return;
@@ -3018,18 +3213,31 @@ async function hydrateReportsForProject(projectId) {
             if (!record || !record.path) continue;
             const state = ensureFileReportState(projectId, record.path);
             if (!state) continue;
-            state.status = record.report ? "ready" : "idle";
-            state.report = record.report || "";
-            state.error = "";
+            const hydratedStatus = normaliseHydratedString(record.status).trim();
+            state.status = hydratedStatus || (record.report ? "ready" : "idle");
+            state.report = normaliseHydratedReportText(record.report);
+            state.error = normaliseHydratedString(record.error);
             state.chunks = Array.isArray(record.chunks) ? record.chunks : [];
             state.segments = Array.isArray(record.segments) ? record.segments : [];
-            state.conversationId = record.conversationId || "";
-            state.analysis = record.analysis || null;
-            state.rawReport = typeof record.analysis?.result === "string" ? record.analysis.result : "";
-            state.dify = null;
-            state.dml = null;
-            state.difyErrorMessage = "";
-            state.dmlErrorMessage = "";
+            state.conversationId = normaliseHydratedString(record.conversationId);
+            state.analysis =
+                record.analysis && typeof record.analysis === "object" && !Array.isArray(record.analysis)
+                    ? record.analysis
+                    : null;
+            const hydratedRawReport = normaliseHydratedString(record.rawReport);
+            const analysisResult = normaliseHydratedString(record.analysis?.result);
+            const analysisOriginal = normaliseHydratedString(record.analysis?.originalResult);
+            state.rawReport = hydratedRawReport || analysisResult || analysisOriginal || "";
+            state.dify = normaliseHydratedReportObject(record.dify);
+            state.dml = normaliseHydratedReportObject(record.dml);
+            state.difyErrorMessage = normaliseHydratedString(record.difyErrorMessage);
+            state.dmlErrorMessage = normaliseHydratedString(record.dmlErrorMessage);
+            if (!state.difyErrorMessage) {
+                state.difyErrorMessage = normaliseHydratedString(record.analysis?.difyErrorMessage);
+            }
+            if (!state.dmlErrorMessage) {
+                state.dmlErrorMessage = normaliseHydratedString(record.analysis?.dmlErrorMessage);
+            }
             state.parsedReport = parseReportJson(state.report);
             state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
             normaliseReportAnalysisState(state);
