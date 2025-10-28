@@ -161,6 +161,95 @@ export function preferStaticIssues(state, reports, sourceKey = "static_analyzer"
     return dedupeIssues(issues);
 }
 
+function pickFirstString(...candidates) {
+    for (const candidate of candidates) {
+        if (typeof candidate !== "string") continue;
+        const trimmed = candidate.trim();
+        if (!trimmed) continue;
+        return trimmed;
+    }
+    return "";
+}
+
+function pickFirstValue(...candidates) {
+    for (const candidate of candidates) {
+        if (candidate !== undefined && candidate !== null) {
+            return candidate;
+        }
+    }
+    return null;
+}
+
+/**
+ * Build a UI friendly representation of the persisted static analyzer report payload.
+ *
+ * @param {Record<string, any> | null | undefined} staticReport - Raw static analyzer report payload.
+ * @returns {{ summary: Record<string, any> | null, details: Record<string, any> | null }}
+ */
+export function buildStaticReportDetails(staticReport) {
+    if (!isPlainObject(staticReport)) {
+        return { summary: null, details: null };
+    }
+
+    const summary = isPlainObject(staticReport.summary) ? staticReport.summary : null;
+    const aggregated = isPlainObject(staticReport.aggregated) ? staticReport.aggregated : null;
+    const metadata = isPlainObject(staticReport.metadata) ? staticReport.metadata : null;
+    const enrichment =
+        isPlainObject(staticReport.enrichment) || Array.isArray(staticReport.enrichment)
+            ? staticReport.enrichment
+            : typeof staticReport.enrichment === "string"
+            ? staticReport.enrichment.trim()
+            : null;
+
+    const issues = Array.isArray(staticReport.issues) ? staticReport.issues : [];
+    const aggregatedIssues = Array.isArray(aggregated?.issues) ? aggregated.issues : [];
+
+    const errorMessage = pickFirstString(
+        staticReport.error,
+        summary?.error,
+        summary?.error_message,
+        summary?.errorMessage,
+        aggregated?.error,
+        aggregated?.error_message,
+        aggregated?.errorMessage
+    );
+
+    const status = pickFirstString(
+        staticReport.status,
+        summary?.status,
+        summary?.status_label,
+        summary?.statusLabel,
+        aggregated?.status
+    );
+
+    const generatedAt = pickFirstValue(
+        staticReport.generatedAt,
+        staticReport.generated_at,
+        summary?.generated_at,
+        summary?.generatedAt,
+        aggregated?.generated_at,
+        aggregated?.generatedAt
+    );
+
+    const reportText = pickFirstString(staticReport.reportText, staticReport.report);
+
+    return {
+        summary,
+        details: {
+            summary,
+            aggregated,
+            metadata,
+            issues,
+            aggregatedIssues,
+            status,
+            error: errorMessage,
+            generatedAt,
+            enrichment,
+            reportText
+        }
+    };
+}
+
 /**
  * Build the preferred raw static analyzer JSON payload for preview/export workflows.
  *
@@ -212,5 +301,6 @@ export default {
     extractStaticReport,
     mergeStaticReportIntoAnalysis,
     preferStaticIssues,
+    buildStaticReportDetails,
     buildStaticRawSourceText
 };
