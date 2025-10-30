@@ -79,6 +79,24 @@ function safeParseArray(jsonText, { fallback = [] } = {}) {
     }
 }
 
+function safeSerialiseForLog(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch (error) {
+        return `[unserialisable: ${error?.message || error}]`;
+    }
+}
+
+function logReportPersistenceStage(label, value) {
+    if (typeof console === "undefined" || typeof console.log !== "function") {
+        return;
+    }
+    console.log(`[reports] ${label}: ${safeSerialiseForLog(value)}`);
+}
+
 function toIsoString(value) {
     if (value === null || value === undefined) return null;
     if (value instanceof Date) {
@@ -131,7 +149,10 @@ function mapReportRow(row) {
         userId: row.user_id || "",
         generatedAt: toIsoString(row.generated_at),
         createdAt: toIsoString(row.created_at),
-        updatedAt: toIsoString(row.updated_at)
+        updatedAt: toIsoString(row.updated_at),
+        combinedReportJson: typeof row.combined_report_json === "string" ? row.combined_report_json : "",
+        staticReportJson: typeof row.static_report_json === "string" ? row.static_report_json : "",
+        aiReportJson: typeof row.ai_report_json === "string" ? row.ai_report_json : ""
     };
 }
 
@@ -213,7 +234,10 @@ async function upsertReport({
     segments,
     conversationId,
     userId,
-    generatedAt
+    generatedAt,
+    combinedReportJson,
+    staticReportJson,
+    aiReportJson
 }) {
     if (!projectId || !path) {
         throw new Error("Report upsert requires projectId and path");
@@ -235,6 +259,39 @@ async function upsertReport({
     const safeReport = typeof report === "string" ? report : "";
     const safeConversationId = typeof conversationId === "string" ? conversationId : "";
     const safeUserId = typeof userId === "string" ? userId : "";
+    const safeCombinedJson = typeof combinedReportJson === "string" ? combinedReportJson : "";
+    const safeStaticJson = typeof staticReportJson === "string" ? staticReportJson : "";
+    const safeAiJson = typeof aiReportJson === "string" ? aiReportJson : "";
+
+    logReportPersistenceStage("upsertReport.input", {
+        projectId,
+        path,
+        report,
+        chunks,
+        segments,
+        conversationId,
+        userId,
+        generatedAt,
+        combinedReportJson,
+        staticReportJson,
+        aiReportJson
+    });
+
+    logReportPersistenceStage("upsertReport.serialised", {
+        projectId: safeProjectId,
+        path: safePath,
+        report: safeReport,
+        chunks: serialisedChunks,
+        segments: serialisedSegments,
+        conversationId: safeConversationId,
+        userId: safeUserId,
+        generatedAt: storedGeneratedAt,
+        createdAt: now,
+        updatedAt: now,
+        combinedReportJson: safeCombinedJson,
+        staticReportJson: safeStaticJson,
+        aiReportJson: safeAiJson
+    });
 
     await pool.query(
         `INSERT INTO reports (
@@ -247,8 +304,11 @@ async function upsertReport({
             user_id,
             generated_at,
             created_at,
-            updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            updated_at,
+            combined_report_json,
+            static_report_json,
+            ai_report_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             report = VALUES(report),
             chunks_json = VALUES(chunks_json),
@@ -256,7 +316,10 @@ async function upsertReport({
             conversation_id = VALUES(conversation_id),
             user_id = VALUES(user_id),
             generated_at = VALUES(generated_at),
-            updated_at = VALUES(updated_at)`,
+            updated_at = VALUES(updated_at),
+            combined_report_json = VALUES(combined_report_json),
+            static_report_json = VALUES(static_report_json),
+            ai_report_json = VALUES(ai_report_json)`,
         [
             safeProjectId,
             safePath,
@@ -267,7 +330,10 @@ async function upsertReport({
             safeUserId,
             storedGeneratedAt,
             now,
-            now
+            now,
+            safeCombinedJson,
+            safeStaticJson,
+            safeAiJson
         ]
     );
 }
@@ -396,7 +462,8 @@ app.get("/api/projects/:projectId/reports", async (req, res, next) => {
     try {
         const { projectId } = req.params;
         const [rows] = await pool.query(
-            `SELECT project_id, path, report, chunks_json, segments_json, conversation_id, user_id, generated_at, created_at, updated_at
+            `SELECT project_id, path, report, chunks_json, segments_json, conversation_id, user_id, generated_at, created_at, updated_at,
+                    combined_report_json, static_report_json, ai_report_json
              FROM reports
              WHERE project_id = ?
              ORDER BY path ASC`,
@@ -457,7 +524,10 @@ app.post("/api/reports/dify", async (req, res, next) => {
                 segments: reportPayload.segments,
                 conversationId: reportPayload.conversationId,
                 userId: resolvedUserId,
-                generatedAt: reportPayload.generatedAt
+                generatedAt: reportPayload.generatedAt,
+                combinedReportJson: reportPayload.combinedReportJson,
+                staticReportJson: reportPayload.staticReportJson,
+                aiReportJson: reportPayload.aiReportJson
             });
             const savedAtIso = new Date().toISOString();
             res.json({

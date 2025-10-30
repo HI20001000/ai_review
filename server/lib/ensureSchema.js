@@ -25,6 +25,37 @@ function createLogger(logger) {
     return { info, error };
 }
 
+async function columnExists(table, column) {
+    const [rows] = await pool.query(
+        `SELECT COUNT(*) AS count
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = ?
+           AND column_name = ?`,
+        [table, column]
+    );
+    return Number(rows?.[0]?.count || 0) > 0;
+}
+
+async function ensureColumn({ info, error }, table, columnDefinition) {
+    const [columnName] = columnDefinition.split(/\s+/);
+    if (await columnExists(table, columnName)) {
+        info(`[schema] Column ${table}.${columnName} already exists, skipping.`);
+        return;
+    }
+
+    const statement = `ALTER TABLE ${table} ADD COLUMN ${columnDefinition}`;
+    const preview = formatStatement(statement);
+    info(`[schema] Executing: ${preview}`);
+    try {
+        await pool.query(statement);
+        info(`[schema] Success: ${preview}`);
+    } catch (err) {
+        error(`[schema] Failed: ${preview}`, err);
+        throw err;
+    }
+}
+
 function formatStatement(statement) {
     const singleLine = statement.replace(/\s+/g, " ").trim();
     if (singleLine.length <= 120) {
@@ -56,5 +87,15 @@ export async function ensureSchema({ logger } = {}) {
             error(`[schema] Failed: ${preview}`, err);
             throw err;
         }
+    }
+
+    const reportColumnDefinitions = [
+        "combined_report_json LONGTEXT NULL",
+        "static_report_json LONGTEXT NULL",
+        "ai_report_json LONGTEXT NULL"
+    ];
+
+    for (const definition of reportColumnDefinitions) {
+        await ensureColumn({ info, error }, "reports", definition);
     }
 }
