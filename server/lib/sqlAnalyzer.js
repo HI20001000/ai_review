@@ -1441,6 +1441,40 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             : [];
     }
 
+    const chunksForReport = (() => {
+        if (dmlChunks.length) {
+            return dmlChunks;
+        }
+        if (difyChunks.length) {
+            return difyChunks;
+        }
+
+        const fallbackCandidates = [
+            { text: dmlReportTextHuman, source: "dml_prompt" },
+            { text: dmlReportText, source: "dml_prompt" },
+            { text: difyReport, source: "dify_workflow" },
+            { text: rawReport, source: "static_analyzer" },
+            { text: content || "", source: "content" }
+        ];
+
+        let fallbackText = "";
+        let fallbackSource = "dml_prompt";
+        for (const candidate of fallbackCandidates) {
+            if (typeof candidate.text === "string" && candidate.text.trim()) {
+                fallbackText = candidate.text;
+                fallbackSource = candidate.source;
+                break;
+            }
+        }
+
+        return fallbackText
+            ? normaliseChunksForPersistence([fallbackText], {
+                  fallbackRaw: fallbackText,
+                  defaultSource: fallbackSource
+              })
+            : [];
+    })();
+
     finalReport = JSON.stringify(finalPayload, null, 2);
     logSqlPayloadStage("report.serialised", finalReport);
 
@@ -1543,7 +1577,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const result = {
         report: finalReport,
         conversationId: typeof dify?.conversationId === "string" ? dify.conversationId : "",
-        chunks: annotatedChunks,
+        chunks: chunksForReport,
         segments,
         generatedAt,
         analysis: analysisPayload,
