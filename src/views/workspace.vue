@@ -322,9 +322,21 @@ const activeReportIssueSources = computed(() => {
 
 const activeReportDetails = computed(() => {
     const report = activeReport.value;
-    if (!report || report.state.status !== "ready") return null;
-    const parsed = report.state.parsedReport;
-    if (!parsed || typeof parsed !== "object") return null;
+    if (!report || !report.state) return null;
+
+    const state = report.state;
+    const hasStoredSnapshots =
+        Boolean(normaliseJsonContent(state.combinedReportJson)) ||
+        Boolean(normaliseJsonContent(state.staticReportJson)) ||
+        Boolean(normaliseJsonContent(state.aiReportJson));
+
+    if (state.status !== "ready" && !hasStoredSnapshots) return null;
+
+    const parsedCandidate = state.parsedReport;
+    const parsed =
+        parsedCandidate && typeof parsedCandidate === "object" && !Array.isArray(parsedCandidate)
+            ? parsedCandidate
+            : {};
 
     const reports = parsed.reports && typeof parsed.reports === "object" ? parsed.reports : null;
     const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
@@ -2368,14 +2380,23 @@ async function hydrateReportsForProject(projectId) {
             const state = ensureFileReportState(projectId, record.path);
             if (!state) continue;
             const hydratedStatus = normaliseHydratedString(record.status).trim();
-            state.status = hydratedStatus || (record.report ? "ready" : "idle");
-            state.report = normaliseHydratedReportText(record.report);
+            const hydratedReportText = normaliseHydratedReportText(record.report);
+            const trimmedReportText = typeof hydratedReportText === "string" ? hydratedReportText.trim() : "";
+            const combinedJson = normaliseHydratedString(record.combinedReportJson).trim();
+            const staticJson = normaliseHydratedString(record.staticReportJson).trim();
+            const aiJson = normaliseHydratedString(record.aiReportJson).trim();
+            const hasStoredSnapshots = Boolean(combinedJson || staticJson || aiJson);
+
+            state.status =
+                hydratedStatus ||
+                (trimmedReportText || hasStoredSnapshots ? "ready" : "idle");
+            state.report = hydratedReportText;
             state.error = normaliseHydratedString(record.error);
             state.chunks = Array.isArray(record.chunks) ? record.chunks : [];
             state.segments = Array.isArray(record.segments) ? record.segments : [];
-            state.combinedReportJson = normaliseHydratedString(record.combinedReportJson);
-            state.staticReportJson = normaliseHydratedString(record.staticReportJson);
-            state.aiReportJson = normaliseHydratedString(record.aiReportJson);
+            state.combinedReportJson = combinedJson;
+            state.staticReportJson = staticJson;
+            state.aiReportJson = aiJson;
             state.conversationId = normaliseHydratedString(record.conversationId);
             state.analysis =
                 record.analysis && typeof record.analysis === "object" && !Array.isArray(record.analysis)
@@ -2398,6 +2419,9 @@ async function hydrateReportsForProject(projectId) {
                 state.difyErrorMessage = normaliseHydratedString(record.analysis?.difyErrorMessage);
             }
             state.parsedReport = parseReportJson(state.report);
+            if ((!state.parsedReport || typeof state.parsedReport !== "object") && hasStoredSnapshots) {
+                state.parsedReport = { summary: null, reports: {} };
+            }
             state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
             hydrateAiReviewStateFromRecord(state, record);
             normaliseReportAnalysisState(state);
