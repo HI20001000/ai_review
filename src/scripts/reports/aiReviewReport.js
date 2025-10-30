@@ -110,6 +110,139 @@ function clonePlain(value) {
     return value;
 }
 
+function logAiIssuesJson(label, issues) {
+    if (typeof console === "undefined" || typeof console.log !== "function") {
+        return;
+    }
+    const payload = { issues: clonePlain(Array.isArray(issues) ? issues : []) };
+    let serialised = "";
+    try {
+        serialised = JSON.stringify(payload, null, 2);
+    } catch (error) {
+        try {
+            serialised = JSON.stringify(payload);
+        } catch (_innerError) {
+            serialised = "{\"issues\":[]}";
+        }
+    }
+    if (serialised) {
+        console.log(`[ai-review] ${label}: ${serialised}`);
+    }
+}
+
+function normaliseIssueSourceValue(value) {
+    return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function collectIssueSourceCandidates(issue) {
+    if (!issue || typeof issue !== "object") {
+        return [];
+    }
+    const candidates = [];
+    const direct = normaliseIssueSourceValue(issue.source);
+    if (direct) candidates.push(direct);
+    const analysisSource = normaliseIssueSourceValue(issue.analysis_source || issue.analysisSource);
+    if (analysisSource) candidates.push(analysisSource);
+    if (issue.metadata && typeof issue.metadata === "object") {
+        const metaSource = normaliseIssueSourceValue(
+            issue.metadata.analysis_source || issue.metadata.analysisSource || issue.metadata.source
+        );
+        if (metaSource) candidates.push(metaSource);
+    }
+    if (issue.details && Array.isArray(issue.details)) {
+        issue.details.forEach((detail) => {
+            if (!detail || typeof detail !== "object") return;
+            const detailSource = normaliseIssueSourceValue(detail.analysis_source || detail.analysisSource);
+            if (detailSource) candidates.push(detailSource);
+        });
+    }
+    return candidates;
+}
+
+function isNonDmlSource(source) {
+    if (!source) return false;
+    if (source.includes("dml")) return false;
+    if (source.includes("ai")) return false;
+    if (source.includes("review")) return false;
+    if (source.includes("markdown")) return false;
+    return source.includes("static") || source.includes("dify") || source.includes("workflow") || source.includes("composite");
+}
+
+function filterDmlIssueList(issues) {
+    const list = Array.isArray(issues) ? issues : [];
+    const hasAuthoritative = hasAuthoritativeAiIssues(list);
+    const result = [];
+    for (const issue of list) {
+        if (!issue) continue;
+        if (typeof issue !== "object") {
+            if (!hasAuthoritative) {
+                result.push(issue);
+            }
+            continue;
+        }
+        const sources = collectIssueSourceCandidates(issue);
+        if (sources.some((candidate) => isNonDmlSource(candidate))) {
+            continue;
+        }
+        const fallbackSource = normaliseIssueSourceValue(
+            issue.fallbackSource || issue.fallback_source || issue.fallback
+        );
+        if (hasAuthoritative) {
+            if (fallbackSource === "markdown") {
+                continue;
+            }
+            if (!isAuthoritativeAiIssue(issue)) {
+                continue;
+            }
+        }
+        result.push(issue);
+    }
+    if (!hasAuthoritative) {
+        return result;
+    }
+    return result.filter((entry) => {
+        if (!entry || typeof entry !== "object") {
+            return false;
+        }
+        return isAuthoritativeAiIssue(entry);
+    });
+}
+
+function isAuthoritativeAiIssue(issue) {
+    if (!isPlainObject(issue)) {
+        return false;
+    }
+
+    if (typeof issue.rule_id === "string" && issue.rule_id.trim()) {
+        return true;
+    }
+
+    if (Array.isArray(issue.rule_ids)) {
+        for (const ruleId of issue.rule_ids) {
+            if (typeof ruleId === "string" && ruleId.trim()) {
+                return true;
+            }
+        }
+    }
+
+    if (typeof issue.ruleId === "string" && issue.ruleId.trim()) {
+        return true;
+    }
+
+    if (typeof issue.rule === "string" && issue.rule.trim()) {
+        return true;
+    }
+
+    return false;
+}
+
+function hasAuthoritativeAiIssues(issues) {
+    if (!Array.isArray(issues)) {
+        return false;
+    }
+    return issues.some((issue) => isAuthoritativeAiIssue(issue));
+}
+
 function pickFirstString(candidates, options = {}) {
     const list = Array.isArray(candidates) ? candidates : [candidates];
     const allowEmpty = Boolean(options.allowEmpty);
@@ -567,6 +700,7 @@ export function buildAiReviewDetails(dmlReport) {
 }
 
 function normaliseAiReviewPayload(payload = {}) {
+
     const analysis =
         payload && typeof payload.analysis === "object" && !Array.isArray(payload.analysis)
             ? payload.analysis
@@ -647,28 +781,6 @@ function normaliseAiReviewPayload(payload = {}) {
         issues = Array.isArray(aggregatedObject?.issues) ? aggregatedObject.issues : null;
     }
     issues = normaliseIssues(issues);
-    if (!issues.length) {
-        const fallbackMarkdown = pickFirstString(
-            [
-                summaryObject?.reportText,
-                summaryObject?.report,
-                reportObject?.reportText,
-                reportObject?.report,
-                aggregatedObject?.reportText,
-                aggregatedObject?.report,
-                payload.dmlReportText,
-                payload.dmlReport?.reportText,
-                payload.dmlReport?.report,
-                payload.dml?.reportText,
-                payload.dml?.report
-            ],
-            { allowEmpty: false }
-        );
-        const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
-        if (derivedIssues.length) {
-            issues = normaliseIssues(derivedIssues);
-        }
-    }
 
     const fallbackMarkdown = pickFirstString(
         [
@@ -689,8 +801,14 @@ function normaliseAiReviewPayload(payload = {}) {
 
     const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
     const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-    if (normalisedDerivedIssues.length) {
+
+    const hasAuthoritativeIssuesBeforeDerived = hasAuthoritativeAiIssues(issues);
+
+    if (!issues.length && normalisedDerivedIssues.length) {
+        issues = normalisedDerivedIssues;
+    } else if (normalisedDerivedIssues.length && !hasAuthoritativeIssuesBeforeDerived) {
         issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
+    } else if (normalisedDerivedIssues.length) {
     }
 
     const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
@@ -723,217 +841,14 @@ function normaliseAiReviewPayload(payload = {}) {
     }
 
     if (aggregatedObject && Array.isArray(aggregatedObject.issues)) {
+        const aggregatedIssuesRaw = clonePlain(aggregatedObject.issues);
         const aggregatedIssues = normaliseIssues(aggregatedObject.issues);
         if (aggregatedIssues.length) {
             issues = dedupeIssues([...aggregatedIssues, ...issues]);
         }
-        delete aggregatedObject.issues;
+        aggregatedObject.issues = aggregatedIssuesRaw;
     }
-
-    const fallbackMarkdown = pickFirstString(
-        [
-            summaryObject?.reportText,
-            summaryObject?.report,
-            reportObject?.reportText,
-            reportObject?.report,
-            aggregatedObject?.reportText,
-            aggregatedObject?.report,
-            payload.dmlReportText,
-            payload.dmlReport?.reportText,
-            payload.dmlReport?.report,
-            payload.dml?.reportText,
-            payload.dml?.report
-        ],
-        { allowEmpty: false }
-    );
-
-    const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
-    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-    if (normalisedDerivedIssues.length) {
-        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
-    }
-
-    const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
-
-    const parsedChunkIssues = [];
-    if (parsedJsonReport && Array.isArray(parsedJsonReport.chunks)) {
-        parsedJsonReport.chunks.forEach((chunk) => {
-            if (!chunk) return;
-            const chunkIndex = normaliseNumber(chunk.index);
-            if (Array.isArray(chunk.issues)) {
-                chunk.issues.forEach((issue) => {
-                    if (!issue) return;
-                    if (isPlainObject(issue)) {
-                        const enriched = { ...issue };
-                        if (chunkIndex !== null && enriched.chunk_index === undefined) {
-                            enriched.chunk_index = chunkIndex;
-                        }
-                        parsedChunkIssues.push(enriched);
-                        return;
-                    }
-                    parsedChunkIssues.push(issue);
-                });
-            }
-        });
-    }
-
-    const parsedJsonIssues = dedupeIssues([...parsedIssues, ...normaliseIssues(parsedChunkIssues)]);
-    if (parsedJsonIssues.length) {
-        issues = dedupeIssues([...parsedJsonIssues, ...issues]);
-    }
-
-    if (aggregatedObject && Array.isArray(aggregatedObject.issues)) {
-        const aggregatedIssues = normaliseIssues(aggregatedObject.issues);
-        if (aggregatedIssues.length) {
-            issues = dedupeIssues([...aggregatedIssues, ...issues]);
-        }
-        delete aggregatedObject.issues;
-    }
-
-    const fallbackReportText = pickFirstString(
-        [
-            summaryObject?.reportText,
-            summaryObject?.report,
-            reportObject?.reportText,
-            reportObject?.report,
-            aggregatedObject?.reportText,
-            aggregatedObject?.report,
-            payload.dmlReportText,
-            payload.dmlReport?.reportText,
-            payload.dmlReport?.report,
-            payload.dml?.reportText,
-            payload.dml?.report
-        ],
-        { allowEmpty: false }
-    );
-
-    const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackReportText);
-    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-    if (normalisedDerivedIssues.length) {
-        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
-    }
-
-    const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
-
-    const parsedChunkIssues = [];
-    if (parsedJsonReport && Array.isArray(parsedJsonReport.chunks)) {
-        parsedJsonReport.chunks.forEach((chunk) => {
-            if (!chunk) return;
-            const chunkIndex = normaliseNumber(chunk.index);
-            if (Array.isArray(chunk.issues)) {
-                chunk.issues.forEach((issue) => {
-                    if (!issue) return;
-                    if (isPlainObject(issue)) {
-                        const enriched = { ...issue };
-                        if (chunkIndex !== null && enriched.chunk_index === undefined) {
-                            enriched.chunk_index = chunkIndex;
-                        }
-                        parsedChunkIssues.push(enriched);
-                        return;
-                    }
-                    parsedChunkIssues.push(issue);
-                });
-            }
-        });
-    }
-
-    const parsedJsonIssues = dedupeIssues([...parsedIssues, ...normaliseIssues(parsedChunkIssues)]);
-    if (parsedJsonIssues.length) {
-        issues = dedupeIssues([...parsedJsonIssues, ...issues]);
-    }
-
-    if (aggregatedObject && Array.isArray(aggregatedObject.issues)) {
-        const aggregatedIssues = normaliseIssues(aggregatedObject.issues);
-        if (aggregatedIssues.length) {
-            issues = dedupeIssues([...aggregatedIssues, ...issues]);
-        }
-        delete aggregatedObject.issues;
-    }
-
-    const derivedIssues = deriveIssuesFromMarkdownSegments(
-        segments,
-        pickFirstString(
-            [
-                summaryObject?.reportText,
-                summaryObject?.report,
-                reportObject?.reportText,
-                reportObject?.report,
-                aggregatedObject?.reportText,
-                aggregatedObject?.report,
-                payload.dmlReportText,
-                payload.dmlReport?.reportText,
-                payload.dmlReport?.report,
-                payload.dml?.reportText,
-                payload.dml?.report
-            ],
-            { allowEmpty: false }
-        )
-    );
-    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-    if (normalisedDerivedIssues.length) {
-        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
-    }
-
-    const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
-
-    const parsedChunkIssues = [];
-    if (parsedJsonReport && Array.isArray(parsedJsonReport.chunks)) {
-        parsedJsonReport.chunks.forEach((chunk) => {
-            if (!chunk) return;
-            const chunkIndex = normaliseNumber(chunk.index);
-            if (Array.isArray(chunk.issues)) {
-                chunk.issues.forEach((issue) => {
-                    if (!issue) return;
-                    if (isPlainObject(issue)) {
-                        const enriched = { ...issue };
-                        if (chunkIndex !== null && enriched.chunk_index === undefined) {
-                            enriched.chunk_index = chunkIndex;
-                        }
-                        parsedChunkIssues.push(enriched);
-                        return;
-                    }
-                    parsedChunkIssues.push(issue);
-                });
-            }
-        });
-    }
-
-    const parsedJsonIssues = dedupeIssues([...parsedIssues, ...normaliseIssues(parsedChunkIssues)]);
-    if (parsedJsonIssues.length) {
-        issues = dedupeIssues([...parsedJsonIssues, ...issues]);
-    }
-
-    if (aggregatedObject && Array.isArray(aggregatedObject.issues)) {
-        const aggregatedIssues = normaliseIssues(aggregatedObject.issues);
-        if (aggregatedIssues.length) {
-            issues = dedupeIssues([...aggregatedIssues, ...issues]);
-        }
-        delete aggregatedObject.issues;
-    }
-
-    const derivedIssues = deriveIssuesFromMarkdownSegments(
-        segments,
-        pickFirstString(
-            [
-                summaryObject?.reportText,
-                summaryObject?.report,
-                reportObject?.reportText,
-                reportObject?.report,
-                aggregatedObject?.reportText,
-                aggregatedObject?.report,
-                payload.dmlReportText,
-                payload.dmlReport?.reportText,
-                payload.dmlReport?.report,
-                payload.dml?.reportText,
-                payload.dml?.report
-            ],
-            { allowEmpty: false }
-        )
-    );
-    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-    if (normalisedDerivedIssues.length) {
-        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
-    }
+    issues = filterDmlIssueList(issues);
 
     const generatedAtCandidates = [
         payload.dmlGeneratedAt,
@@ -1012,7 +927,9 @@ function normaliseAiReviewPayload(payload = {}) {
 
     const hasPatchEntries = Object.keys(analysisPatch).length > 0;
 
-    return {
+    logAiIssuesJson("issues.json", issues);
+
+    const result = {
         report,
         summary,
         aggregated,
@@ -1024,6 +941,7 @@ function normaliseAiReviewPayload(payload = {}) {
         conversationId,
         analysisPatch: hasPatchEntries ? analysisPatch : null
     };
+    return result;
 }
 
 function mergeAnalysisPatch(baseAnalysis, patch) {
@@ -1178,6 +1096,10 @@ export function buildAiReviewPersistencePayload(state) {
         analysis: state.analysis
     });
     return payload.analysisPatch;
+}
+
+export function filterDmlIssues(issues) {
+    return filterDmlIssueList(issues);
 }
 
 export default {
