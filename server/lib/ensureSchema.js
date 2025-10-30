@@ -37,10 +37,12 @@ async function ensureColumn({ info, error }, table, columnName, columnDefinition
         return;
     }
 
-    const statement = pool.format(
-        `ALTER TABLE ?? ADD COLUMN ?? ${columnDefinition}`,
-        [table, columnName]
-    );
+    const escapeId = typeof pool.escapeId === "function"
+        ? (value) => pool.escapeId(value)
+        : (value) => `\`${String(value).replace(/`/g, "``")}\``;
+    const tableId = escapeId(table);
+    const columnId = escapeId(columnName);
+    const statement = `ALTER TABLE ${tableId} ADD COLUMN ${columnId} ${columnDefinition}`;
     const preview = formatStatement(statement);
     info(`[schema] Executing: ${preview}`);
     try {
