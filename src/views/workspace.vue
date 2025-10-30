@@ -29,6 +29,7 @@ import {
     buildAiReviewSourceSummaryConfig,
     buildAiReviewPersistencePayload
 } from "../scripts/reports/aiReviewReport.js";
+import { exportJsonReport, normaliseJsonContent } from "../scripts/reports/exportJson.js";
 import {
     exportCombinedReportToExcel,
     exportStaticReportToExcel,
@@ -863,6 +864,130 @@ const canExportCombinedReport = computed(() => canShowStructuredSummary.value);
 const canExportStaticReport = computed(() => canShowStructuredStatic.value);
 const canExportAiReport = computed(() => canShowStructuredDml.value);
 
+const STRUCTURED_EXPORT_CONFIG = {
+    combined: {
+        type: "combined",
+        heading: "聚合報告 JSON",
+        exportLabel: "匯出聚合報告 JSON"
+    },
+    static: {
+        type: "static",
+        heading: "靜態分析 JSON",
+        exportLabel: "匯出靜態分析 JSON"
+    },
+    dml: {
+        type: "ai",
+        heading: "AI 審查 JSON",
+        exportLabel: "匯出 AI 審查 JSON"
+    }
+};
+
+function buildJsonInfo(candidate) {
+    const raw = normaliseJsonContent(candidate);
+    if (!raw) {
+        return { raw: "", preview: "" };
+    }
+    let preview = raw;
+    try {
+        preview = JSON.stringify(JSON.parse(raw), null, 2);
+    } catch (error) {
+        preview = raw;
+    }
+    return { raw, preview };
+}
+
+const combinedReportJsonInfo = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state) {
+        return { raw: "", preview: "" };
+    }
+    const rawReport = typeof report.state.report === "string" ? report.state.report : "";
+    if (rawReport && rawReport.trim()) {
+        return buildJsonInfo(rawReport);
+    }
+    const parsed = report.state.parsedReport;
+    if (parsed && typeof parsed === "object") {
+        return buildJsonInfo(parsed);
+    }
+    return { raw: "", preview: "" };
+});
+
+const staticReportJsonInfo = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state) {
+        return { raw: "", preview: "" };
+    }
+    const analysisStatic = report.state.analysis?.staticReport;
+    if (analysisStatic && typeof analysisStatic === "object") {
+        return buildJsonInfo(analysisStatic);
+    }
+    const reports = report.state.parsedReport?.reports;
+    const staticEntry = reports?.static_analyzer || reports?.staticAnalyzer || null;
+    if (staticEntry) {
+        return buildJsonInfo(staticEntry);
+    }
+    return { raw: "", preview: "" };
+});
+
+const aiReportJsonInfo = computed(() => {
+    const report = activeReport.value;
+    if (!report || !report.state) {
+        return { raw: "", preview: "" };
+    }
+    const analysisDml = report.state.analysis?.dmlReport;
+    if (analysisDml && typeof analysisDml === "object") {
+        return buildJsonInfo(analysisDml);
+    }
+    const stateDml = report.state.dml;
+    if (stateDml && typeof stateDml === "object") {
+        return buildJsonInfo(stateDml);
+    }
+    const reports = report.state.parsedReport?.reports;
+    const dmlEntry = reports?.dml_prompt || reports?.dmlPrompt || null;
+    if (dmlEntry) {
+        return buildJsonInfo(dmlEntry);
+    }
+    return { raw: "", preview: "" };
+});
+
+const structuredReportExportConfig = computed(() => {
+    const mode = structuredReportViewMode.value;
+    const base = STRUCTURED_EXPORT_CONFIG[mode] || STRUCTURED_EXPORT_CONFIG.combined;
+    let info = combinedReportJsonInfo.value;
+    let canExport = canExportCombinedReport.value;
+    let busy = reportExportState.combined;
+
+    if (mode === "static") {
+        info = staticReportJsonInfo.value;
+        canExport = canExportStaticReport.value;
+        busy = reportExportState.static;
+    } else if (mode === "dml") {
+        info = aiReportJsonInfo.value;
+        canExport = canExportAiReport.value;
+        busy = reportExportState.ai;
+    }
+
+    return {
+        ...base,
+        info,
+        canExport: canExport && Boolean(info.raw),
+        busy
+    };
+});
+
+const structuredReportJsonHeading = computed(
+    () => structuredReportExportConfig.value.heading || "報告 JSON"
+);
+const structuredReportExportLabel = computed(
+    () => structuredReportExportConfig.value.exportLabel || "匯出 JSON"
+);
+const structuredReportJsonPreview = computed(
+    () => structuredReportExportConfig.value.info.preview
+);
+const shouldShowStructuredExportButton = computed(
+    () => structuredReportExportConfig.value.canExport
+);
+
 const hasStructuredReportToggle = computed(
     () => canShowStructuredSummary.value || canShowStructuredStatic.value || canShowStructuredDml.value
 );
@@ -1024,11 +1149,19 @@ function buildReportExportMetadata(type, overrides = {}) {
     };
 }
 
-async function exportCombinedReportExcel() {
+async function exportCombinedReportJson() {
     if (!canExportCombinedReport.value || reportExportState.combined) {
         return;
     }
     if (!activeReportDetails.value) {
+        return;
+    }
+
+    const info = combinedReportJsonInfo.value;
+    if (!info.raw) {
+        if (typeof safeAlertFail === "function") {
+            safeAlertFail("尚無可匯出的聚合報告 JSON 內容");
+        }
         return;
     }
 
@@ -1041,24 +1174,24 @@ async function exportCombinedReportExcel() {
                 aggregatedSource?.generatedAt ||
                 activeReport.value?.state?.updatedAt ||
                 null,
-            typeLabel: "聚合報告"
+            typeLabel: "聚合報告",
+            extension: "json"
         });
-        await exportCombinedReportToExcel({
-            details: activeReportDetails.value,
-            issues: activeReportIssueSources.value.aggregatedIssues,
+        await exportJsonReport({
+            json: info.raw,
             metadata
         });
     } catch (error) {
-        console.error("Failed to export combined report", error);
+        console.error("Failed to export combined report JSON", error);
         if (typeof safeAlertFail === "function") {
-            safeAlertFail(`匯出聚合報告失敗：${normaliseErrorMessage(error)}`);
+            safeAlertFail(`匯出聚合報告 JSON 失敗：${normaliseErrorMessage(error)}`);
         }
     } finally {
         reportExportState.combined = false;
     }
 }
 
-async function exportStaticReportExcel() {
+async function exportStaticReportJson() {
     if (!canExportStaticReport.value || reportExportState.static) {
         return;
     }
@@ -1066,25 +1199,35 @@ async function exportStaticReportExcel() {
         return;
     }
 
+    const info = staticReportJsonInfo.value;
+    if (!info.raw) {
+        if (typeof safeAlertFail === "function") {
+            safeAlertFail("尚無可匯出的靜態分析 JSON 內容");
+        }
+        return;
+    }
+
     reportExportState.static = true;
     try {
-        const metadata = buildReportExportMetadata("static", { typeLabel: "靜態分析報告" });
-        await exportStaticReportToExcel({
-            details: activeReportDetails.value,
-            issues: activeReportIssueSources.value.staticIssues,
+        const metadata = buildReportExportMetadata("static", {
+            typeLabel: "靜態分析報告",
+            extension: "json"
+        });
+        await exportJsonReport({
+            json: info.raw,
             metadata
         });
     } catch (error) {
-        console.error("Failed to export static report", error);
+        console.error("Failed to export static report JSON", error);
         if (typeof safeAlertFail === "function") {
-            safeAlertFail(`匯出靜態分析報告失敗：${normaliseErrorMessage(error)}`);
+            safeAlertFail(`匯出靜態分析 JSON 失敗：${normaliseErrorMessage(error)}`);
         }
     } finally {
         reportExportState.static = false;
     }
 }
 
-async function exportAiReportExcel() {
+async function exportAiReportJson() {
     if (!canExportAiReport.value || reportExportState.ai) {
         return;
     }
@@ -1093,25 +1236,49 @@ async function exportAiReportExcel() {
         return;
     }
 
+    const info = aiReportJsonInfo.value;
+    if (!info.raw) {
+        if (typeof safeAlertFail === "function") {
+            safeAlertFail("尚無可匯出的 AI 審查 JSON 內容");
+        }
+        return;
+    }
+
     reportExportState.ai = true;
     try {
         const metadata = buildReportExportMetadata("ai", {
             generatedAt: dmlDetails.generatedAt ?? null,
-            typeLabel: "AI 審查報告"
+            typeLabel: "AI 審查報告",
+            extension: "json"
         });
-        await exportAiReviewReportToExcel({
-            details: dmlDetails,
-            issues: activeReportIssueSources.value.aiIssues,
+        await exportJsonReport({
+            json: info.raw,
             metadata
         });
     } catch (error) {
-        console.error("Failed to export AI review report", error);
+        console.error("Failed to export AI review report JSON", error);
         if (typeof safeAlertFail === "function") {
-            safeAlertFail(`匯出 AI 審查報告失敗：${normaliseErrorMessage(error)}`);
+            safeAlertFail(`匯出 AI 審查 JSON 失敗：${normaliseErrorMessage(error)}`);
         }
     } finally {
         reportExportState.ai = false;
     }
+}
+
+async function exportCurrentStructuredReportJson() {
+    const config = structuredReportExportConfig.value;
+    if (!config.canExport || config.busy) {
+        return;
+    }
+    if (config.type === "static") {
+        await exportStaticReportJson();
+        return;
+    }
+    if (config.type === "ai") {
+        await exportAiReportJson();
+        return;
+    }
+    await exportCombinedReportJson();
 }
 
 watch(activeReport, (report) => {
@@ -3025,32 +3192,45 @@ onBeforeUnmount(() => {
                                             role="group"
                                             aria-label="報告來源"
                                         >
+                                            <div class="reportStructuredToggleButtons">
+                                                <button
+                                                    type="button"
+                                                    class="reportStructuredToggleButton"
+                                                    :class="{ active: structuredReportViewMode === 'combined' }"
+                                                    :disabled="!canShowStructuredSummary"
+                                                    @click="setStructuredReportViewMode('combined')"
+                                                >
+                                                    總報告
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="reportStructuredToggleButton"
+                                                    :class="{ active: structuredReportViewMode === 'static' }"
+                                                    :disabled="!canShowStructuredStatic"
+                                                    @click="setStructuredReportViewMode('static')"
+                                                >
+                                                    靜態分析器
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="reportStructuredToggleButton"
+                                                    :class="{ active: structuredReportViewMode === 'dml' }"
+                                                    :disabled="!canShowStructuredDml"
+                                                    @click="setStructuredReportViewMode('dml')"
+                                                >
+                                                    AI審查
+                                                </button>
+                                            </div>
                                             <button
+                                                v-if="shouldShowStructuredExportButton"
                                                 type="button"
-                                                class="reportStructuredToggleButton"
-                                                :class="{ active: structuredReportViewMode === 'combined' }"
-                                                :disabled="!canShowStructuredSummary"
-                                                @click="setStructuredReportViewMode('combined')"
+                                                class="reportExportButton reportStructuredToggleExport"
+                                                :disabled="structuredReportExportConfig.busy"
+                                                :aria-busy="structuredReportExportConfig.busy ? 'true' : 'false'"
+                                                @click="exportCurrentStructuredReportJson"
                                             >
-                                                總報告
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class="reportStructuredToggleButton"
-                                                :class="{ active: structuredReportViewMode === 'static' }"
-                                                :disabled="!canShowStructuredStatic"
-                                                @click="setStructuredReportViewMode('static')"
-                                            >
-                                                靜態分析器
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class="reportStructuredToggleButton"
-                                                :class="{ active: structuredReportViewMode === 'dml' }"
-                                                :disabled="!canShowStructuredDml"
-                                                @click="setStructuredReportViewMode('dml')"
-                                            >
-                                                AI審查
+                                                <span v-if="structuredReportExportConfig.busy">匯出中…</span>
+                                                <span v-else>{{ structuredReportExportLabel }}</span>
                                             </button>
                                         </div>
                                         <div class="reportExportRow" role="group" aria-label="匯出報告">
@@ -3294,6 +3474,18 @@ onBeforeUnmount(() => {
                                             >
                                                 {{ dmlReportDetails.reportText }}
                                             </pre>
+                                        </section>
+                                        <section
+                                            v-if="structuredReportJsonPreview"
+                                            class="reportJsonPreviewSection"
+                                        >
+                                            <h4 class="reportJsonPreviewHeading">
+                                                {{ structuredReportJsonHeading }}
+                                            </h4>
+                                            <pre
+                                                class="reportJsonPreview codeScroll themed-scrollbar"
+                                                v-text="structuredReportJsonPreview"
+                                            ></pre>
                                         </section>
                                         <section
                                             v-if="shouldShowReportIssuesSection"
@@ -3951,9 +4143,16 @@ body,
 }
 
 .reportStructuredToggle {
-    display: inline-flex;
+    display: flex;
     flex-wrap: wrap;
     align-items: center;
+    gap: 12px;
+    justify-content: space-between;
+}
+
+.reportStructuredToggleButtons {
+    display: inline-flex;
+    flex-wrap: wrap;
     gap: 8px;
 }
 
@@ -3979,12 +4178,33 @@ body,
     cursor: not-allowed;
 }
 
-.reportExportRow {
+.reportStructuredToggleExport {
+    margin-left: auto;
+}
+
+.reportJsonPreviewSection {
+    margin-top: 12px;
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: 8px;
-    margin: 12px 0 16px;
-    justify-content: flex-end;
+}
+
+.reportJsonPreviewHeading {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #bfdbfe;
+}
+
+.reportJsonPreview {
+    margin: 0;
+    padding: 12px;
+    border: 1px solid #334155;
+    background: rgba(15, 23, 42, 0.65);
+    color: #e2e8f0;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre;
 }
 
 .reportExportButton {
@@ -4014,122 +4234,6 @@ body,
 .reportExportButton:focus-visible {
     outline: 2px solid #60a5fa;
     outline-offset: 2px;
-}
-
-.reportStructuredToggle {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-}
-
-.reportStructuredToggleButton {
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    border-radius: 4px;
-    background: rgba(148, 163, 184, 0.14);
-    color: #e2e8f0;
-    font-size: 12px;
-    padding: 4px 10px;
-    cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-}
-
-.reportStructuredToggleButton.active {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.28), rgba(14, 165, 233, 0.28));
-    border-color: rgba(59, 130, 246, 0.5);
-    color: #f8fafc;
-}
-
-.reportStructuredToggleButton:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-}
-
-.reportStructuredToggle {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-}
-
-.reportStructuredToggleButton {
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    border-radius: 4px;
-    background: rgba(148, 163, 184, 0.14);
-    color: #e2e8f0;
-    font-size: 12px;
-    padding: 4px 10px;
-    cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-}
-
-.reportStructuredToggleButton.active {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.28), rgba(14, 165, 233, 0.28));
-    border-color: rgba(59, 130, 246, 0.5);
-    color: #f8fafc;
-}
-
-.reportStructuredToggleButton:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-}
-
-.reportStructuredToggle {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-}
-
-.reportStructuredToggleButton {
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    border-radius: 4px;
-    background: rgba(148, 163, 184, 0.14);
-    color: #e2e8f0;
-    font-size: 12px;
-    padding: 4px 10px;
-    cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-}
-
-.reportStructuredToggleButton.active {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.28), rgba(14, 165, 233, 0.28));
-    border-color: rgba(59, 130, 246, 0.5);
-    color: #f8fafc;
-}
-
-.reportStructuredToggleButton:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-}
-
-.reportStructuredToggle {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-}
-
-.reportStructuredToggleButton {
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    border-radius: 4px;
-    background: rgba(148, 163, 184, 0.14);
-    color: #e2e8f0;
-    font-size: 12px;
-    padding: 4px 10px;
-    cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-}
-
-.reportStructuredToggleButton.active {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.28), rgba(14, 165, 233, 0.28));
-    border-color: rgba(59, 130, 246, 0.5);
-    color: #f8fafc;
-}
-
-.reportStructuredToggleButton:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
 }
 
 .reportSummaryGrid {
