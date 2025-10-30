@@ -293,13 +293,6 @@ const viewerHasContent = computed(() => {
     );
 });
 
-const hasChunkDetails = computed(() => {
-    const report = activeReport.value;
-    if (!report) return false;
-    const chunks = report.state.chunks;
-    return Array.isArray(chunks) && chunks.length > 1;
-});
-
 const activeReportIssueSources = computed(() => {
     const report = activeReport.value;
     if (!report || !report.state) {
@@ -689,6 +682,122 @@ const dmlSegments = computed(() => {
     return Array.isArray(segments) ? segments : [];
 });
 const hasDmlSegments = computed(() => dmlSegments.value.length > 0);
+const dmlChunkDetails = computed(() => {
+    const report = dmlReportDetails.value;
+    if (!report) return [];
+    const chunks = Array.isArray(report.chunks) ? report.chunks : [];
+    if (!chunks.length) return [];
+
+    const totalCandidates = chunks.map((chunk, offset) => {
+        const totalCandidate = Number(chunk?.total);
+        if (Number.isFinite(totalCandidate) && totalCandidate > 0) {
+            return Math.floor(totalCandidate);
+        }
+        const indexCandidate = Number(chunk?.index);
+        if (Number.isFinite(indexCandidate) && indexCandidate > 0) {
+            return Math.floor(indexCandidate);
+        }
+        return offset + 1;
+    });
+    const fallbackTotal = Math.max(chunks.length, ...totalCandidates);
+
+    const normaliseIssue = (issue) => {
+        if (isPlainObject(issue)) {
+            const message =
+                pickFirstNonEmptyString(
+                    issue.message,
+                    Array.isArray(issue.messages) ? issue.messages : [],
+                    issue.description,
+                    issue.detail,
+                    issue.summary,
+                    issue.statement,
+                    issue.snippet,
+                    issue.text,
+                    issue.report,
+                    issue.reason,
+                    issue.evidence
+                ) || "未提供訊息";
+            const severity = pickFirstNonEmptyString(
+                Array.isArray(issue.severity_levels) ? issue.severity_levels : [],
+                issue.severity,
+                issue.level
+            );
+            const rule = pickFirstNonEmptyString(
+                Array.isArray(issue.rule_ids) ? issue.rule_ids : [],
+                Array.isArray(issue.ruleIds) ? issue.ruleIds : [],
+                issue.rule_id,
+                issue.ruleId,
+                issue.rule
+            );
+            const context = pickFirstNonEmptyString(
+                issue.snippet,
+                issue.statement,
+                issue.sql,
+                issue.segment,
+                issue.text,
+                issue.raw
+            );
+            const lineCandidate = Number(
+                issue.line ?? issue.lineNumber ?? issue.line_no ?? issue.start_line ?? issue.startLine
+            );
+            const line = Number.isFinite(lineCandidate) && lineCandidate > 0 ? Math.floor(lineCandidate) : null;
+
+            return {
+                message,
+                severity,
+                rule,
+                line,
+                context,
+                original: issue
+            };
+        }
+        if (typeof issue === "string") {
+            const trimmed = issue.trim();
+            return {
+                message: trimmed || "未提供訊息",
+                severity: "",
+                rule: "",
+                line: null,
+                context: "",
+                original: issue
+            };
+        }
+        try {
+            return {
+                message: JSON.stringify(issue),
+                severity: "",
+                rule: "",
+                line: null,
+                context: "",
+                original: issue
+            };
+        } catch (_error) {
+            return {
+                message: "未提供訊息",
+                severity: "",
+                rule: "",
+                line: null,
+                context: "",
+                original: issue
+            };
+        }
+    };
+
+    return chunks.map((chunk, offset) => {
+        const indexCandidate = Number(chunk?.index);
+        const index = Number.isFinite(indexCandidate) && indexCandidate > 0 ? Math.floor(indexCandidate) : offset + 1;
+        const totalCandidate = Number(chunk?.total);
+        const total = Number.isFinite(totalCandidate) && totalCandidate > 0
+            ? Math.floor(totalCandidate)
+            : Math.max(fallbackTotal, index);
+        const issues = Array.isArray(chunk?.issues) ? chunk.issues : [];
+        return {
+            index,
+            total,
+            issues: issues.map(normaliseIssue)
+        };
+    });
+});
 const activeReportSourceText = computed(() => {
     const report = activeReport.value;
     if (!report) return "";
@@ -778,6 +887,15 @@ const reportIssueLines = computed(() => {
 const hasReportIssueLines = computed(() => reportIssueLines.value.length > 0);
 
 const structuredReportViewMode = ref("combined");
+const shouldShowDmlChunkDetails = computed(() => {
+    if (!dmlChunkDetails.value.length) {
+        return false;
+    }
+    if (!hasStructuredReport.value) {
+        return true;
+    }
+    return structuredReportViewMode.value === "dml";
+});
 
 const canShowStructuredSummary = computed(() => Boolean(activeReportDetails.value));
 
@@ -2361,6 +2479,27 @@ function normaliseHydratedString(value) {
     return typeof value === "string" ? value : "";
 }
 
+function pickFirstNonEmptyString(...candidates) {
+    for (const candidate of candidates) {
+        if (Array.isArray(candidate)) {
+            const resolved = pickFirstNonEmptyString(...candidate);
+            if (resolved) {
+                return resolved;
+            }
+            continue;
+        }
+        if (candidate === null || candidate === undefined) {
+            continue;
+        }
+        const value = typeof candidate === "string" ? candidate : String(candidate);
+        const trimmed = value.trim();
+        if (trimmed) {
+            return trimmed;
+        }
+    }
+    return "";
+}
+
 async function hydrateReportsForProject(projectId) {
     const entry = ensureReportTreeEntry(projectId);
     if (!entry) return;
@@ -3636,15 +3775,36 @@ onBeforeUnmount(() => {
 
                                     </div>
                                     <pre v-else class="reportBody codeScroll themed-scrollbar">{{ activeReport.state.report }}</pre>
-                                    <details v-if="hasChunkDetails" class="reportChunks">
-                                        <summary>分段輸出（{{ activeReport.state.chunks.length }}）</summary>
-                                        <ol class="reportChunkList">
+                                    <details v-if="shouldShowDmlChunkDetails" class="reportChunks">
+                                        <summary>AI 審查段落（{{ dmlChunkDetails.length }}）</summary>
+                                        <ol class="reportChunkList reportChunkList--issues">
                                             <li
-                                                v-for="chunk in activeReport.state.chunks"
-                                                :key="`${chunk.index}-${chunk.total}`"
+                                                v-for="chunk in dmlChunkDetails"
+                                                :key="`chunk-${chunk.index}-${chunk.total}`"
                                             >
                                                 <h4 class="reportChunkTitle">第 {{ chunk.index }} 段</h4>
-                                                <pre class="reportChunkBody codeScroll themed-scrollbar">{{ chunk.answer }}</pre>
+                                                <template v-if="chunk.issues.length">
+                                                    <ul class="reportChunkIssues">
+                                                        <li
+                                                            v-for="(issue, issueIndex) in chunk.issues"
+                                                            :key="`chunk-${chunk.index}-issue-${issueIndex}`"
+                                                            class="reportChunkIssue"
+                                                        >
+                                                            <p class="reportChunkIssueMessage">{{ issue.message }}</p>
+                                                            <p v-if="issue.rule" class="reportChunkIssueMeta">規則：{{ issue.rule }}</p>
+                                                            <p v-if="issue.severity" class="reportChunkIssueMeta">
+                                                                嚴重度：{{ issue.severity }}
+                                                            </p>
+                                                            <p v-if="issue.line" class="reportChunkIssueMeta">
+                                                                行數：第 {{ issue.line }} 行
+                                                            </p>
+                                                            <p v-if="issue.context" class="reportChunkIssueContext">
+                                                                {{ issue.context }}
+                                                            </p>
+                                                        </li>
+                                                    </ul>
+                                                </template>
+                                                <p v-else class="reportChunkEmpty">未檢測到任何問題。</p>
                                             </li>
                                         </ol>
                                     </details>
@@ -4979,8 +5139,52 @@ body,
     gap: 12px;
 }
 
+.reportChunkList--issues {
+    gap: 16px;
+}
+
 .reportChunkTitle {
     margin: 0 0 6px;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportChunkIssues {
+    margin: 0;
+    padding-left: 20px;
+    list-style: disc;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.reportChunkIssue {
+    margin: 0;
+}
+
+.reportChunkIssueMessage {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #f8fafc;
+}
+
+.reportChunkIssueMeta {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.reportChunkIssueContext {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: #cbd5f5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.reportChunkEmpty {
+    margin: 6px 0 0;
     font-size: 12px;
     color: #94a3b8;
 }
