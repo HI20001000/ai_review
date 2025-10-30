@@ -250,6 +250,20 @@ function normaliseIssues(issues) {
     return results;
 }
 
+function stripIssuesFromChunks(chunks) {
+    if (!Array.isArray(chunks)) {
+        return;
+    }
+    chunks.forEach((chunk) => {
+        if (!chunk || typeof chunk !== "object") {
+            return;
+        }
+        if ("issues" in chunk) {
+            delete chunk.issues;
+        }
+    });
+}
+
 function normaliseSegments(segments, chunks) {
     const segmentList = Array.isArray(segments) ? segments : [];
     const chunkList = Array.isArray(chunks) ? chunks : [];
@@ -819,6 +833,17 @@ function normaliseAiReviewPayload(payload = {}) {
         if (!report.aggregated && aggregated) {
             report.aggregated = clonePlain(aggregated);
         }
+        if (Array.isArray(report.chunks)) {
+            stripIssuesFromChunks(report.chunks);
+        }
+        if (report.aggregated) {
+            if (Array.isArray(report.aggregated.chunks)) {
+                stripIssuesFromChunks(report.aggregated.chunks);
+            }
+            if ("issues" in report.aggregated) {
+                delete report.aggregated.issues;
+            }
+        }
     } else if (issues.length) {
         report = { issues: clonePlain(issues) };
     }
@@ -829,7 +854,15 @@ function normaliseAiReviewPayload(payload = {}) {
     const analysisPatch = {};
     if (report) analysisPatch.dmlReport = report;
     if (summary) analysisPatch.dmlSummary = summary;
-    if (aggregated) analysisPatch.dmlAggregated = aggregated;
+    if (aggregated) {
+        if ("issues" in aggregated) {
+            delete aggregated.issues;
+        }
+        if (Array.isArray(aggregated.chunks)) {
+            stripIssuesFromChunks(aggregated.chunks);
+        }
+        analysisPatch.dmlAggregated = aggregated;
+    }
     if (issues.length) analysisPatch.dmlIssues = clonePlain(issues);
     if (segments.length) analysisPatch.dmlSegments = clonePlain(segments);
     if (generatedAt) analysisPatch.dmlGeneratedAt = generatedAt;
