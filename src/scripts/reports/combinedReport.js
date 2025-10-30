@@ -29,6 +29,30 @@ function logClientIssuesJson(label, issues) {
 }
 
 /**
+ * Parse issues from a serialised JSON payload.
+ *
+ * @param {string | null | undefined} json - Serialised JSON string containing an issues array.
+ * @returns {Array<any>} Extracted issues.
+ */
+function parseIssuesFromJson(json) {
+    if (typeof json !== "string") {
+        return [];
+    }
+    const trimmed = json.trim();
+    if (!trimmed) {
+        return [];
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const issues = Array.isArray(parsed?.issues) ? parsed.issues : [];
+        return issues.filter((issue) => issue !== null && issue !== undefined);
+    } catch (error) {
+        console.warn("[report] Failed to parse issues JSON", error);
+        return [];
+    }
+}
+
+/**
  * Collect issues originating from the provided report sources.
  *
  * @param {Record<string, any>} state - Workspace state containing parsed reports and in-memory analysis.
@@ -201,10 +225,19 @@ export function collectIssuesForSource(state, sourceKeys) {
     }
 
     if (sourceKeySet.has(normaliseReportSourceKey("dml_prompt"))) {
+        const aiReportIssues = parseIssuesFromJson(state.aiReportJson);
+        if (aiReportIssues.length) {
+            const aiKey = normaliseReportSourceKey("dml_prompt");
+            removeIssuesBySource(aiKey);
+            dedupeIssues(remapIssuesToSource(aiReportIssues, "dml_prompt", { force: true })).forEach(
+                (issue) => pushIssue(issue)
+            );
+        }
+
         const dmlReport = state.analysis?.dmlReport && typeof state.analysis.dmlReport === "object"
             ? state.analysis.dmlReport
             : null;
-        if (Array.isArray(dmlReport?.issues)) {
+        if (!aiReportIssues.length && Array.isArray(dmlReport?.issues)) {
             dedupeIssues(remapIssuesToSource(dmlReport.issues, "dml_prompt")).forEach((issue) =>
                 pushIssue(issue)
             );
