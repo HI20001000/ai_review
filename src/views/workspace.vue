@@ -798,6 +798,11 @@ const structuredReportViewMode = ref("combined");
 const canShowStructuredSummary = computed(() => Boolean(activeReportDetails.value));
 
 const canShowStructuredStatic = computed(() => {
+    const reportState = activeReport.value?.state;
+    if (reportState && normaliseJsonContent(reportState.staticReportJson)) {
+        return true;
+    }
+
     const details = activeReportDetails.value;
     if (!details) return false;
 
@@ -833,6 +838,11 @@ const canShowStructuredStatic = computed(() => {
 });
 
 const canShowStructuredDml = computed(() => {
+    const reportState = activeReport.value?.state;
+    if (reportState && normaliseJsonContent(reportState.aiReportJson)) {
+        return true;
+    }
+
     const report = activeReportDetails.value?.dmlReport;
     if (!report) return false;
 
