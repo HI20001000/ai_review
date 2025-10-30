@@ -1249,7 +1249,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         }
     }
 
-    const annotatedChunks = (() => {
+    const chunksForReport = (() => {
         if (dmlChunks.length) {
             return dmlChunks;
         }
@@ -1382,7 +1382,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const result = {
         report: finalReport,
         conversationId: typeof dify?.conversationId === "string" ? dify.conversationId : "",
-        chunks: annotatedChunks,
+        chunks: chunksForReport,
         segments,
         generatedAt,
         analysis: analysisPayload,
