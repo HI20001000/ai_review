@@ -936,11 +936,17 @@ const combinedReportJsonInfo = computed(() => {
         merged.aggregated_reports = combinedPayload.aggregated_reports;
 
         const reportsSource = merged.reports && typeof merged.reports === "object" ? merged.reports : {};
+        const staticIssuesPayload = combinedPayload.aggregated_reports.static;
+        const aiIssuesPayload = combinedPayload.aggregated_reports.ai;
         merged.reports = {
             ...reportsSource,
+            static_analyzer: staticIssuesPayload,
+            staticAnalyzer: staticIssuesPayload,
+            dml_prompt: aiIssuesPayload,
+            dmlPrompt: aiIssuesPayload,
             combined: combinedPayload.aggregated_reports.combined,
-            static_json: combinedPayload.aggregated_reports.static,
-            ai_json: combinedPayload.aggregated_reports.ai
+            static_json: staticIssuesPayload,
+            ai_json: aiIssuesPayload
         };
 
         candidate = merged;
