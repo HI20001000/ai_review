@@ -929,11 +929,6 @@ const combinedReportJsonInfo = computed(() => {
         return { raw: "", preview: "" };
     }
 
-    const stored = normaliseJsonContent(report.state.combinedReportJson);
-    if (stored) {
-        return buildJsonInfo(stored);
-    }
-
     const combinedPayload = buildCombinedReportJsonExport(report.state);
     return buildJsonInfo(combinedPayload);
 });

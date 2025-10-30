@@ -22,6 +22,139 @@ function logIssuesJson(label, jsonString) {
     console.log(`[sql-report] ${label}: ${jsonString}`);
 }
 
+function pickFirstString(...candidates) {
+    for (const value of candidates) {
+        if (typeof value === "string") {
+            const trimmed = value.trim();
+            if (trimmed) {
+                return trimmed;
+            }
+        }
+    }
+    return "";
+}
+
+function normaliseTimestampValue(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+    }
+    if (typeof value === "number") {
+        if (!Number.isFinite(value)) {
+            return "";
+        }
+        const fromNumber = new Date(value);
+        return Number.isNaN(fromNumber.getTime()) ? "" : fromNumber.toISOString();
+    }
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return "";
+        }
+        const numeric = Number(trimmed);
+        if (!Number.isNaN(numeric)) {
+            const fromNumeric = new Date(numeric);
+            if (!Number.isNaN(fromNumeric.getTime())) {
+                return fromNumeric.toISOString();
+            }
+        }
+        const parsed = new Date(trimmed);
+        if (!Number.isNaN(parsed.getTime())) {
+            return parsed.toISOString();
+        }
+        return trimmed;
+    }
+    return "";
+}
+
+function buildSummaryRecordForPersistence({
+    source,
+    label,
+    summary,
+    issues,
+    fallbackStatus,
+    fallbackGeneratedAt
+}) {
+    const issueCount = Array.isArray(issues) ? issues.length : 0;
+    const record = {
+        source,
+        label,
+        total_issues: issueCount
+    };
+
+    const status = pickFirstString(
+        summary?.status,
+        summary?.status_label,
+        summary?.statusLabel,
+        fallbackStatus
+    );
+    if (status) {
+        record.status = status;
+    }
+
+    const generatedAtCandidate =
+        summary?.generated_at ?? summary?.generatedAt ?? fallbackGeneratedAt;
+    const generatedAt = normaliseTimestampValue(generatedAtCandidate);
+    if (generatedAt) {
+        record.generated_at = generatedAt;
+    }
+
+    const errorMessage = pickFirstString(summary?.error_message, summary?.errorMessage);
+    if (errorMessage) {
+        record.error_message = errorMessage;
+    }
+
+    const message = pickFirstString(summary?.message, summary?.note);
+    if (message) {
+        record.message = message;
+    }
+
+    return record;
+}
+
+function cloneSummaryRecordsForPersistence(records) {
+    if (!Array.isArray(records)) {
+        return [];
+    }
+    const result = [];
+    for (const record of records) {
+        if (!record || typeof record !== "object" || Array.isArray(record)) {
+            continue;
+        }
+        const clone = {};
+        for (const [key, value] of Object.entries(record)) {
+            if (value === undefined || value === null) {
+                continue;
+            }
+            if (typeof value === "object") {
+                continue;
+            }
+            clone[key] = value;
+        }
+        if (Object.keys(clone).length) {
+            result.push(clone);
+        }
+    }
+    return result;
+}
+
+function serialiseCombinedReportJson(summaryRecords, issues) {
+    const safeSummary = cloneSummaryRecordsForPersistence(summaryRecords);
+    const safeIssues = cloneIssueListForPersistence(issues);
+    const payload = { summary: safeSummary, issues: safeIssues };
+    try {
+        return JSON.stringify(payload, null, 2);
+    } catch (error) {
+        try {
+            return JSON.stringify(payload);
+        } catch (_nestedError) {
+            return "{\"summary\":[],\"issues\":[]}";
+        }
+    }
+}
+
 function cloneValue(value) {
     if (Array.isArray(value)) {
         return value.map((entry) => cloneValue(entry));
@@ -1180,9 +1313,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         staticReportPayload.enrichment = parsedDify;
     }
 
-    const combinedIssuesJson = serialiseIssuesJson(combinedIssuesForReports);
-    logIssuesJson("combined.issues.json.post_aggregate", combinedIssuesJson);
-
     const finalPayload = {
         summary: compositeSummary,
         issues: combinedIssues,
@@ -1249,6 +1379,40 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     logSqlPayloadStage("report.serialised", finalReport);
 
     const generatedAt = dify?.generatedAt || new Date().toISOString();
+    const combinedSummaryRecords = [
+        buildSummaryRecordForPersistence({
+            source: "static_analyzer",
+            label: "靜態分析器",
+            summary: staticSummary,
+            issues: reportsStaticIssues
+        }),
+        buildSummaryRecordForPersistence({
+            source: "dml_prompt",
+            label: "AI審查",
+            summary: dmlSummary,
+            issues: reportsAiIssues,
+            fallbackGeneratedAt: dmlGeneratedAt
+        }),
+        buildSummaryRecordForPersistence({
+            source: "combined",
+            label: "聚合報告",
+            summary: compositeSummary,
+            issues: combinedIssuesForReports,
+            fallbackStatus: difySummary?.status,
+            fallbackGeneratedAt:
+                difySummary?.generated_at ||
+                difySummary?.generatedAt ||
+                dify?.generatedAt ||
+                generatedAt
+        })
+    ];
+
+    const combinedReportJson = serialiseCombinedReportJson(
+        combinedSummaryRecords,
+        combinedIssuesForReports
+    );
+    logIssuesJson("combined.report.json.post_aggregate", combinedReportJson);
+
     const difyErrorMessage = difyError ? difyError.message || String(difyError) : "";
     const enrichmentStatus = dify ? "succeeded" : "failed";
 
@@ -1277,6 +1441,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             analysisPayload.dmlAggregated = dmlAggregated;
         }
         analysisPayload.combinedSummary = compositeSummary;
+        analysisPayload.combinedSummaryRecords = combinedSummaryRecords;
         analysisPayload.combinedIssues = combinedIssues;
         analysisPayload.aggregatedReports = aggregatedReports;
         if (parsedDify && typeof parsedDify === "object") {
@@ -1323,7 +1488,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         enrichmentStatus,
         difyErrorMessage: difyErrorMessage || undefined,
         dmlErrorMessage: dmlErrorMessage || undefined,
-        combinedReportJson: combinedIssuesJson,
+        combinedReportJson,
         staticReportJson: staticIssuesJson,
         aiReportJson: aiIssuesJson
     };
