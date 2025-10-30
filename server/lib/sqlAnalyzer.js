@@ -1225,10 +1225,11 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const staticIssues = Array.isArray(parsedStaticReport.issues) ? parsedStaticReport.issues : [];
     const staticIssuesWithSource = staticIssues.map((issue) => annotateIssueSource(issue, "static_analyzer"));
     const staticMetadata = normaliseStaticMetadata(parsedStaticReport.metadata);
+    const staticIssuesForPersistence = cloneIssueListForPersistence(staticIssues);
     const staticReportPayload = {
         ...parsedStaticReport,
         summary: staticSummary,
-        issues: staticIssues,
+        issues: staticIssuesForPersistence,
         metadata: staticMetadata
     };
     logSqlPayloadStage("static.reportPayload", staticReportPayload);
@@ -1294,7 +1295,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
 
     const compositeSummary = buildCompositeSummary(staticSummary, dmlSummary, difySummary, combinedIssues);
 
-    const staticIssuesForPersistence = cloneIssueListForPersistence(staticIssues);
     const aiIssuesForPersistence = filterAiIssuesForPersistence(dmlIssues);
 
     const reportsStaticIssues = cloneIssueListForPersistence(staticIssuesForPersistence);
@@ -1357,13 +1357,33 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     );
     logIssuesJson("combined.report.json.post_aggregate", combinedReportJson);
 
+    const staticReportEntry = cloneValue({
+        ...staticReportPayload,
+        type: "static_analyzer",
+        issues: reportsStaticIssues
+    });
+
+    const dmlReportEntry = cloneValue({
+        ...dmlReportPayload,
+        issues: reportsAiIssues
+    });
+
+    const combinedReportEntry = {
+        type: "combined",
+        summary: cloneValue(compositeSummary),
+        issues: cloneIssueListForPersistence(combinedIssuesForReports)
+    };
+
+    const finalReports = {
+        static_analyzer: staticReportEntry,
+        dml_prompt: dmlReportEntry,
+        combined: combinedReportEntry
+    };
+
     const finalPayload = {
-        summary: compositeSummary,
-        issues: combinedIssues,
-        reports: {
-            static_analyzer: { issues: cloneIssueListForPersistence(reportsStaticIssues) },
-            dml_prompt: { issues: cloneIssueListForPersistence(reportsAiIssues) }
-        },
+        summary: cloneValue(compositeSummary),
+        issues: cloneIssueListForPersistence(combinedIssues),
+        reports: finalReports,
         aggregated_reports: aggregatedReports,
         metadata: {
             analysis_source: "composite",
@@ -1379,10 +1399,12 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     if (parsedDify && typeof parsedDify === "object") {
         finalPayload.reports.dify_workflow = {
             type: "dify_workflow",
-            summary: difySummary,
-            issues: difyIssuesRaw,
+            summary: cloneValue(difySummary),
+            issues: cloneIssueListForPersistence(difyIssuesRaw),
             metadata: { analysis_source: "dify_workflow" },
-            raw: parsedDify
+            raw: parsedDify,
+            report: difyReport,
+            chunks: cloneValue(difyChunks)
         };
     }
 
@@ -1423,6 +1445,9 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         ? cloneValue(annotatedChunks)
         : [];
     logSqlPayloadStage("chunks.final", chunksForReport);
+
+    combinedReportEntry.chunks = cloneValue(chunksForReport);
+    finalPayload.chunks = cloneValue(chunksForReport);
 
     finalReport = JSON.stringify(finalPayload, null, 2);
     logSqlPayloadStage("report.serialised", finalReport);
