@@ -173,13 +173,16 @@ function clonePlainValue(value) {
     return value;
 }
 
+const EMPTY_ISSUES_JSON = JSON.stringify({ issues: [] }, null, 2);
+const EMPTY_COMBINED_REPORT_JSON = JSON.stringify({ summary: [], issues: [] }, null, 2);
+
 function sanitiseCombinedReportJson(value) {
     if (typeof value !== "string") {
-        return "";
+        return EMPTY_COMBINED_REPORT_JSON;
     }
     const trimmed = value.trim();
     if (!trimmed) {
-        return "";
+        return EMPTY_COMBINED_REPORT_JSON;
     }
     try {
         const parsed = JSON.parse(trimmed);
@@ -192,17 +195,17 @@ function sanitiseCombinedReportJson(value) {
         return JSON.stringify({ summary, issues }, null, 2);
     } catch (error) {
         console.warn("[reports] Failed to sanitise combined report JSON", error);
-        return trimmed;
+        return EMPTY_COMBINED_REPORT_JSON;
     }
 }
 
 function sanitiseIssuesJson(value) {
     if (typeof value !== "string") {
-        return "";
+        return EMPTY_ISSUES_JSON;
     }
     const trimmed = value.trim();
     if (!trimmed) {
-        return "";
+        return EMPTY_ISSUES_JSON;
     }
     try {
         const parsed = JSON.parse(trimmed);
@@ -212,8 +215,42 @@ function sanitiseIssuesJson(value) {
         return JSON.stringify({ issues }, null, 2);
     } catch (error) {
         console.warn("[reports] Failed to sanitise issues JSON", error);
-        return trimmed;
+        return EMPTY_ISSUES_JSON;
     }
+}
+
+function buildFallbackCombinedReport(errorMessage, generatedAt) {
+    const trimmedMessage = typeof errorMessage === "string" ? errorMessage.trim() : "";
+    const baseMessage = trimmedMessage
+        ? `AI 審查流程執行失敗：${trimmedMessage}`
+        : "AI 審查流程執行失敗。";
+    const summary = [
+        {
+            source: "static_analyzer",
+            label: "靜態分析器",
+            total_issues: 0,
+            status: "skipped",
+            generated_at: generatedAt
+        },
+        {
+            source: "dml_prompt",
+            label: "AI審查",
+            total_issues: 0,
+            status: "failed",
+            message: baseMessage,
+            generated_at: generatedAt
+        },
+        {
+            source: "combined",
+            label: "聚合報告",
+            total_issues: 0,
+            status: "failed",
+            message: baseMessage,
+            generated_at: generatedAt
+        }
+    ].map((entry) => clonePlainValue(entry));
+
+    return { summary, issues: [] };
 }
 
 function mapReportRow(row) {
@@ -745,7 +782,7 @@ app.post("/api/reports/dify", async (req, res, next) => {
         if (shouldFallback && projectId && path) {
             const fallbackGeneratedAt = new Date().toISOString();
             const fallbackCombined = buildFallbackCombinedReport(errorMessage, fallbackGeneratedAt);
-            const combinedJson = JSON.stringify(fallbackCombined);
+            const combinedJson = JSON.stringify(fallbackCombined, null, 2);
             const savedAtIso = new Date().toISOString();
 
             try {
