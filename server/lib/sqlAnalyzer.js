@@ -677,34 +677,68 @@ function indexToLineCol(text, index) {
     return { line, column };
 }
 
+function normalisePositiveInteger(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+        return null;
+    }
+    return Math.floor(numeric);
+}
+
 function extractDmlStatements(sqlText) {
     if (typeof sqlText !== "string" || !sqlText.trim()) {
         return [];
     }
+
     const masked = maskCommentsAndStrings(sqlText);
-    const regex = /\b(INSERT|UPDATE|DELETE)\b/gi;
     const segments = [];
-    let match;
-    while ((match = regex.exec(masked)) !== null) {
-        const start = match.index;
+
+    let offset = 0;
+    while (offset < masked.length) {
+        let start = offset;
+        while (start < masked.length && /\s/.test(masked[start])) {
+            start += 1;
+        }
+
+        if (start >= masked.length) {
+            break;
+        }
+
         const end = findStatementTerminator(masked, start);
+        if (end <= start) {
+            offset = start + 1;
+            continue;
+        }
+
         const snippet = sqlText.slice(start, end);
         const cleanedSnippet = stripSqlComments(snippet).trim();
-        if (!cleanedSnippet) continue;
-        const startMeta = indexToLineCol(sqlText, start);
-        const endMeta = indexToLineCol(sqlText, end);
-        segments.push({
-            index: segments.length + 1,
-            text: cleanedSnippet,
-            rawText: snippet.trim(),
-            start,
-            end,
-            startLine: startMeta.line,
-            startColumn: startMeta.column,
-            endLine: endMeta.line,
-            endColumn: endMeta.column
-        });
+        if (cleanedSnippet) {
+            const keywordMatch = cleanedSnippet.match(/^(SELECT|WITH|INSERT|UPDATE|DELETE|MERGE|UPSERT|REPLACE)\b/i);
+            if (keywordMatch) {
+                const startMeta = indexToLineCol(sqlText, start);
+                const endMeta = indexToLineCol(sqlText, end);
+                const startColumn = normalisePositiveInteger(startMeta.column) || 1;
+                const endColumn = normalisePositiveInteger(endMeta.column) || startColumn;
+                const startLine = normalisePositiveInteger(startMeta.line) || 1;
+                const endLine = normalisePositiveInteger(endMeta.line) || startLine;
+                segments.push({
+                    index: segments.length + 1,
+                    text: cleanedSnippet,
+                    rawText: snippet.trim(),
+                    start,
+                    end,
+                    line: startLine,
+                    startLine,
+                    startColumn,
+                    endLine,
+                    endColumn
+                });
+            }
+        }
+
+        offset = end;
     }
+
     return segments;
 }
 
@@ -1242,6 +1276,27 @@ export async function analyseSqlToReport(sqlText, options = {}) {
     let dmlError = null;
     if (dmlSegments.length) {
         const segmentTexts = dmlSegments.map((segment) => segment.text);
+        const segmentsForDify = dmlSegments.map((segment) => {
+            const startLine = normalisePositiveInteger(segment.startLine ?? segment.line);
+            const endLine = normalisePositiveInteger(segment.endLine);
+            const startColumn = normalisePositiveInteger(segment.startColumn);
+            const endColumn = normalisePositiveInteger(segment.endColumn);
+            const text = typeof segment.text === "string"
+                ? segment.text
+                : typeof segment.rawText === "string"
+                ? segment.rawText
+                : "";
+            return {
+                text,
+                rawText: typeof segment.rawText === "string" ? segment.rawText : text,
+                index: segment.index,
+                startLine: startLine || undefined,
+                endLine: endLine || startLine || undefined,
+                startColumn: startColumn || undefined,
+                endColumn: endColumn || undefined,
+                line: startLine || undefined
+            };
+        });
         const dmlFilePath = path ? `${path}.dml.txt` : "analysis.dml.txt";
         try {
             console.log(
@@ -1252,7 +1307,7 @@ export async function analyseSqlToReport(sqlText, options = {}) {
                 filePath: dmlFilePath,
                 content: segmentTexts.join("\n\n"),
                 userId: resolvedUserId,
-                segments: segmentTexts,
+                segments: segmentsForDify,
                 files
             });
         } catch (error) {
@@ -1321,10 +1376,50 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     logSqlPayloadStage("static.reportPayload", staticReportPayload);
 
     const dmlSegments = Array.isArray(dml?.segments)
-        ? dml.segments.map((segment, index) => ({
-              ...segment,
-              index: Number.isFinite(Number(segment?.index)) ? segment.index : index + 1
-          }))
+        ? dml.segments.map((segment, index) => {
+              const baseIndex = index + 1;
+              if (!segment || typeof segment !== "object") {
+                  const textValue = typeof segment === "string" ? segment : String(segment ?? "");
+                  return {
+                      index: baseIndex,
+                      text: textValue,
+                      rawText: textValue
+                  };
+              }
+              const clone = { ...segment };
+              const numericIndex = normalisePositiveInteger(clone.index);
+              clone.index = numericIndex || baseIndex;
+              if (typeof clone.text !== "string" || !clone.text.trim()) {
+                  if (typeof clone.rawText === "string" && clone.rawText.trim()) {
+                      clone.text = clone.rawText.trim();
+                  } else if (typeof clone.raw === "string" && clone.raw.trim()) {
+                      clone.text = clone.raw;
+                  } else {
+                      clone.text = "";
+                  }
+              }
+              if (typeof clone.rawText !== "string" || !clone.rawText.trim()) {
+                  clone.rawText = clone.text;
+              }
+              const startLine = normalisePositiveInteger(clone.startLine ?? clone.line);
+              const endLine = normalisePositiveInteger(clone.endLine);
+              const startColumn = normalisePositiveInteger(clone.startColumn ?? clone.column);
+              const endColumn = normalisePositiveInteger(clone.endColumn);
+              if (startLine) {
+                  clone.startLine = startLine;
+                  clone.line = startLine;
+              }
+              if (endLine) {
+                  clone.endLine = endLine;
+              }
+              if (startColumn) {
+                  clone.startColumn = startColumn;
+              }
+              if (endColumn) {
+                  clone.endColumn = endColumn;
+              }
+              return clone;
+          })
         : [];
     logSqlPayloadStage("dml.segments", dmlSegments);
     const dmlPrompt = dml?.dify || null;
