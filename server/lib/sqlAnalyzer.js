@@ -131,6 +131,82 @@ function filterAiIssuesForPersistence(issues) {
     return cloneIssueListForPersistence(filteredFallback);
 }
 
+function normaliseIdentitySegment(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    if (Array.isArray(value)) {
+        return value
+            .map((entry) => normaliseIdentitySegment(entry))
+            .filter((segment) => Boolean(segment))
+            .join("|");
+    }
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+        return String(value);
+    }
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        return trimmed;
+    }
+    return "";
+}
+
+function normaliseReportSourceKey(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function createIssueIdentity(issue) {
+    if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
+        return "";
+    }
+    const ruleId = issue.rule_id ?? issue.ruleId ?? "";
+    const message = issue.message ?? "";
+    const fallbackMessage =
+        !message && Array.isArray(issue.issues) && issue.issues.length ? issue.issues : [];
+    const snippet = issue.snippet ?? issue.statement ?? issue.evidence ?? "";
+    const objectName = issue.object ?? "";
+    const lineValue = Array.isArray(issue.line)
+        ? issue.line
+        : issue.line ?? issue.lineNumber ?? issue.line_no ?? "";
+    const columnValue = Array.isArray(issue.column)
+        ? issue.column
+        : issue.column ?? issue.columnNumber ?? issue.column_no ?? "";
+    const sourceCandidate =
+        issue.source ?? issue.analysis_source ?? issue.analysisSource ?? issue.from ?? issue.origin ?? "";
+    const sourceKey = normaliseReportSourceKey(sourceCandidate);
+    const chunkIndex = issue.chunk_index ?? issue.chunkIndex ?? "";
+
+    const segments = [
+        ruleId,
+        message,
+        fallbackMessage,
+        snippet,
+        objectName,
+        lineValue,
+        columnValue,
+        sourceKey,
+        chunkIndex
+    ]
+        .map((segment) => normaliseIdentitySegment(segment))
+        .filter((segment) => Boolean(segment));
+
+    if (segments.length) {
+        return segments.join("::");
+    }
+
+    try {
+        return JSON.stringify(issue);
+    } catch (error) {
+        return "";
+    }
+}
+
 function dedupeIssueList(issues) {
     if (!Array.isArray(issues)) {
         return [];
@@ -141,12 +217,7 @@ function dedupeIssueList(issues) {
         if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
             continue;
         }
-        let key = null;
-        try {
-            key = JSON.stringify(issue);
-        } catch (error) {
-            key = null;
-        }
+        const key = createIssueIdentity(issue);
         if (key && seen.has(key)) {
             continue;
         }

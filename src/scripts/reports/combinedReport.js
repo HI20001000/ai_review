@@ -168,7 +168,8 @@ export function collectIssuesForSource(state, sourceKeys) {
         difyIssues.forEach((issue) => {
             const targetKey = normaliseReportSourceKey(issue?.source) || normaliseReportSourceKey("dify_workflow");
             if (sourceSet.has(targetKey)) {
-                pushIssue(issue);
+                const fallbackSource = issue?.source || "dify_workflow";
+                pushIssue(issue, fallbackSource);
             }
         });
     }
@@ -179,7 +180,8 @@ export function collectIssuesForSource(state, sourceKeys) {
             const targetKey =
                 normaliseReportSourceKey(issue?.source) || normaliseReportSourceKey("dml_prompt");
             if (sourceSet.has(targetKey)) {
-                pushIssue(issue);
+                const fallbackSource = issue?.source || "dml_prompt";
+                pushIssue(issue, fallbackSource);
             }
         });
     }

@@ -106,8 +106,73 @@ function sortObjectKeys(value) {
     return sorted;
 }
 
+function toIdentitySegment(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    if (Array.isArray(value)) {
+        return value
+            .map((entry) => toIdentitySegment(entry))
+            .filter((segment) => Boolean(segment))
+            .join("|");
+    }
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+        return String(value);
+    }
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        return trimmed;
+    }
+    return "";
+}
+
 function createIssueKey(issue) {
-    if (issue && typeof issue === "object") {
+    if (issue && typeof issue === "object" && !Array.isArray(issue)) {
+        const ruleId = issue.rule_id ?? issue.ruleId ?? "";
+        const message = issue.message ?? "";
+        const fallbackMessage =
+            !message && Array.isArray(issue.issues) && issue.issues.length
+                ? issue.issues
+                : [];
+        const snippet = issue.snippet ?? issue.statement ?? issue.evidence ?? "";
+        const objectName = issue.object ?? "";
+        const lineValue = Array.isArray(issue.line)
+            ? issue.line
+            : issue.line ?? issue.lineNumber ?? issue.line_no ?? "";
+        const columnValue = Array.isArray(issue.column)
+            ? issue.column
+            : issue.column ?? issue.columnNumber ?? issue.column_no ?? "";
+        const sourceCandidate =
+            issue.source ??
+            issue.analysis_source ??
+            issue.analysisSource ??
+            issue.from ??
+            issue.origin ??
+            "";
+        const sourceKey = normaliseReportSourceKey(sourceCandidate);
+        const chunkIndex = issue.chunk_index ?? issue.chunkIndex ?? "";
+
+        const identitySegments = [
+            ruleId,
+            message,
+            fallbackMessage,
+            snippet,
+            objectName,
+            lineValue,
+            columnValue,
+            sourceKey,
+            chunkIndex
+        ]
+            .map((segment) => toIdentitySegment(segment))
+            .filter((segment) => Boolean(segment));
+
+        if (identitySegments.length) {
+            return identitySegments.join("::");
+        }
+
         try {
             return JSON.stringify(sortObjectKeys(issue));
         } catch (error) {
