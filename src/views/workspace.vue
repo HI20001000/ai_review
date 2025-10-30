@@ -929,34 +929,7 @@ const combinedReportJsonInfo = computed(() => {
     }
 
     const combinedPayload = buildCombinedReportPayload(report.state);
-    const parsed = report.state.parsedReport;
-
-    let candidate = combinedPayload;
-
-    if (parsed && typeof parsed === "object") {
-        const merged = { ...parsed };
-        merged.summary = combinedPayload.summary;
-        merged.issues = combinedPayload.issues;
-        merged.aggregated_reports = combinedPayload.aggregated_reports;
-
-        const reportsSource = merged.reports && typeof merged.reports === "object" ? merged.reports : {};
-        const staticIssuesPayload = combinedPayload.aggregated_reports.static;
-        const aiIssuesPayload = combinedPayload.aggregated_reports.ai;
-        merged.reports = {
-            ...reportsSource,
-            static_analyzer: staticIssuesPayload,
-            staticAnalyzer: staticIssuesPayload,
-            dml_prompt: aiIssuesPayload,
-            dmlPrompt: aiIssuesPayload,
-            combined: combinedPayload.aggregated_reports.combined,
-            static_json: staticIssuesPayload,
-            ai_json: aiIssuesPayload
-        };
-
-        candidate = merged;
-    }
-
-    return buildJsonInfo(candidate);
+    return buildJsonInfo(combinedPayload);
 });
 
 function filterStaticIssuesForJsonExport(issues) {
