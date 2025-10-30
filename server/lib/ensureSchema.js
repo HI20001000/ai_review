@@ -25,25 +25,7 @@ function createLogger(logger) {
     return { info, error };
 }
 
-async function columnExists(table, column) {
-    const [rows] = await pool.query(
-        `SELECT COUNT(*) AS count
-         FROM information_schema.columns
-         WHERE table_schema = DATABASE()
-           AND table_name = ?
-           AND column_name = ?`,
-        [table, column]
-    );
-    return Number(rows?.[0]?.count || 0) > 0;
-}
-
 async function ensureColumn({ info, error }, table, columnDefinition) {
-    const [columnName] = columnDefinition.split(/\s+/);
-    if (await columnExists(table, columnName)) {
-        info(`[schema] Column ${table}.${columnName} already exists, skipping.`);
-        return;
-    }
-
     const statement = `ALTER TABLE ${table} ADD COLUMN ${columnDefinition}`;
     const preview = formatStatement(statement);
     info(`[schema] Executing: ${preview}`);
@@ -51,6 +33,11 @@ async function ensureColumn({ info, error }, table, columnDefinition) {
         await pool.query(statement);
         info(`[schema] Success: ${preview}`);
     } catch (err) {
+        if (err?.code === "ER_DUP_FIELDNAME") {
+            const [columnName] = columnDefinition.split(/\s+/);
+            info(`[schema] Column ${table}.${columnName} already exists, skipping.`);
+            return;
+        }
         error(`[schema] Failed: ${preview}`, err);
         throw err;
     }

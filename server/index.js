@@ -79,6 +79,53 @@ function safeParseArray(jsonText, { fallback = [] } = {}) {
     }
 }
 
+function sanitiseCombinedReportJson(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const summary = Array.isArray(parsed?.summary)
+            ? parsed.summary.map((record) =>
+                  record && typeof record === "object" && !Array.isArray(record) ? { ...record } : record
+              )
+            : [];
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.map((issue) =>
+                  issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+              )
+            : [];
+        return JSON.stringify({ summary, issues });
+    } catch (_error) {
+        return trimmed;
+    }
+}
+
+function sanitiseIssuesJson(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.map((issue) =>
+                  issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+              )
+            : [];
+        return JSON.stringify({ issues });
+    } catch (_error) {
+        return trimmed;
+    }
+}
+
 function safeSerialiseForLog(value) {
     if (typeof value === "string") {
         return value;
@@ -138,6 +185,9 @@ function mapReportRow(row) {
     const chunks = safeParseArray(row.chunks_json);
     const segments = safeParseArray(row.segments_json);
     const analysis = extractAnalysisFromChunks(chunks);
+    const combinedReportJson = sanitiseCombinedReportJson(row.combined_report_json || "");
+    const staticReportJson = sanitiseIssuesJson(row.static_report_json || "");
+    const aiReportJson = sanitiseIssuesJson(row.ai_report_json || "");
     return {
         projectId: row.project_id,
         path: row.path,
@@ -150,9 +200,9 @@ function mapReportRow(row) {
         generatedAt: toIsoString(row.generated_at),
         createdAt: toIsoString(row.created_at),
         updatedAt: toIsoString(row.updated_at),
-        combinedReportJson: typeof row.combined_report_json === "string" ? row.combined_report_json : "",
-        staticReportJson: typeof row.static_report_json === "string" ? row.static_report_json : "",
-        aiReportJson: typeof row.ai_report_json === "string" ? row.ai_report_json : ""
+        combinedReportJson,
+        staticReportJson,
+        aiReportJson
     };
 }
 
@@ -259,9 +309,13 @@ async function upsertReport({
     const safeReport = typeof report === "string" ? report : "";
     const safeConversationId = typeof conversationId === "string" ? conversationId : "";
     const safeUserId = typeof userId === "string" ? userId : "";
-    const safeCombinedJson = typeof combinedReportJson === "string" ? combinedReportJson : "";
-    const safeStaticJson = typeof staticReportJson === "string" ? staticReportJson : "";
-    const safeAiJson = typeof aiReportJson === "string" ? aiReportJson : "";
+    const safeCombinedJson = sanitiseCombinedReportJson(
+        typeof combinedReportJson === "string" ? combinedReportJson : ""
+    );
+    const safeStaticJson = sanitiseIssuesJson(
+        typeof staticReportJson === "string" ? staticReportJson : ""
+    );
+    const safeAiJson = sanitiseIssuesJson(typeof aiReportJson === "string" ? aiReportJson : "");
 
     logReportPersistenceStage("upsertReport.input", {
         projectId,
