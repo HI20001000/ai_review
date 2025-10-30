@@ -152,6 +152,70 @@ function safeParseReport(reportText) {
     }
 }
 
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function clonePlainValue(value) {
+    if (Array.isArray(value)) {
+        return value.map((entry) => clonePlainValue(entry));
+    }
+    if (isPlainObject(value)) {
+        const clone = {};
+        for (const [key, entry] of Object.entries(value)) {
+            if (entry === undefined || typeof entry === "function" || typeof entry === "symbol") {
+                continue;
+            }
+            clone[key] = clonePlainValue(entry);
+        }
+        return clone;
+    }
+    return value;
+}
+
+function sanitiseCombinedReportJson(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const summary = Array.isArray(parsed?.summary)
+            ? parsed.summary.filter((entry) => isPlainObject(entry)).map((entry) => clonePlainValue(entry))
+            : [];
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.filter((entry) => isPlainObject(entry)).map((entry) => clonePlainValue(entry))
+            : [];
+        return JSON.stringify({ summary, issues }, null, 2);
+    } catch (error) {
+        console.warn("[reports] Failed to sanitise combined report JSON", error);
+        return trimmed;
+    }
+}
+
+function sanitiseIssuesJson(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.filter((entry) => isPlainObject(entry)).map((entry) => clonePlainValue(entry))
+            : [];
+        return JSON.stringify({ issues }, null, 2);
+    } catch (error) {
+        console.warn("[reports] Failed to sanitise issues JSON", error);
+        return trimmed;
+    }
+}
+
 function mapReportRow(row) {
     const chunks = safeParseArray(row.chunks_json);
     const segments = safeParseArray(row.segments_json);
@@ -243,9 +307,9 @@ function mapReportRow(row) {
         generatedAt: toIsoString(row.generated_at),
         createdAt: toIsoString(row.created_at),
         updatedAt: toIsoString(row.updated_at),
-        combinedReportJson: typeof row.combined_report_json === "string" ? row.combined_report_json : "",
-        staticReportJson: typeof row.static_report_json === "string" ? row.static_report_json : "",
-        aiReportJson: typeof row.ai_report_json === "string" ? row.ai_report_json : ""
+        combinedReportJson,
+        staticReportJson,
+        aiReportJson
     };
 }
 
