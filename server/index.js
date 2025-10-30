@@ -152,6 +152,107 @@ function safeParseReport(reportText) {
     }
 }
 
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function clonePlainValue(value) {
+    if (Array.isArray(value)) {
+        return value.map((entry) => clonePlainValue(entry));
+    }
+    if (isPlainObject(value)) {
+        const clone = {};
+        for (const [key, entry] of Object.entries(value)) {
+            if (entry === undefined || typeof entry === "function" || typeof entry === "symbol") {
+                continue;
+            }
+            clone[key] = clonePlainValue(entry);
+        }
+        return clone;
+    }
+    return value;
+}
+
+const EMPTY_ISSUES_JSON = JSON.stringify({ issues: [] }, null, 2);
+const EMPTY_COMBINED_REPORT_JSON = JSON.stringify({ summary: [], issues: [] }, null, 2);
+
+function sanitiseCombinedReportJson(value) {
+    if (typeof value !== "string") {
+        return EMPTY_COMBINED_REPORT_JSON;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return EMPTY_COMBINED_REPORT_JSON;
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const summary = Array.isArray(parsed?.summary)
+            ? parsed.summary.filter((entry) => isPlainObject(entry)).map((entry) => clonePlainValue(entry))
+            : [];
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.filter((entry) => isPlainObject(entry)).map((entry) => clonePlainValue(entry))
+            : [];
+        return JSON.stringify({ summary, issues }, null, 2);
+    } catch (error) {
+        console.warn("[reports] Failed to sanitise combined report JSON", error);
+        return EMPTY_COMBINED_REPORT_JSON;
+    }
+}
+
+function sanitiseIssuesJson(value) {
+    if (typeof value !== "string") {
+        return EMPTY_ISSUES_JSON;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return EMPTY_ISSUES_JSON;
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.filter((entry) => isPlainObject(entry)).map((entry) => clonePlainValue(entry))
+            : [];
+        return JSON.stringify({ issues }, null, 2);
+    } catch (error) {
+        console.warn("[reports] Failed to sanitise issues JSON", error);
+        return EMPTY_ISSUES_JSON;
+    }
+}
+
+function buildFallbackCombinedReport(errorMessage, generatedAt) {
+    const trimmedMessage = typeof errorMessage === "string" ? errorMessage.trim() : "";
+    const baseMessage = trimmedMessage
+        ? `AI 審查流程執行失敗：${trimmedMessage}`
+        : "AI 審查流程執行失敗。";
+    const summary = [
+        {
+            source: "static_analyzer",
+            label: "靜態分析器",
+            total_issues: 0,
+            status: "skipped",
+            generated_at: generatedAt
+        },
+        {
+            source: "dml_prompt",
+            label: "AI審查",
+            total_issues: 0,
+            status: "failed",
+            message: baseMessage,
+            generated_at: generatedAt
+        },
+        {
+            source: "combined",
+            label: "聚合報告",
+            total_issues: 0,
+            status: "failed",
+            message: baseMessage,
+            generated_at: generatedAt
+        }
+    ].map((entry) => clonePlainValue(entry));
+
+    return { summary, issues: [] };
+}
+
 function mapReportRow(row) {
     const chunks = safeParseArray(row.chunks_json);
     const segments = safeParseArray(row.segments_json);
@@ -243,9 +344,9 @@ function mapReportRow(row) {
         generatedAt: toIsoString(row.generated_at),
         createdAt: toIsoString(row.created_at),
         updatedAt: toIsoString(row.updated_at),
-        combinedReportJson: typeof row.combined_report_json === "string" ? row.combined_report_json : "",
-        staticReportJson: typeof row.static_report_json === "string" ? row.static_report_json : "",
-        aiReportJson: typeof row.ai_report_json === "string" ? row.ai_report_json : ""
+        combinedReportJson,
+        staticReportJson,
+        aiReportJson
     };
 }
 
@@ -681,7 +782,7 @@ app.post("/api/reports/dify", async (req, res, next) => {
         if (shouldFallback && projectId && path) {
             const fallbackGeneratedAt = new Date().toISOString();
             const fallbackCombined = buildFallbackCombinedReport(errorMessage, fallbackGeneratedAt);
-            const combinedJson = JSON.stringify(fallbackCombined);
+            const combinedJson = JSON.stringify(fallbackCombined, null, 2);
             const savedAtIso = new Date().toISOString();
 
             try {
