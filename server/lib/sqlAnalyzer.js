@@ -475,6 +475,98 @@ function maskCommentsAndStrings(sqlText) {
     return masked;
 }
 
+function stripSqlComments(sqlText) {
+    if (typeof sqlText !== "string" || !sqlText.length) {
+        return "";
+    }
+
+    let result = "";
+    let index = 0;
+    const length = sqlText.length;
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+
+    while (index < length) {
+        const char = sqlText[index];
+        const next = index + 1 < length ? sqlText[index + 1] : "";
+
+        if (!inSingleQuote && !inDoubleQuote) {
+            if (char === "-" && next === "-") {
+                index += 2;
+                while (index < length) {
+                    const lineChar = sqlText[index];
+                    if (lineChar === "\r" && sqlText[index + 1] === "\n") {
+                        result += "\r\n";
+                        index += 2;
+                        break;
+                    }
+                    if (lineChar === "\n" || lineChar === "\r") {
+                        result += lineChar;
+                        index += 1;
+                        break;
+                    }
+                    index += 1;
+                }
+                continue;
+            }
+
+            if (char === "/" && next === "*") {
+                index += 2;
+                while (index < length) {
+                    const blockChar = sqlText[index];
+                    const blockNext = sqlText[index + 1];
+                    if (blockChar === "*" && blockNext === "/") {
+                        index += 2;
+                        break;
+                    }
+                    if (blockChar === "\r" && blockNext === "\n") {
+                        result += "\r\n";
+                        index += 2;
+                        continue;
+                    }
+                    if (blockChar === "\n" || blockChar === "\r") {
+                        result += blockChar;
+                        index += 1;
+                        continue;
+                    }
+                    index += 1;
+                }
+                continue;
+            }
+        }
+
+        result += char;
+
+        if (char === "'" && !inDoubleQuote) {
+            if (inSingleQuote) {
+                if (next === "'") {
+                    result += "'";
+                    index += 2;
+                    continue;
+                }
+                inSingleQuote = false;
+            } else {
+                inSingleQuote = true;
+            }
+        } else if (char === '"' && !inSingleQuote) {
+            if (inDoubleQuote) {
+                if (next === '"') {
+                    result += '"';
+                    index += 2;
+                    continue;
+                }
+                inDoubleQuote = false;
+            } else {
+                inDoubleQuote = true;
+            }
+        }
+
+        index += 1;
+    }
+
+    return result;
+}
+
 function findStatementTerminator(maskedSql, startIndex) {
     if (!maskedSql || startIndex >= maskedSql.length) {
         return maskedSql ? maskedSql.length : 0;
@@ -506,13 +598,15 @@ function extractDmlStatements(sqlText) {
     while ((match = regex.exec(masked)) !== null) {
         const start = match.index;
         const end = findStatementTerminator(masked, start);
-        const snippet = sqlText.slice(start, end).trim();
-        if (!snippet) continue;
+        const snippet = sqlText.slice(start, end);
+        const cleanedSnippet = stripSqlComments(snippet).trim();
+        if (!cleanedSnippet) continue;
         const startMeta = indexToLineCol(sqlText, start);
         const endMeta = indexToLineCol(sqlText, end);
         segments.push({
             index: segments.length + 1,
-            text: snippet,
+            text: cleanedSnippet,
+            rawText: snippet.trim(),
             start,
             end,
             startLine: startMeta.line,
@@ -1123,8 +1217,10 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const segments = dify?.segments && Array.isArray(dify.segments) && dify.segments.length
         ? dify.segments
         : [rawReport || content || ""];
+    logSqlPayloadStage("segments.normalised", segments);
 
     const parsedStaticReport = parseStaticReport(rawReport) || {};
+    logSqlPayloadStage("static.parsedReport", parsedStaticReport);
     const staticSummary = normaliseStaticSummary(parsedStaticReport.summary, ".sql");
     const staticIssues = Array.isArray(parsedStaticReport.issues) ? parsedStaticReport.issues : [];
     const staticIssuesWithSource = staticIssues.map((issue) => annotateIssueSource(issue, "static_analyzer"));
@@ -1135,6 +1231,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         issues: staticIssues,
         metadata: staticMetadata
     };
+    logSqlPayloadStage("static.reportPayload", staticReportPayload);
 
     const dmlSegments = Array.isArray(dml?.segments)
         ? dml.segments.map((segment, index) => ({
@@ -1142,6 +1239,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
               index: Number.isFinite(Number(segment?.index)) ? segment.index : index + 1
           }))
         : [];
+    logSqlPayloadStage("dml.segments", dmlSegments);
     const dmlPrompt = dml?.dify || null;
     const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
     const dmlReportTextHuman = typeof dmlPrompt?.textReport === "string" ? dmlPrompt.textReport : "";
@@ -1172,6 +1270,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         generatedAt: dmlGeneratedAt,
         metadata: { analysis_source: "dml_prompt" }
     };
+    logSqlPayloadStage("dml.reportPayload", dmlReportPayload);
 
     let finalReport = difyReport && difyReport.trim() ? difyReport : rawReport;
     let parsedDify;
@@ -1190,6 +1289,8 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const difySummary = parsedDify && typeof parsedDify === "object"
         ? normaliseDifySummary(parsedDify, difyIssuesRaw.length)
         : null;
+    logSqlPayloadStage("dify.summary", difySummary);
+    logSqlPayloadStage("issues.combined", combinedIssues);
 
     const compositeSummary = buildCompositeSummary(staticSummary, dmlSummary, difySummary, combinedIssues);
 
@@ -1218,9 +1319,10 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         summary: compositeSummary,
         issues: combinedIssues,
         reports: {
-            static_analyzer: staticReportPayload,
-            dml_prompt: dmlReportPayload
+            static_analyzer: { issues: cloneIssueListForPersistence(reportsStaticIssues) },
+            dml_prompt: { issues: cloneIssueListForPersistence(reportsAiIssues) }
         },
+        aggregated_reports: aggregatedReports,
         metadata: {
             analysis_source: "composite",
             components: [
@@ -1230,9 +1332,9 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             ].filter(Boolean)
         }
     };
+    logSqlPayloadStage("payload.final", finalPayload);
 
     if (parsedDify && typeof parsedDify === "object") {
-        finalPayload.reports.static_analyzer.enrichment = parsedDify;
         finalPayload.reports.dify_workflow = {
             type: "dify_workflow",
             summary: difySummary,
@@ -1242,11 +1344,101 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         };
     }
 
-    if (dmlAggregated) {
-        finalPayload.reports.dml_prompt.aggregated = dmlAggregated;
-        if (!finalPayload.reports.dml_prompt.issues) {
-            finalPayload.reports.dml_prompt.issues = dmlIssues;
+    let annotatedChunks;
+    if (dmlChunks.length) {
+        annotatedChunks = dmlChunks;
+    } else if (difyChunks.length) {
+        annotatedChunks = difyChunks;
+    } else {
+        const fallbackCandidates = [
+            { text: dmlReportTextHuman, source: "dml_prompt" },
+            { text: dmlReportText, source: "dml_prompt" },
+            { text: difyReport, source: "dify_workflow" },
+            { text: rawReport, source: "static_analyzer" },
+            { text: content || "", source: "content" }
+        ];
+
+        let fallbackText = "";
+        let fallbackSource = "dml_prompt";
+        for (const candidate of fallbackCandidates) {
+            if (typeof candidate.text === "string" && candidate.text.trim()) {
+                fallbackText = candidate.text;
+                fallbackSource = candidate.source;
+                break;
+            }
         }
+
+        annotatedChunks = fallbackText
+            ? normaliseChunksForPersistence([fallbackText], {
+                  fallbackRaw: fallbackText,
+                  defaultSource: fallbackSource
+              })
+            : [];
+    }
+    logSqlPayloadStage("chunks.annotated", annotatedChunks);
+
+    let annotatedChunks;
+    if (dmlChunks.length) {
+        annotatedChunks = dmlChunks;
+    } else if (difyChunks.length) {
+        annotatedChunks = difyChunks;
+    } else {
+        const fallbackCandidates = [
+            { text: dmlReportTextHuman, source: "dml_prompt" },
+            { text: dmlReportText, source: "dml_prompt" },
+            { text: difyReport, source: "dify_workflow" },
+            { text: rawReport, source: "static_analyzer" },
+            { text: content || "", source: "content" }
+        ];
+
+        let fallbackText = "";
+        let fallbackSource = "dml_prompt";
+        for (const candidate of fallbackCandidates) {
+            if (typeof candidate.text === "string" && candidate.text.trim()) {
+                fallbackText = candidate.text;
+                fallbackSource = candidate.source;
+                break;
+            }
+        }
+
+        annotatedChunks = fallbackText
+            ? normaliseChunksForPersistence([fallbackText], {
+                  fallbackRaw: fallbackText,
+                  defaultSource: fallbackSource
+              })
+            : [];
+    }
+
+    let annotatedChunks;
+    if (dmlChunks.length) {
+        annotatedChunks = dmlChunks;
+    } else if (difyChunks.length) {
+        annotatedChunks = difyChunks;
+    } else {
+        const fallbackCandidates = [
+            { text: dmlReportTextHuman, source: "dml_prompt" },
+            { text: dmlReportText, source: "dml_prompt" },
+            { text: difyReport, source: "dify_workflow" },
+            { text: rawReport, source: "static_analyzer" },
+            { text: content || "", source: "content" }
+        ];
+
+        let fallbackText = "";
+        let fallbackSource = "dml_prompt";
+        for (const candidate of fallbackCandidates) {
+            if (typeof candidate.text === "string" && candidate.text.trim()) {
+                fallbackText = candidate.text;
+                fallbackSource = candidate.source;
+                break;
+            }
+        }
+
+        annotatedChunks = fallbackText
+            ? normaliseChunksForPersistence([fallbackText], {
+                  fallbackRaw: fallbackText,
+                  defaultSource: fallbackSource
+              })
+            : [];
     }
 
     let annotatedChunks = [];
@@ -1282,6 +1474,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     }
 
     finalReport = JSON.stringify(finalPayload, null, 2);
+    logSqlPayloadStage("report.serialised", finalReport);
 
     const generatedAt = dify?.generatedAt || new Date().toISOString();
     const combinedSummaryRecords = [
@@ -1348,6 +1541,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         analysisPayload.combinedSummary = compositeSummary;
         analysisPayload.combinedSummaryRecords = combinedSummaryRecords;
         analysisPayload.combinedIssues = combinedIssues;
+        analysisPayload.aggregatedReports = aggregatedReports;
         if (parsedDify && typeof parsedDify === "object") {
             analysisPayload.difyReport = parsedDify;
             analysisPayload.difySummary = difySummary;
@@ -1368,6 +1562,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             analysisPayload.difyErrorMessage = "";
         }
     }
+    logSqlPayloadStage("analysis.payload", analysisPayload);
 
     const sourceLabels = ["sql-rule-engine"];
     if (dmlSegments.length) {
@@ -1380,7 +1575,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const result = {
         report: finalReport,
         conversationId: typeof dify?.conversationId === "string" ? dify.conversationId : "",
-        chunks: annotatedChunks,
+        chunks: chunksForReport,
         segments,
         generatedAt,
         analysis: analysisPayload,
