@@ -1333,7 +1333,12 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const dmlChunks = buildDmlIssueChunks(dmlSegments, dmlPrompt);
     const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError);
     const dmlAggregated = dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
-    const dmlIssues = Array.isArray(dmlAggregated?.issues) ? dmlAggregated.issues : [];
+    const dmlIssuesRaw = Array.isArray(dmlPrompt?.issues)
+        ? dmlPrompt.issues
+        : Array.isArray(dmlAggregated?.issues)
+        ? dmlAggregated.issues
+        : [];
+    const dmlIssues = cloneIssueListForPersistence(dmlIssuesRaw);
     const dmlIssuesWithSource = dmlIssues.map((issue) => annotateIssueSource(issue, "dml_prompt"));
     const dmlConversationId = typeof dmlPrompt?.conversationId === "string" ? dmlPrompt.conversationId : "";
     const dmlGeneratedAt = dmlPrompt?.generatedAt || null;
