@@ -1123,6 +1123,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     }
 
     const combinedIssuesJson = serialiseIssuesJson(aggregatedReports.combined?.issues);
+    logIssuesJson("combined.issues.json.post_aggregate", combinedIssuesJson);
 
     const issuesChunks = [];
     const chunkSources = [

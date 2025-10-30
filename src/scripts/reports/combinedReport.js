@@ -644,6 +644,8 @@ export function buildCombinedReportPayload(state) {
         ai: { source: "dml_prompt", issues: aiIssueList }
     };
 
+    logClientIssuesJson("combined.issues.json", combinedIssueList);
+
     return {
         summary: cloneSummaryRecords,
         issues: combinedIssueList,

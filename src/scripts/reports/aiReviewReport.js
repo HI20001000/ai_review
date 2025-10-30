@@ -114,26 +114,6 @@ function clonePlain(value) {
     return value;
 }
 
-function logAiIssuesJson(label, issues) {
-    if (typeof console === "undefined" || typeof console.log !== "function") {
-        return;
-    }
-    const payload = { issues: clonePlain(Array.isArray(issues) ? issues : []) };
-    let serialised = "";
-    try {
-        serialised = JSON.stringify(payload, null, 2);
-    } catch (error) {
-        try {
-            serialised = JSON.stringify(payload);
-        } catch (_innerError) {
-            serialised = "{\"issues\":[]}";
-        }
-    }
-    if (serialised) {
-        console.log(`[ai-review] ${label}: ${serialised}`);
-    }
-}
-
 function normaliseIssueSourceValue(value) {
     return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
@@ -825,7 +805,6 @@ function normaliseAiReviewPayload(payload = {}) {
         ],
         { allowEmpty: false }
     );
-    logAiReviewStage("markdown.fallback", fallbackMarkdown);
 
     const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
     const normalisedDerivedIssues = normaliseIssues(derivedIssues);
@@ -983,8 +962,6 @@ function normaliseAiReviewPayload(payload = {}) {
     if (hasPatchEntries) {
         logAiReviewStage("analysis.patch", analysisPatch);
     }
-
-    logAiIssuesJson("issues.json", issues);
 
     const result = {
         report,
