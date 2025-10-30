@@ -79,6 +79,24 @@ function safeParseArray(jsonText, { fallback = [] } = {}) {
     }
 }
 
+function safeSerialiseForLog(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch (error) {
+        return `[unserialisable: ${error?.message || error}]`;
+    }
+}
+
+function logReportPersistenceStage(label, value) {
+    if (typeof console === "undefined" || typeof console.log !== "function") {
+        return;
+    }
+    console.log(`[reports] ${label}: ${safeSerialiseForLog(value)}`);
+}
+
 function toIsoString(value) {
     if (value === null || value === undefined) return null;
     if (value instanceof Date) {
@@ -235,6 +253,30 @@ async function upsertReport({
     const safeReport = typeof report === "string" ? report : "";
     const safeConversationId = typeof conversationId === "string" ? conversationId : "";
     const safeUserId = typeof userId === "string" ? userId : "";
+
+    logReportPersistenceStage("upsertReport.input", {
+        projectId,
+        path,
+        report,
+        chunks,
+        segments,
+        conversationId,
+        userId,
+        generatedAt
+    });
+
+    logReportPersistenceStage("upsertReport.serialised", {
+        projectId: safeProjectId,
+        path: safePath,
+        report: safeReport,
+        chunks: serialisedChunks,
+        segments: serialisedSegments,
+        conversationId: safeConversationId,
+        userId: safeUserId,
+        generatedAt: storedGeneratedAt,
+        createdAt: now,
+        updatedAt: now
+    });
 
     await pool.query(
         `INSERT INTO reports (
