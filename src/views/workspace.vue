@@ -934,21 +934,36 @@ const combinedReportJsonInfo = computed(() => {
     return { raw: "", preview: "" };
 });
 
+function filterStaticIssuesForJsonExport(issues) {
+    if (!Array.isArray(issues)) {
+        return [];
+    }
+    return issues.filter((issue) => issue !== null && issue !== undefined);
+}
+
+function extractStaticIssuesForJsonExport(state) {
+    if (!state || typeof state !== "object") {
+        return [];
+    }
+    const reports = state.parsedReport?.reports;
+    const staticEntry = reports?.static_analyzer || reports?.staticAnalyzer || null;
+    if (staticEntry && Array.isArray(staticEntry.issues)) {
+        return filterStaticIssuesForJsonExport(staticEntry.issues);
+    }
+    const analysisIssues = state.analysis?.staticReport?.issues;
+    if (Array.isArray(analysisIssues)) {
+        return filterStaticIssuesForJsonExport(analysisIssues);
+    }
+    return filterStaticIssuesForJsonExport(collectStaticReportIssues(state));
+}
+
 const staticReportJsonInfo = computed(() => {
     const report = activeReport.value;
     if (!report || !report.state) {
         return { raw: "", preview: "" };
     }
-    const analysisStatic = report.state.analysis?.staticReport;
-    if (analysisStatic && typeof analysisStatic === "object") {
-        return buildJsonInfo(analysisStatic);
-    }
-    const reports = report.state.parsedReport?.reports;
-    const staticEntry = reports?.static_analyzer || reports?.staticAnalyzer || null;
-    if (staticEntry) {
-        return buildJsonInfo(staticEntry);
-    }
-    return { raw: "", preview: "" };
+    const issues = extractStaticIssuesForJsonExport(report.state);
+    return buildJsonInfo({ issues });
 });
 
 const aiReportJsonInfo = computed(() => {

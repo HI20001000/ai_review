@@ -168,20 +168,43 @@ function isNonDmlSource(source) {
 }
 
 function filterDmlIssueList(issues) {
+    const list = Array.isArray(issues) ? issues : [];
+    const hasAuthoritative = hasAuthoritativeAiIssues(list);
     const result = [];
-    for (const issue of issues || []) {
+    for (const issue of list) {
         if (!issue) continue;
         if (typeof issue !== "object") {
-            result.push(issue);
+            if (!hasAuthoritative) {
+                result.push(issue);
+            }
             continue;
         }
         const sources = collectIssueSourceCandidates(issue);
         if (sources.some((candidate) => isNonDmlSource(candidate))) {
             continue;
         }
+        const fallbackSource = normaliseIssueSourceValue(
+            issue.fallbackSource || issue.fallback_source || issue.fallback
+        );
+        if (hasAuthoritative) {
+            if (fallbackSource === "markdown") {
+                continue;
+            }
+            if (!isAuthoritativeAiIssue(issue)) {
+                continue;
+            }
+        }
         result.push(issue);
     }
-    return result;
+    if (!hasAuthoritative) {
+        return result;
+    }
+    return result.filter((entry) => {
+        if (!entry || typeof entry !== "object") {
+            return false;
+        }
+        return isAuthoritativeAiIssue(entry);
+    });
 }
 
 function isAuthoritativeAiIssue(issue) {
@@ -199,6 +222,14 @@ function isAuthoritativeAiIssue(issue) {
                 return true;
             }
         }
+    }
+
+    if (typeof issue.ruleId === "string" && issue.ruleId.trim()) {
+        return true;
+    }
+
+    if (typeof issue.rule === "string" && issue.rule.trim()) {
+        return true;
     }
 
     return false;
