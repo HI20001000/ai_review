@@ -7,6 +7,10 @@ import {
     parseReportJson
 } from "./shared.js";
 
+if (typeof globalThis !== "undefined" && typeof globalThis.logAiReviewStage !== "function") {
+    globalThis.logAiReviewStage = () => {};
+}
+
 /**
  * Collect AI review issues from the workspace state.
  *
