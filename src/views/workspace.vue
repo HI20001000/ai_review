@@ -30,6 +30,11 @@ import {
     buildAiReviewPersistencePayload
 } from "../scripts/reports/aiReviewReport.js";
 import {
+    exportCombinedReportToExcel,
+    exportStaticReportToExcel,
+    exportAiReviewReportToExcel
+} from "../scripts/reports/exportExcel.js";
+import {
     isPlainObject,
     normaliseReportObject,
     normaliseAiReviewPayload,
@@ -156,6 +161,11 @@ const reportStates = reactive({});
 const reportTreeCache = reactive({});
 const reportBatchStates = reactive({});
 const activeReportTarget = ref(null);
+const reportExportState = reactive({
+    combined: false,
+    static: false,
+    ai: false
+});
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
 const shouldPrepareReportTrees = computed(
@@ -849,6 +859,10 @@ const canShowStructuredDml = computed(() => {
     return false;
 });
 
+const canExportCombinedReport = computed(() => canShowStructuredSummary.value);
+const canExportStaticReport = computed(() => canShowStructuredStatic.value);
+const canExportAiReport = computed(() => canShowStructuredDml.value);
+
 const hasStructuredReportToggle = computed(
     () => canShowStructuredSummary.value || canShowStructuredStatic.value || canShowStructuredDml.value
 );
@@ -978,6 +992,127 @@ watch(
     },
     { immediate: true }
 );
+
+function normaliseErrorMessage(error) {
+    if (!error) return "未知錯誤";
+    if (typeof error === "string") {
+        return error;
+    }
+    if (error instanceof Error) {
+        return error.message || "未知錯誤";
+    }
+    if (typeof error.message === "string" && error.message.trim()) {
+        return error.message.trim();
+    }
+    return String(error);
+}
+
+function buildReportExportMetadata(type, overrides = {}) {
+    const report = activeReport.value;
+    const projectName = report?.project?.name ?? "";
+    const filePath = report?.path ?? "";
+    const updatedAt = report?.state?.updatedAt ?? null;
+    const updatedAtDisplay = report?.state?.updatedAtDisplay ?? "";
+
+    return {
+        projectName,
+        filePath,
+        updatedAt,
+        updatedAtDisplay,
+        type,
+        ...overrides
+    };
+}
+
+async function exportCombinedReportExcel() {
+    if (!canExportCombinedReport.value || reportExportState.combined) {
+        return;
+    }
+    if (!activeReportDetails.value) {
+        return;
+    }
+
+    reportExportState.combined = true;
+    try {
+        const aggregatedSource = activeReportDetails.value.combinedSummary || {};
+        const metadata = buildReportExportMetadata("combined", {
+            generatedAt:
+                aggregatedSource?.generated_at ||
+                aggregatedSource?.generatedAt ||
+                activeReport.value?.state?.updatedAt ||
+                null,
+            typeLabel: "聚合報告"
+        });
+        await exportCombinedReportToExcel({
+            details: activeReportDetails.value,
+            issues: activeReportIssueSources.value.aggregatedIssues,
+            metadata
+        });
+    } catch (error) {
+        console.error("Failed to export combined report", error);
+        if (typeof safeAlertFail === "function") {
+            safeAlertFail(`匯出聚合報告失敗：${normaliseErrorMessage(error)}`);
+        }
+    } finally {
+        reportExportState.combined = false;
+    }
+}
+
+async function exportStaticReportExcel() {
+    if (!canExportStaticReport.value || reportExportState.static) {
+        return;
+    }
+    if (!activeReportDetails.value) {
+        return;
+    }
+
+    reportExportState.static = true;
+    try {
+        const metadata = buildReportExportMetadata("static", { typeLabel: "靜態分析報告" });
+        await exportStaticReportToExcel({
+            details: activeReportDetails.value,
+            issues: activeReportIssueSources.value.staticIssues,
+            metadata
+        });
+    } catch (error) {
+        console.error("Failed to export static report", error);
+        if (typeof safeAlertFail === "function") {
+            safeAlertFail(`匯出靜態分析報告失敗：${normaliseErrorMessage(error)}`);
+        }
+    } finally {
+        reportExportState.static = false;
+    }
+}
+
+async function exportAiReportExcel() {
+    if (!canExportAiReport.value || reportExportState.ai) {
+        return;
+    }
+    const dmlDetails = dmlReportDetails.value;
+    if (!dmlDetails) {
+        return;
+    }
+
+    reportExportState.ai = true;
+    try {
+        const metadata = buildReportExportMetadata("ai", {
+            generatedAt: dmlDetails.generatedAt ?? null,
+            typeLabel: "AI 審查報告"
+        });
+        await exportAiReviewReportToExcel({
+            details: dmlDetails,
+            issues: activeReportIssueSources.value.aiIssues,
+            metadata
+        });
+    } catch (error) {
+        console.error("Failed to export AI review report", error);
+        if (typeof safeAlertFail === "function") {
+            safeAlertFail(`匯出 AI 審查報告失敗：${normaliseErrorMessage(error)}`);
+        }
+    } finally {
+        reportExportState.ai = false;
+    }
+}
 
 watch(activeReport, (report) => {
     if (!report) {
@@ -2918,6 +3053,38 @@ onBeforeUnmount(() => {
                                                 AI審查
                                             </button>
                                         </div>
+                                        <div class="reportExportRow" role="group" aria-label="匯出報告">
+                                            <button
+                                                type="button"
+                                                class="reportExportButton"
+                                                :disabled="!canExportCombinedReport || reportExportState.combined"
+                                                :aria-busy="reportExportState.combined ? 'true' : 'false'"
+                                                @click="exportCombinedReportExcel"
+                                            >
+                                                <span v-if="reportExportState.combined">匯出中…</span>
+                                                <span v-else>匯出聚合報告</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="reportExportButton"
+                                                :disabled="!canExportStaticReport || reportExportState.static"
+                                                :aria-busy="reportExportState.static ? 'true' : 'false'"
+                                                @click="exportStaticReportExcel"
+                                            >
+                                                <span v-if="reportExportState.static">匯出中…</span>
+                                                <span v-else>匯出靜態分析報告</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="reportExportButton"
+                                                :disabled="!canExportAiReport || reportExportState.ai"
+                                                :aria-busy="reportExportState.ai ? 'true' : 'false'"
+                                                @click="exportAiReportExcel"
+                                            >
+                                                <span v-if="reportExportState.ai">匯出中…</span>
+                                                <span v-else>匯出 AI 審查報告</span>
+                                            </button>
+                                        </div>
                                         <section
                                             v-if="structuredReportViewMode === 'combined' && canShowStructuredSummary"
                                             class="reportSummaryGrid"
@@ -3810,6 +3977,43 @@ body,
 .reportStructuredToggleButton:disabled {
     opacity: 0.45;
     cursor: not-allowed;
+}
+
+.reportExportRow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 12px 0 16px;
+    justify-content: flex-end;
+}
+
+.reportExportButton {
+    border: 1px solid #3d3d3d;
+    background: #1f2937;
+    color: #cbd5f5;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.reportExportButton:hover:not(:disabled) {
+    background: #374151;
+    border-color: #60a5fa;
+    color: #e0f2fe;
+    transform: translateY(-1px);
+}
+
+.reportExportButton:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.reportExportButton:focus-visible {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
 }
 
 .reportStructuredToggle {
