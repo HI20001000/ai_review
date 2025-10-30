@@ -1411,6 +1411,11 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         })
     ];
 
+    const aggregatedReports = {
+        summary: cloneSummaryRecordsForPersistence(combinedSummaryRecords),
+        issues: cloneIssueListForPersistence(combinedIssuesForReports)
+    };
+
     const combinedReportJson = serialiseCombinedReportJson(
         combinedSummaryRecords,
         combinedIssuesForReports
