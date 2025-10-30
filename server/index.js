@@ -293,30 +293,6 @@ async function upsertReport({
         aiReportJson: safeAiJson
     });
 
-    logReportPersistenceStage("upsertReport.input", {
-        projectId,
-        path,
-        report,
-        chunks,
-        segments,
-        conversationId,
-        userId,
-        generatedAt
-    });
-
-    logReportPersistenceStage("upsertReport.serialised", {
-        projectId: safeProjectId,
-        path: safePath,
-        report: safeReport,
-        chunks: serialisedChunks,
-        segments: serialisedSegments,
-        conversationId: safeConversationId,
-        userId: safeUserId,
-        generatedAt: storedGeneratedAt,
-        createdAt: now,
-        updatedAt: now
-    });
-
     await pool.query(
         `INSERT INTO reports (
             project_id,
