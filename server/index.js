@@ -217,13 +217,100 @@ function extractAnalysisFromChunks(chunks) {
     return null;
 }
 
+function safeParseReport(reportText) {
+    if (typeof reportText !== "string") {
+        return null;
+    }
+    const trimmed = reportText.trim();
+    if (!trimmed) {
+        return null;
+    }
+    if (!/^\s*[\[{]/.test(trimmed)) {
+        return null;
+    }
+    try {
+        return JSON.parse(trimmed);
+    } catch (_error) {
+        return null;
+    }
+}
+
 function mapReportRow(row) {
     const chunks = safeParseArray(row.chunks_json);
     const segments = safeParseArray(row.segments_json);
-    const analysis = extractAnalysisFromChunks(chunks);
+    const parsedReport = safeParseReport(row.report);
+    const reportsBlock =
+        parsedReport && typeof parsedReport === "object" && !Array.isArray(parsedReport.reports)
+            ? parsedReport.reports
+            : parsedReport && typeof parsedReport.reports === "object"
+            ? parsedReport.reports
+            : {};
+    const staticReport =
+        reportsBlock?.static_analyzer || reportsBlock?.staticAnalyzer || null;
+    const dmlReport = reportsBlock?.dml_prompt || reportsBlock?.dmlPrompt || null;
+    const difyReport = reportsBlock?.dify_workflow || reportsBlock?.difyWorkflow || null;
+
+    let analysis = extractAnalysisFromChunks(chunks);
+    const ensureAnalysis = () => {
+        if (!analysis) {
+            analysis = {};
+        }
+        return analysis;
+    };
+
+    if (parsedReport && typeof parsedReport === "object") {
+        const target = ensureAnalysis();
+        if (parsedReport.summary && typeof parsedReport.summary === "object") {
+            target.combinedSummary = parsedReport.summary;
+        }
+        if (Array.isArray(parsedReport.issues)) {
+            target.combinedIssues = parsedReport.issues;
+        }
+    }
+
+    if (staticReport && typeof staticReport === "object") {
+        const target = ensureAnalysis();
+        target.staticReport = staticReport;
+    }
+
+    if (difyReport && typeof difyReport === "object") {
+        const target = ensureAnalysis();
+        target.difyReport = difyReport;
+        if (difyReport.summary && typeof difyReport.summary === "object") {
+            target.difySummary = difyReport.summary;
+        }
+        if (Array.isArray(difyReport.issues)) {
+            target.difyIssues = difyReport.issues;
+        }
+    }
+
+    if (dmlReport && typeof dmlReport === "object") {
+        const target = ensureAnalysis();
+        target.dmlReport = dmlReport;
+        if (Array.isArray(dmlReport.issues)) {
+            target.dmlIssues = dmlReport.issues;
+        }
+        if (Array.isArray(dmlReport.segments)) {
+            target.dmlSegments = dmlReport.segments;
+        }
+        if (dmlReport.aggregated && typeof dmlReport.aggregated === "object") {
+            target.dmlAggregated = dmlReport.aggregated;
+        }
+        if (dmlReport.summary && typeof dmlReport.summary === "object") {
+            target.dmlSummary = dmlReport.summary;
+        }
+        if (dmlReport.generatedAt || dmlReport.generated_at) {
+            target.dmlGeneratedAt = dmlReport.generatedAt || dmlReport.generated_at;
+        }
+        if (typeof dmlReport.conversationId === "string" && dmlReport.conversationId) {
+            target.dmlConversationId = dmlReport.conversationId;
+        }
+    }
+
     const combinedReportJson = sanitiseCombinedReportJson(row.combined_report_json || "");
     const staticReportJson = sanitiseIssuesJson(row.static_report_json || "");
     const aiReportJson = sanitiseIssuesJson(row.ai_report_json || "");
+
     return {
         projectId: row.project_id,
         path: row.path,
@@ -231,6 +318,9 @@ function mapReportRow(row) {
         chunks,
         segments,
         analysis,
+        dml: dmlReport || null,
+        dify: difyReport || null,
+        staticReport: staticReport || null,
         conversationId: row.conversation_id || "",
         userId: row.user_id || "",
         generatedAt: toIsoString(row.generated_at),
