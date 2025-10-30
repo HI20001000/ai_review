@@ -662,6 +662,34 @@ function normaliseAiReviewPayload(payload = {}) {
     }
     issues = normaliseIssues(issues);
 
+    const fallbackMarkdown = pickFirstString(
+        [
+            summaryObject?.reportText,
+            summaryObject?.report,
+            reportObject?.reportText,
+            reportObject?.report,
+            aggregatedObject?.reportText,
+            aggregatedObject?.report,
+            payload.dmlReportText,
+            payload.dmlReport?.reportText,
+            payload.dmlReport?.report,
+            payload.dml?.reportText,
+            payload.dml?.report
+        ],
+        { allowEmpty: false }
+    );
+
+    const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
+    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
+
+    if (!issues.length && normalisedDerivedIssues.length) {
+        issues = normalisedDerivedIssues;
+    }
+
+    if (normalisedDerivedIssues.length) {
+        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
+    }
+
     const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
 
     const parsedChunkIssues = [];
@@ -691,46 +719,12 @@ function normaliseAiReviewPayload(payload = {}) {
         issues = dedupeIssues([...parsedJsonIssues, ...issues]);
     }
 
-    if (aggregatedObject) {
-        if (Array.isArray(aggregatedObject.issues)) {
-            const aggregatedIssues = normaliseIssues(aggregatedObject.issues);
-            if (aggregatedIssues.length) {
-                issues = dedupeIssues([...aggregatedIssues, ...issues]);
-            }
+    if (aggregatedObject && Array.isArray(aggregatedObject.issues)) {
+        const aggregatedIssues = normaliseIssues(aggregatedObject.issues);
+        if (aggregatedIssues.length) {
+            issues = dedupeIssues([...aggregatedIssues, ...issues]);
         }
-        if ("issues" in aggregatedObject) {
-            delete aggregatedObject.issues;
-        }
-        if (Array.isArray(aggregatedObject.aggregatedIssues)) {
-            delete aggregatedObject.aggregatedIssues;
-        }
-        if (Array.isArray(aggregatedObject.chunks)) {
-            stripIssuesFromChunks(aggregatedObject.chunks);
-        }
-    }
-
-    const derivedIssues = deriveIssuesFromMarkdownSegments(
-        segments,
-        pickFirstString(
-            [
-                summaryObject?.reportText,
-                summaryObject?.report,
-                reportObject?.reportText,
-                reportObject?.report,
-                aggregatedObject?.reportText,
-                aggregatedObject?.report,
-                payload.dmlReportText,
-                payload.dmlReport?.reportText,
-                payload.dmlReport?.report,
-                payload.dml?.reportText,
-                payload.dml?.report
-            ],
-            { allowEmpty: false }
-        )
-    );
-    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-    if (normalisedDerivedIssues.length) {
-        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
+        aggregatedObject.issues = clonePlain(aggregatedIssues);
     }
 
     const generatedAtCandidates = [
