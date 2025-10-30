@@ -829,8 +829,28 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const dmlPrompt = dml?.dify || null;
     const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError);
     const dmlChunks = Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks : [];
-    const dmlAggregated = dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
-    const dmlIssues = Array.isArray(dmlAggregated?.issues) ? dmlAggregated.issues : [];
+    const dmlAggregatedSource =
+        dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
+    const dmlIssuesFromPrompt = Array.isArray(dmlPrompt?.issues) ? dmlPrompt.issues : [];
+    const aggregatedIssuesFallback = Array.isArray(dmlAggregatedSource?.issues)
+        ? dmlAggregatedSource.issues
+        : [];
+    const dmlIssues = dmlIssuesFromPrompt.length ? dmlIssuesFromPrompt : aggregatedIssuesFallback;
+    const dmlAggregated = (() => {
+        if (!dmlAggregatedSource || typeof dmlAggregatedSource !== "object") {
+            return null;
+        }
+        const clone = { ...dmlAggregatedSource };
+        if (Array.isArray(clone.chunks)) {
+            clone.chunks = clone.chunks.map((chunk) =>
+                chunk && typeof chunk === "object" ? { ...chunk } : chunk
+            );
+        }
+        if (Array.isArray(clone.issues)) {
+            delete clone.issues;
+        }
+        return clone;
+    })();
     const dmlIssuesWithSource = dmlIssues.map((issue) => annotateIssueSource(issue, "dml_prompt"));
     const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
     const dmlReportTextHuman = typeof dmlPrompt?.textReport === "string" ? dmlPrompt.textReport : "";
@@ -900,9 +920,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
 
     if (dmlAggregated) {
         finalPayload.reports.dml_prompt.aggregated = dmlAggregated;
-        if (!finalPayload.reports.dml_prompt.issues) {
-            finalPayload.reports.dml_prompt.issues = dmlIssues;
-        }
     }
 
     finalReport = JSON.stringify(finalPayload, null, 2);
