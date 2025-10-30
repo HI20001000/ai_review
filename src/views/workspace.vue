@@ -329,11 +329,7 @@ const activeReportDetails = computed(() => {
     const reports = parsed.reports && typeof parsed.reports === "object" ? parsed.reports : null;
     const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
 
-    const combinedPayload = buildCombinedReportPayload(report.state);
-    const aggregatedPayload =
-        combinedPayload && typeof combinedPayload === "object" && !Array.isArray(combinedPayload)
-            ? combinedPayload
-            : null;
+    const aggregatedPayload = isPlainObject(parsed) ? parsed : null;
     const { staticIssues, aiIssues, aggregatedIssues: derivedAggregatedIssues } =
         activeReportIssueSources.value;
     let aggregatedIssues = Array.isArray(aggregatedPayload?.issues)
