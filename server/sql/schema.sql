@@ -46,3 +46,4 @@ CREATE TABLE IF NOT EXISTS reports (
     INDEX idx_reports_project_path (project_id, path(191)),
     CONSTRAINT fk_reports_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
+
