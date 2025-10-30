@@ -79,89 +79,6 @@ function safeParseArray(jsonText, { fallback = [] } = {}) {
     }
 }
 
-function sanitiseCombinedReportJson(value) {
-    if (typeof value !== "string") {
-        return "";
-    }
-    const trimmed = value.trim();
-    if (!trimmed) {
-        return "";
-    }
-    try {
-        const parsed = JSON.parse(trimmed);
-        const summary = Array.isArray(parsed?.summary)
-            ? parsed.summary.map((record) =>
-                  record && typeof record === "object" && !Array.isArray(record) ? { ...record } : record
-              )
-            : [];
-        const issues = Array.isArray(parsed?.issues)
-            ? parsed.issues.map((issue) =>
-                  issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
-              )
-            : [];
-        return JSON.stringify({ summary, issues });
-    } catch (_error) {
-        return "";
-    }
-}
-
-function sanitiseIssuesJson(value) {
-    if (typeof value !== "string") {
-        return "";
-    }
-    const trimmed = value.trim();
-    if (!trimmed) {
-        return "";
-    }
-    try {
-        const parsed = JSON.parse(trimmed);
-        const issues = Array.isArray(parsed?.issues)
-            ? parsed.issues.map((issue) =>
-                  issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
-              )
-            : [];
-        return JSON.stringify({ issues });
-    } catch (_error) {
-        return "";
-    }
-}
-
-const EMPTY_ISSUES_JSON = JSON.stringify({ issues: [] });
-
-function buildFallbackCombinedReport(errorMessage, generatedAt) {
-    const trimmedMessage = typeof errorMessage === "string" ? errorMessage.trim() : "";
-    const baseMessage = trimmedMessage
-        ? `AI 審查流程執行失敗：${trimmedMessage}`
-        : "AI 審查流程執行失敗。";
-    const summary = [
-        {
-            source: "static_analyzer",
-            label: "靜態分析器",
-            total_issues: 0,
-            status: "skipped",
-            generated_at: generatedAt
-        },
-        {
-            source: "dml_prompt",
-            label: "AI審查",
-            total_issues: 0,
-            status: "failed",
-            message: baseMessage,
-            generated_at: generatedAt
-        },
-        {
-            source: "combined",
-            label: "聚合報告",
-            total_issues: 0,
-            status: "failed",
-            message: baseMessage,
-            generated_at: generatedAt
-        }
-    ];
-
-    return { summary, issues: [] };
-}
-
 function safeSerialiseForLog(value) {
     if (typeof value === "string") {
         return value;
@@ -326,9 +243,9 @@ function mapReportRow(row) {
         generatedAt: toIsoString(row.generated_at),
         createdAt: toIsoString(row.created_at),
         updatedAt: toIsoString(row.updated_at),
-        combinedReportJson,
-        staticReportJson,
-        aiReportJson
+        combinedReportJson: typeof row.combined_report_json === "string" ? row.combined_report_json : "",
+        staticReportJson: typeof row.static_report_json === "string" ? row.static_report_json : "",
+        aiReportJson: typeof row.ai_report_json === "string" ? row.ai_report_json : ""
     };
 }
 
@@ -435,13 +352,9 @@ async function upsertReport({
     const safeReport = typeof report === "string" ? report : "";
     const safeConversationId = typeof conversationId === "string" ? conversationId : "";
     const safeUserId = typeof userId === "string" ? userId : "";
-    const safeCombinedJson = sanitiseCombinedReportJson(
-        typeof combinedReportJson === "string" ? combinedReportJson : ""
-    );
-    const safeStaticJson = sanitiseIssuesJson(
-        typeof staticReportJson === "string" ? staticReportJson : ""
-    );
-    const safeAiJson = sanitiseIssuesJson(typeof aiReportJson === "string" ? aiReportJson : "");
+    const safeCombinedJson = typeof combinedReportJson === "string" ? combinedReportJson : "";
+    const safeStaticJson = typeof staticReportJson === "string" ? staticReportJson : "";
+    const safeAiJson = typeof aiReportJson === "string" ? aiReportJson : "";
 
     logReportPersistenceStage("upsertReport.input", {
         projectId,

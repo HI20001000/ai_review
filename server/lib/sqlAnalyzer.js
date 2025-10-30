@@ -1311,6 +1311,8 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         ...reportsAiIssues
     ]);
 
+    dmlReportPayload.issues = cloneIssueListForPersistence(aiIssuesForPersistence);
+
     if (parsedDify && typeof parsedDify === "object") {
         staticReportPayload.enrichment = parsedDify;
     }
@@ -1344,7 +1346,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         };
     }
 
-    let annotatedChunks = [];
+    let annotatedChunks;
     if (dmlChunks.length) {
         annotatedChunks = dmlChunks;
     } else if (difyChunks.length) {
