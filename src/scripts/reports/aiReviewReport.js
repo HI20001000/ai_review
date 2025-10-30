@@ -648,34 +648,6 @@ function normaliseAiReviewPayload(payload = {}) {
     }
     issues = normaliseIssues(issues);
 
-    const fallbackMarkdown = pickFirstString(
-        [
-            summaryObject?.reportText,
-            summaryObject?.report,
-            reportObject?.reportText,
-            reportObject?.report,
-            aggregatedObject?.reportText,
-            aggregatedObject?.report,
-            payload.dmlReportText,
-            payload.dmlReport?.reportText,
-            payload.dmlReport?.report,
-            payload.dml?.reportText,
-            payload.dml?.report
-        ],
-        { allowEmpty: false }
-    );
-
-    const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
-    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-
-    if (!issues.length && normalisedDerivedIssues.length) {
-        issues = normalisedDerivedIssues;
-    }
-
-    if (normalisedDerivedIssues.length) {
-        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
-    }
-
     const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
 
     const parsedChunkIssues = [];
@@ -711,6 +683,30 @@ function normaliseAiReviewPayload(payload = {}) {
             issues = dedupeIssues([...aggregatedIssues, ...issues]);
         }
         delete aggregatedObject.issues;
+    }
+
+    const derivedIssues = deriveIssuesFromMarkdownSegments(
+        segments,
+        pickFirstString(
+            [
+                summaryObject?.reportText,
+                summaryObject?.report,
+                reportObject?.reportText,
+                reportObject?.report,
+                aggregatedObject?.reportText,
+                aggregatedObject?.report,
+                payload.dmlReportText,
+                payload.dmlReport?.reportText,
+                payload.dmlReport?.report,
+                payload.dml?.reportText,
+                payload.dml?.report
+            ],
+            { allowEmpty: false }
+        )
+    );
+    const normalisedDerivedIssues = normaliseIssues(derivedIssues);
+    if (normalisedDerivedIssues.length) {
+        issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
     }
 
     const generatedAtCandidates = [
