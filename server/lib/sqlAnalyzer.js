@@ -30,6 +30,75 @@ function logSqlPayloadStage(label, value) {
     console.log(`[sql-report] ${label}: ${safeSerialiseForLog(value)}`);
 }
 
+function serialiseChunkText(value, fallback = "") {
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (trimmed) {
+            return value;
+        }
+        return fallback || value;
+    }
+    if (value === null || value === undefined) {
+        return fallback || "";
+    }
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch (error) {
+        return String(value);
+    }
+}
+
+function normaliseChunksForPersistence(chunks, { fallbackRaw = "", defaultSource = "" } = {}) {
+    const list = Array.isArray(chunks) ? chunks : [];
+    if (!list.length) {
+        return [];
+    }
+    const total = list.length;
+    return list.map((entry, offset) => {
+        const index = offset + 1;
+        if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+            const clone = { ...entry };
+            const answerCandidate =
+                typeof clone.answer === "string" && clone.answer.trim()
+                    ? clone.answer
+                    : typeof clone.rawAnalysis === "string" && clone.rawAnalysis.trim()
+                    ? clone.rawAnalysis
+                    : typeof clone.raw === "string" && clone.raw.trim()
+                    ? clone.raw
+                    : typeof clone.text === "string"
+                    ? clone.text
+                    : null;
+            const answer = serialiseChunkText(answerCandidate, fallbackRaw);
+            const numericIndex = Number(clone.index);
+            const numericTotal = Number(clone.total);
+            clone.index = Number.isFinite(numericIndex) && numericIndex > 0 ? numericIndex : index;
+            clone.total = Number.isFinite(numericTotal) && numericTotal > 0 ? numericTotal : total;
+            clone.answer = answer;
+            if (typeof clone.raw !== "string" || !clone.raw.trim()) {
+                clone.raw = answer;
+            }
+            if (typeof clone.rawAnalysis !== "string" || !clone.rawAnalysis.trim()) {
+                clone.rawAnalysis = clone.raw;
+            }
+            if (defaultSource && !clone.source) {
+                clone.source = defaultSource;
+            }
+            return clone;
+        }
+        const answer = serialiseChunkText(entry, fallbackRaw);
+        const base = {
+            index,
+            total,
+            answer,
+            raw: answer
+        };
+        if (defaultSource) {
+            base.source = defaultSource;
+        }
+        return base;
+    });
+}
+
 function replaceRangeWithSpaces(text, start, end) {
     if (!text || start >= end) return text;
     const replacement = text
@@ -813,25 +882,11 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         : rawReport;
     logSqlPayloadStage("dify.report", difyReport);
 
-    const difyChunks = Array.isArray(dify?.chunks) && dify.chunks.length
-        ? dify.chunks
-        : null;
+    const difyChunks = normaliseChunksForPersistence(
+        Array.isArray(dify?.chunks) ? dify.chunks : [],
+        { fallbackRaw: rawReport, defaultSource: "dify_workflow" }
+    );
     logSqlPayloadStage("dify.chunks", difyChunks);
-    const annotatedChunks = difyChunks
-        ? difyChunks.map((chunk, index) => ({
-              ...chunk,
-              rawAnalysis: index === 0 ? rawReport : chunk.rawAnalysis
-          }))
-        : [
-              {
-                  index: 1,
-                  total: 1,
-                  answer: rawReport,
-                  raw: rawReport,
-                  rawAnalysis: rawReport
-              }
-          ];
-    logSqlPayloadStage("chunks.annotated", annotatedChunks);
     const segments = dify?.segments && Array.isArray(dify.segments) && dify.segments.length
         ? dify.segments
         : [rawReport || content || ""];
@@ -860,36 +915,23 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     logSqlPayloadStage("dml.segments", dmlSegments);
     const dmlPrompt = dml?.dify || null;
     logSqlPayloadStage("dml.prompt", dmlPrompt);
+    const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
+    const dmlReportTextHuman = typeof dmlPrompt?.textReport === "string" ? dmlPrompt.textReport : "";
+    const dmlChunks = normaliseChunksForPersistence(
+        Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks : [],
+        {
+            fallbackRaw: dmlReportTextHuman || dmlReportText || rawReport,
+            defaultSource: "dml_prompt"
+        }
+    );
+    logSqlPayloadStage("dml.chunks", dmlChunks);
     const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError);
     logSqlPayloadStage("dml.summary", dmlSummary);
-    const dmlChunks = Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks : [];
-    const dmlAggregatedSource =
-        dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
-    const dmlIssuesFromPrompt = Array.isArray(dmlPrompt?.issues) ? dmlPrompt.issues : [];
-    const aggregatedIssuesFallback = Array.isArray(dmlAggregatedSource?.issues)
-        ? dmlAggregatedSource.issues
-        : [];
-    const dmlIssues = dmlIssuesFromPrompt.length ? dmlIssuesFromPrompt : aggregatedIssuesFallback;
-    const dmlAggregated = (() => {
-        if (!dmlAggregatedSource || typeof dmlAggregatedSource !== "object") {
-            return null;
-        }
-        const clone = { ...dmlAggregatedSource };
-        if (Array.isArray(clone.chunks)) {
-            clone.chunks = clone.chunks.map((chunk) =>
-                chunk && typeof chunk === "object" ? { ...chunk } : chunk
-            );
-        }
-        if (Array.isArray(clone.issues)) {
-            delete clone.issues;
-        }
-        return clone;
-    })();
+    const dmlAggregated = dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
+    const dmlIssues = Array.isArray(dmlAggregated?.issues) ? dmlAggregated.issues : [];
     const dmlIssuesWithSource = dmlIssues.map((issue) => annotateIssueSource(issue, "dml_prompt"));
     logSqlPayloadStage("dml.aggregated", dmlAggregated);
     logSqlPayloadStage("dml.issues", dmlIssues);
-    const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
-    const dmlReportTextHuman = typeof dmlPrompt?.textReport === "string" ? dmlPrompt.textReport : "";
     const dmlConversationId = typeof dmlPrompt?.conversationId === "string" ? dmlPrompt.conversationId : "";
     const dmlGeneratedAt = dmlPrompt?.generatedAt || null;
     const dmlErrorMessage = dmlSummary.error_message || (dmlPrompt?.error ? String(dmlPrompt.error) : "");
@@ -962,6 +1004,19 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     if (dmlAggregated) {
         finalPayload.reports.dml_prompt.aggregated = dmlAggregated;
     }
+
+    const fallbackChunkText =
+        dmlReportTextHuman || dmlReportText || difyReport || rawReport || content || "";
+    const fallbackChunkSource = dmlReportTextHuman || dmlReportText ? "dml_prompt" : "dify_workflow";
+    const annotatedChunks = dmlChunks.length
+        ? dmlChunks
+        : difyChunks.length
+        ? difyChunks
+        : normaliseChunksForPersistence([fallbackChunkText], {
+              fallbackRaw: fallbackChunkText,
+              defaultSource: fallbackChunkSource
+          });
+    logSqlPayloadStage("chunks.annotated", annotatedChunks);
 
     finalReport = JSON.stringify(finalPayload, null, 2);
     logSqlPayloadStage("report.serialised", finalReport);
