@@ -47,7 +47,3 @@ CREATE TABLE IF NOT EXISTS reports (
     CONSTRAINT fk_reports_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 
-ALTER TABLE reports
-    ADD COLUMN IF NOT EXISTS combined_report_json LONGTEXT NULL,
-    ADD COLUMN IF NOT EXISTS static_report_json LONGTEXT NULL,
-    ADD COLUMN IF NOT EXISTS ai_report_json LONGTEXT NULL;
