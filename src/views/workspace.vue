@@ -923,15 +923,30 @@ const combinedReportJsonInfo = computed(() => {
     if (!report || !report.state) {
         return { raw: "", preview: "" };
     }
-    const rawReport = typeof report.state.report === "string" ? report.state.report : "";
-    if (rawReport && rawReport.trim()) {
-        return buildJsonInfo(rawReport);
-    }
+
+    const combinedPayload = buildCombinedReportPayload(report.state);
     const parsed = report.state.parsedReport;
+
     if (parsed && typeof parsed === "object") {
-        return buildJsonInfo(parsed);
+        const merged = { ...parsed };
+        merged.summary = combinedPayload.summary;
+        merged.issues = combinedPayload.issues;
+        merged.aggregated_reports = combinedPayload.aggregated_reports;
+
+        const reportsSource = merged.reports && typeof merged.reports === "object" ? merged.reports : {};
+        merged.reports = {
+            ...reportsSource,
+            combined: combinedPayload.aggregated_reports.combined,
+            static_json: combinedPayload.aggregated_reports.static,
+            ai_json: combinedPayload.aggregated_reports.ai
+        };
+
+        return buildJsonInfo(merged);
     }
-    return { raw: "", preview: "" };
+    return filterDmlIssues(Array.isArray(selected) ? selected : []);
+}
+
+    return buildJsonInfo(combinedPayload);
 });
 
 function filterStaticIssuesForJsonExport(issues) {
