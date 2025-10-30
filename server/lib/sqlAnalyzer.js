@@ -12,6 +12,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const SCRIPT_PATH = resolve(__dirname, "sql_rule_engine.py");
 
+function safeSerialiseForLog(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch (error) {
+        return `[unserialisable: ${error?.message || error}]`;
+    }
+}
+
+function logSqlPayloadStage(label, value) {
+    if (typeof console === "undefined" || typeof console.log !== "function") {
+        return;
+    }
+    console.log(`[sql-report] ${label}: ${safeSerialiseForLog(value)}`);
+}
+
 function replaceRangeWithSpaces(text, start, end) {
     if (!text || start >= end) return text;
     const replacement = text
@@ -783,13 +801,22 @@ export async function analyseSqlToReport(sqlText, options = {}) {
 }
 
 export function buildSqlReportPayload({ analysis, content, dify, difyError, dml, dmlError }) {
+    logSqlPayloadStage("buildSqlReportPayload.input.analysis", analysis);
+    logSqlPayloadStage("buildSqlReportPayload.input.dify", dify);
+    logSqlPayloadStage("buildSqlReportPayload.input.dml", dml);
+
     const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
+    logSqlPayloadStage("analysis.rawReport", rawReport);
+
     const difyReport = typeof dify?.report === "string" && dify.report.trim().length
         ? dify.report
         : rawReport;
+    logSqlPayloadStage("dify.report", difyReport);
+
     const difyChunks = Array.isArray(dify?.chunks) && dify.chunks.length
         ? dify.chunks
         : null;
+    logSqlPayloadStage("dify.chunks", difyChunks);
     const annotatedChunks = difyChunks
         ? difyChunks.map((chunk, index) => ({
               ...chunk,
@@ -804,11 +831,14 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
                   rawAnalysis: rawReport
               }
           ];
+    logSqlPayloadStage("chunks.annotated", annotatedChunks);
     const segments = dify?.segments && Array.isArray(dify.segments) && dify.segments.length
         ? dify.segments
         : [rawReport || content || ""];
+    logSqlPayloadStage("segments.normalised", segments);
 
     const parsedStaticReport = parseStaticReport(rawReport) || {};
+    logSqlPayloadStage("static.parsedReport", parsedStaticReport);
     const staticSummary = normaliseStaticSummary(parsedStaticReport.summary, ".sql");
     const staticIssues = Array.isArray(parsedStaticReport.issues) ? parsedStaticReport.issues : [];
     const staticIssuesWithSource = staticIssues.map((issue) => annotateIssueSource(issue, "static_analyzer"));
@@ -819,6 +849,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         issues: staticIssues,
         metadata: staticMetadata
     };
+    logSqlPayloadStage("static.reportPayload", staticReportPayload);
 
     const dmlSegments = Array.isArray(dml?.segments)
         ? dml.segments.map((segment, index) => ({
@@ -826,8 +857,11 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
               index: Number.isFinite(Number(segment?.index)) ? segment.index : index + 1
           }))
         : [];
+    logSqlPayloadStage("dml.segments", dmlSegments);
     const dmlPrompt = dml?.dify || null;
+    logSqlPayloadStage("dml.prompt", dmlPrompt);
     const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError);
+    logSqlPayloadStage("dml.summary", dmlSummary);
     const dmlChunks = Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks : [];
     const dmlAggregatedSource =
         dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
@@ -852,6 +886,8 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         return clone;
     })();
     const dmlIssuesWithSource = dmlIssues.map((issue) => annotateIssueSource(issue, "dml_prompt"));
+    logSqlPayloadStage("dml.aggregated", dmlAggregated);
+    logSqlPayloadStage("dml.issues", dmlIssues);
     const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
     const dmlReportTextHuman = typeof dmlPrompt?.textReport === "string" ? dmlPrompt.textReport : "";
     const dmlConversationId = typeof dmlPrompt?.conversationId === "string" ? dmlPrompt.conversationId : "";
@@ -870,6 +906,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         generatedAt: dmlGeneratedAt,
         metadata: { analysis_source: "dml_prompt" }
     };
+    logSqlPayloadStage("dml.reportPayload", dmlReportPayload);
 
     let finalReport = difyReport && difyReport.trim() ? difyReport : rawReport;
     let parsedDify;
@@ -888,8 +925,11 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const difySummary = parsedDify && typeof parsedDify === "object"
         ? normaliseDifySummary(parsedDify, difyIssuesRaw.length)
         : null;
+    logSqlPayloadStage("dify.summary", difySummary);
+    logSqlPayloadStage("issues.combined", combinedIssues);
 
     const compositeSummary = buildCompositeSummary(staticSummary, dmlSummary, difySummary, combinedIssues);
+    logSqlPayloadStage("summary.composite", compositeSummary);
     const finalPayload = {
         summary: compositeSummary,
         issues: combinedIssues,
@@ -906,6 +946,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             ].filter(Boolean)
         }
     };
+    logSqlPayloadStage("payload.final", finalPayload);
 
     if (parsedDify && typeof parsedDify === "object") {
         finalPayload.reports.static_analyzer.enrichment = parsedDify;
@@ -923,6 +964,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     }
 
     finalReport = JSON.stringify(finalPayload, null, 2);
+    logSqlPayloadStage("report.serialised", finalReport);
 
     const generatedAt = dify?.generatedAt || new Date().toISOString();
     const difyErrorMessage = difyError ? difyError.message || String(difyError) : "";
@@ -974,6 +1016,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             analysisPayload.difyErrorMessage = "";
         }
     }
+    logSqlPayloadStage("analysis.payload", analysisPayload);
 
     const sourceLabels = ["sql-rule-engine"];
     if (dmlSegments.length) {
@@ -983,7 +1026,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         sourceLabels.push("dify");
     }
 
-    return {
+    const result = {
         report: finalReport,
         conversationId: typeof dify?.conversationId === "string" ? dify.conversationId : "",
         chunks: annotatedChunks,
@@ -998,6 +1041,8 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         difyErrorMessage: difyErrorMessage || undefined,
         dmlErrorMessage: dmlErrorMessage || undefined
     };
+    logSqlPayloadStage("buildSqlReportPayload.output", result);
+    return result;
 }
 
 export function isSqlPath(filePath) {
