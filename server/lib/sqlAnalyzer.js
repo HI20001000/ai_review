@@ -1344,7 +1344,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         };
     }
 
-    let annotatedChunks;
+    let annotatedChunks = [];
     if (dmlChunks.length) {
         annotatedChunks = dmlChunks;
     } else if (difyChunks.length) {
@@ -1376,134 +1376,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             : [];
     }
     logSqlPayloadStage("chunks.annotated", annotatedChunks);
-
-    let annotatedChunks;
-    if (dmlChunks.length) {
-        annotatedChunks = dmlChunks;
-    } else if (difyChunks.length) {
-        annotatedChunks = difyChunks;
-    } else {
-        const fallbackCandidates = [
-            { text: dmlReportTextHuman, source: "dml_prompt" },
-            { text: dmlReportText, source: "dml_prompt" },
-            { text: difyReport, source: "dify_workflow" },
-            { text: rawReport, source: "static_analyzer" },
-            { text: content || "", source: "content" }
-        ];
-
-        let fallbackText = "";
-        let fallbackSource = "dml_prompt";
-        for (const candidate of fallbackCandidates) {
-            if (typeof candidate.text === "string" && candidate.text.trim()) {
-                fallbackText = candidate.text;
-                fallbackSource = candidate.source;
-                break;
-            }
-        }
-
-        annotatedChunks = fallbackText
-            ? normaliseChunksForPersistence([fallbackText], {
-                  fallbackRaw: fallbackText,
-                  defaultSource: fallbackSource
-              })
-            : [];
-    }
-
-    let annotatedChunks;
-    if (dmlChunks.length) {
-        annotatedChunks = dmlChunks;
-    } else if (difyChunks.length) {
-        annotatedChunks = difyChunks;
-    } else {
-        const fallbackCandidates = [
-            { text: dmlReportTextHuman, source: "dml_prompt" },
-            { text: dmlReportText, source: "dml_prompt" },
-            { text: difyReport, source: "dify_workflow" },
-            { text: rawReport, source: "static_analyzer" },
-            { text: content || "", source: "content" }
-        ];
-
-        let fallbackText = "";
-        let fallbackSource = "dml_prompt";
-        for (const candidate of fallbackCandidates) {
-            if (typeof candidate.text === "string" && candidate.text.trim()) {
-                fallbackText = candidate.text;
-                fallbackSource = candidate.source;
-                break;
-            }
-        }
-
-        annotatedChunks = fallbackText
-            ? normaliseChunksForPersistence([fallbackText], {
-                  fallbackRaw: fallbackText,
-                  defaultSource: fallbackSource
-              })
-            : [];
-    }
-
-    let annotatedChunks = [];
-    if (dmlChunks.length) {
-        annotatedChunks = dmlChunks;
-    } else if (difyChunks.length) {
-        annotatedChunks = difyChunks;
-    } else {
-        const fallbackCandidates = [
-            { text: dmlReportTextHuman, source: "dml_prompt" },
-            { text: dmlReportText, source: "dml_prompt" },
-            { text: difyReport, source: "dify_workflow" },
-            { text: rawReport, source: "static_analyzer" },
-            { text: content || "", source: "content" }
-        ];
-
-        let fallbackText = "";
-        let fallbackSource = "dml_prompt";
-        for (const candidate of fallbackCandidates) {
-            if (typeof candidate.text === "string" && candidate.text.trim()) {
-                fallbackText = candidate.text;
-                fallbackSource = candidate.source;
-                break;
-            }
-        }
-
-        annotatedChunks = fallbackText
-            ? normaliseChunksForPersistence([fallbackText], {
-                  fallbackRaw: fallbackText,
-                  defaultSource: fallbackSource
-              })
-            : [];
-    }
-
-    let annotatedChunks = [];
-    if (dmlChunks.length) {
-        annotatedChunks = dmlChunks;
-    } else if (difyChunks.length) {
-        annotatedChunks = difyChunks;
-    } else {
-        const fallbackCandidates = [
-            { text: dmlReportTextHuman, source: "dml_prompt" },
-            { text: dmlReportText, source: "dml_prompt" },
-            { text: difyReport, source: "dify_workflow" },
-            { text: rawReport, source: "static_analyzer" },
-            { text: content || "", source: "content" }
-        ];
-
-        let fallbackText = "";
-        let fallbackSource = "dml_prompt";
-        for (const candidate of fallbackCandidates) {
-            if (typeof candidate.text === "string" && candidate.text.trim()) {
-                fallbackText = candidate.text;
-                fallbackSource = candidate.source;
-                break;
-            }
-        }
-
-        annotatedChunks = fallbackText
-            ? normaliseChunksForPersistence([fallbackText], {
-                  fallbackRaw: fallbackText,
-                  defaultSource: fallbackSource
-              })
-            : [];
-    }
 
     finalReport = JSON.stringify(finalPayload, null, 2);
     logSqlPayloadStage("report.serialised", finalReport);
