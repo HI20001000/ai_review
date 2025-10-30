@@ -180,8 +180,6 @@ function createIssueIdentity(issue) {
     const sourceCandidate =
         issue.source ?? issue.analysis_source ?? issue.analysisSource ?? issue.from ?? issue.origin ?? "";
     const sourceKey = normaliseReportSourceKey(sourceCandidate);
-    const chunkIndex = issue.chunk_index ?? issue.chunkIndex ?? "";
-
     const segments = [
         ruleId,
         message,
@@ -190,8 +188,7 @@ function createIssueIdentity(issue) {
         objectName,
         lineValue,
         columnValue,
-        sourceKey,
-        chunkIndex
+        sourceKey
     ]
         .map((segment) => normaliseIdentitySegment(segment))
         .filter((segment) => Boolean(segment));
