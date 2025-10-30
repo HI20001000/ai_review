@@ -929,6 +929,11 @@ const combinedReportJsonInfo = computed(() => {
         return { raw: "", preview: "" };
     }
 
+    const stored = normaliseJsonContent(report.state.combinedReportJson);
+    if (stored) {
+        return buildJsonInfo(stored);
+    }
+
     const combinedPayload = buildCombinedReportJsonExport(report.state);
     return buildJsonInfo(combinedPayload);
 });
@@ -961,6 +966,10 @@ const staticReportJsonInfo = computed(() => {
     if (!report || !report.state) {
         return { raw: "", preview: "" };
     }
+    const stored = normaliseJsonContent(report.state.staticReportJson);
+    if (stored) {
+        return buildJsonInfo(stored);
+    }
     const issues = extractStaticIssuesForJsonExport(report.state);
     return buildJsonInfo({ issues });
 });
@@ -969,6 +978,10 @@ const aiReportJsonInfo = computed(() => {
     const report = activeReport.value;
     if (!report || !report.state) {
         return { raw: "", preview: "" };
+    }
+    const stored = normaliseJsonContent(report.state.aiReportJson);
+    if (stored) {
+        return buildJsonInfo(stored);
     }
     const issues = extractAiIssuesForJsonExport(report.state);
     return buildJsonInfo({ issues });
@@ -1989,7 +2002,10 @@ function createDefaultReportState() {
         sourceText: "",
         sourceLoaded: false,
         sourceLoading: false,
-        sourceError: ""
+        sourceError: "",
+        combinedReportJson: "",
+        staticReportJson: "",
+        aiReportJson: ""
     };
 }
 
@@ -2362,6 +2378,9 @@ async function hydrateReportsForProject(projectId) {
             state.error = normaliseHydratedString(record.error);
             state.chunks = Array.isArray(record.chunks) ? record.chunks : [];
             state.segments = Array.isArray(record.segments) ? record.segments : [];
+            state.combinedReportJson = normaliseHydratedString(record.combinedReportJson);
+            state.staticReportJson = normaliseHydratedString(record.staticReportJson);
+            state.aiReportJson = normaliseHydratedString(record.aiReportJson);
             state.conversationId = normaliseHydratedString(record.conversationId);
             state.analysis =
                 record.analysis && typeof record.analysis === "object" && !Array.isArray(record.analysis)
@@ -2518,6 +2537,9 @@ async function generateReportForFile(project, node, options = {}) {
     state.sourceLoaded = false;
     state.sourceLoading = false;
     state.sourceError = "";
+    state.combinedReportJson = "";
+    state.staticReportJson = "";
+    state.aiReportJson = "";
 
     try {
         const root = await getProjectRootHandleById(project.id);
@@ -2569,6 +2591,9 @@ async function generateReportForFile(project, node, options = {}) {
         normaliseReportAnalysisState(state);
         updateIssueSummaryTotals(state);
         state.error = "";
+        state.combinedReportJson = typeof payload?.combinedReportJson === "string" ? payload.combinedReportJson : "";
+        state.staticReportJson = typeof payload?.staticReportJson === "string" ? payload.staticReportJson : "";
+        state.aiReportJson = typeof payload?.aiReportJson === "string" ? payload.aiReportJson : "";
 
         if (autoSelect) {
             activeReportTarget.value = {
@@ -2598,6 +2623,9 @@ async function generateReportForFile(project, node, options = {}) {
         if (!state.sourceText) {
             state.sourceLoaded = false;
         }
+        state.combinedReportJson = "";
+        state.staticReportJson = "";
+        state.aiReportJson = "";
         const now = new Date();
         state.updatedAt = now;
         state.updatedAtDisplay = now.toLocaleString();

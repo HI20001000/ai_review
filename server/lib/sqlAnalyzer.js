@@ -1183,34 +1183,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const combinedIssuesJson = serialiseIssuesJson(combinedIssuesForReports);
     logIssuesJson("combined.issues.json.post_aggregate", combinedIssuesJson);
 
-    const issuesChunks = [];
-    const chunkSources = [
-        { source: "composite", json: combinedIssuesJson },
-        { source: "static_analyzer", json: staticIssuesJson },
-        { source: "dml_prompt", json: aiIssuesJson }
-    ];
-
-    for (const entry of chunkSources) {
-        if (entry.json && typeof entry.json === "string" && entry.json.trim()) {
-            issuesChunks.push({
-                index: 0,
-                total: 0,
-                source: entry.source,
-                answer: entry.json,
-                raw: entry.json,
-                rawAnalysis: entry.json
-            });
-        }
-    }
-
-    if (issuesChunks.length) {
-        const total = issuesChunks.length;
-        issuesChunks.forEach((chunk, offset) => {
-            chunk.index = offset + 1;
-            chunk.total = total;
-        });
-    }
-
     const finalPayload = {
         summary: compositeSummary,
         issues: combinedIssues,
@@ -1241,20 +1213,15 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     }
 
     let annotatedChunks;
-    if (issuesChunks.length) {
-        annotatedChunks = issuesChunks;
-    } else if (dmlChunks.length) {
+    if (dmlChunks.length) {
         annotatedChunks = dmlChunks;
     } else if (difyChunks.length) {
         annotatedChunks = difyChunks;
     } else {
         const fallbackCandidates = [
-            { text: combinedIssuesJson, source: "composite" },
-            { text: aiIssuesJson, source: "dml_prompt" },
             { text: dmlReportTextHuman, source: "dml_prompt" },
             { text: dmlReportText, source: "dml_prompt" },
             { text: difyReport, source: "dify_workflow" },
-            { text: staticIssuesJson, source: "static_analyzer" },
             { text: rawReport, source: "static_analyzer" },
             { text: content || "", source: "content" }
         ];
@@ -1355,7 +1322,10 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         source: sourceLabels.join("+"),
         enrichmentStatus,
         difyErrorMessage: difyErrorMessage || undefined,
-        dmlErrorMessage: dmlErrorMessage || undefined
+        dmlErrorMessage: dmlErrorMessage || undefined,
+        combinedReportJson: combinedIssuesJson,
+        staticReportJson: staticIssuesJson,
+        aiReportJson: aiIssuesJson
     };
     return result;
 }

@@ -642,6 +642,28 @@ export function buildCombinedReportPayload(state) {
 }
 
 export function buildCombinedReportJsonExport(state) {
+    if (state && typeof state === "object" && typeof state.combinedReportJson === "string") {
+        const stored = state.combinedReportJson.trim();
+        if (stored) {
+            try {
+                const parsed = JSON.parse(stored);
+                const summary = Array.isArray(parsed?.summary)
+                    ? parsed.summary.map((entry) =>
+                          entry && typeof entry === "object" && !Array.isArray(entry) ? { ...entry } : entry
+                      )
+                    : [];
+                const issues = Array.isArray(parsed?.issues)
+                    ? parsed.issues.map((issue) =>
+                          issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+                      )
+                    : [];
+                return { summary, issues };
+            } catch (error) {
+                console.warn("[combined-report] Failed to parse stored combined report JSON", error);
+            }
+        }
+    }
+
     const payload = buildCombinedReportPayload(state);
     const summary = Array.isArray(payload?.summary)
         ? payload.summary.map((entry) =>
