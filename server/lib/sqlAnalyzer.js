@@ -1419,6 +1419,11 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     }
     logSqlPayloadStage("chunks.annotated", annotatedChunks);
 
+    const chunksForReport = Array.isArray(annotatedChunks)
+        ? cloneValue(annotatedChunks)
+        : [];
+    logSqlPayloadStage("chunks.final", chunksForReport);
+
     finalReport = JSON.stringify(finalPayload, null, 2);
     logSqlPayloadStage("report.serialised", finalReport);
 
