@@ -126,6 +126,42 @@ function sanitiseIssuesJson(value) {
     }
 }
 
+const EMPTY_ISSUES_JSON = JSON.stringify({ issues: [] });
+
+function buildFallbackCombinedReport(errorMessage, generatedAt) {
+    const trimmedMessage = typeof errorMessage === "string" ? errorMessage.trim() : "";
+    const baseMessage = trimmedMessage
+        ? `AI 審查流程執行失敗：${trimmedMessage}`
+        : "AI 審查流程執行失敗。";
+    const summary = [
+        {
+            source: "static_analyzer",
+            label: "靜態分析器",
+            total_issues: 0,
+            status: "skipped",
+            generated_at: generatedAt
+        },
+        {
+            source: "dml_prompt",
+            label: "AI審查",
+            total_issues: 0,
+            status: "failed",
+            message: baseMessage,
+            generated_at: generatedAt
+        },
+        {
+            source: "combined",
+            label: "聚合報告",
+            total_issues: 0,
+            status: "failed",
+            message: baseMessage,
+            generated_at: generatedAt
+        }
+    ];
+
+    return { summary, issues: [] };
+}
+
 function safeSerialiseForLog(value) {
     if (typeof value === "string") {
         return value;
@@ -533,8 +569,10 @@ app.get("/api/projects/:projectId/reports", async (req, res, next) => {
 });
 
 app.post("/api/reports/dify", async (req, res, next) => {
+    const { projectId, projectName, path, content, userId, files } = req.body || {};
+    let resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+
     try {
-        const { projectId, projectName, path, content, userId, files } = req.body || {};
         if (!projectId || !path || typeof content !== "string") {
             res.status(400).json({ message: "Missing projectId, path, or content for report generation" });
             return;
@@ -543,8 +581,7 @@ app.post("/api/reports/dify", async (req, res, next) => {
             res.status(400).json({ message: "檔案內容為空，無法生成報告" });
             return;
         }
-
-        const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+        resolvedUserId = typeof userId === "string" ? userId.trim() : "";
         if (isSqlPath(path)) {
             console.log(`[sql] Running static SQL analysis project=${projectId} path=${path}`);
             let sqlAnalysis;
@@ -633,8 +670,61 @@ app.post("/api/reports/dify", async (req, res, next) => {
         });
     } catch (error) {
         console.error("[dify] Failed to generate report", error);
-        const status = error?.message?.includes("not configured") ? 500 : 502;
-        res.status(status).json({ message: error?.message || "Failed to generate report" });
+
+        const errorMessage = typeof error?.message === "string" ? error.message : "";
+        const shouldFallback =
+            errorMessage && errorMessage.toLowerCase().includes("aggregatedreports is not defined");
+
+        if (shouldFallback && projectId && path) {
+            const fallbackGeneratedAt = new Date().toISOString();
+            const fallbackCombined = buildFallbackCombinedReport(errorMessage, fallbackGeneratedAt);
+            const combinedJson = JSON.stringify(fallbackCombined);
+            const savedAtIso = new Date().toISOString();
+
+            try {
+                await upsertReport({
+                    projectId,
+                    path,
+                    report: "",
+                    chunks: [],
+                    segments: [],
+                    conversationId: "",
+                    userId: resolvedUserId,
+                    generatedAt: fallbackGeneratedAt,
+                    combinedReportJson: combinedJson,
+                    staticReportJson: EMPTY_ISSUES_JSON,
+                    aiReportJson: EMPTY_ISSUES_JSON
+                });
+            } catch (persistError) {
+                console.error("[dify] Failed to persist fallback report", persistError);
+                const status = errorMessage.includes("not configured") ? 500 : 502;
+                res.status(status).json({ message: errorMessage || "Failed to generate report" });
+                return;
+            }
+
+            res.json({
+                projectId,
+                path,
+                report: "",
+                chunks: [],
+                segments: [],
+                conversationId: "",
+                generatedAt: fallbackGeneratedAt,
+                combinedReportJson: combinedJson,
+                staticReportJson: EMPTY_ISSUES_JSON,
+                aiReportJson: EMPTY_ISSUES_JSON,
+                dify: null,
+                dml: null,
+                analysis: null,
+                savedAt: savedAtIso,
+                difyErrorMessage: errorMessage,
+                dmlErrorMessage: ""
+            });
+            return;
+        }
+
+        const status = errorMessage.includes("not configured") ? 500 : 502;
+        res.status(status).json({ message: errorMessage || "Failed to generate report" });
     }
 });
 
