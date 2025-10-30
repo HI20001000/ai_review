@@ -110,23 +110,24 @@ function clonePlain(value) {
     return value;
 }
 
-function safeStringify(value) {
-    if (typeof value === "string") {
-        return value;
-    }
-    try {
-        return JSON.stringify(value, null, 2);
-    } catch (error) {
-        return `[unserialisable: ${error?.message || error}]`;
-    }
-}
-
-function logAiReviewStage(label, data) {
+function logAiIssuesJson(label, issues) {
     if (typeof console === "undefined" || typeof console.log !== "function") {
         return;
     }
-    const serialised = safeStringify(data);
-    console.log(`[ai-review] ${label}: ${serialised}`);
+    const payload = { issues: clonePlain(Array.isArray(issues) ? issues : []) };
+    let serialised = "";
+    try {
+        serialised = JSON.stringify(payload, null, 2);
+    } catch (error) {
+        try {
+            serialised = JSON.stringify(payload);
+        } catch (_innerError) {
+            serialised = "{\"issues\":[]}";
+        }
+    }
+    if (serialised) {
+        console.log(`[ai-review] ${label}: ${serialised}`);
+    }
 }
 
 function normaliseIssueSourceValue(value) {
@@ -713,7 +714,6 @@ export function buildAiReviewDetails(dmlReport) {
 }
 
 function normaliseAiReviewPayload(payload = {}) {
-    logAiReviewStage("payload.received", payload);
 
     const analysis =
         payload && typeof payload.analysis === "object" && !Array.isArray(payload.analysis)
@@ -804,7 +804,6 @@ function normaliseAiReviewPayload(payload = {}) {
         issues = Array.isArray(aggregatedObject?.issues) ? aggregatedObject.issues : null;
     }
     issues = normaliseIssues(issues);
-    logAiReviewStage("issues.initial", issues);
 
     const fallbackMarkdown = pickFirstString(
         [
@@ -826,22 +825,17 @@ function normaliseAiReviewPayload(payload = {}) {
 
     const derivedIssues = deriveIssuesFromMarkdownSegments(segments, fallbackMarkdown);
     const normalisedDerivedIssues = normaliseIssues(derivedIssues);
-    logAiReviewStage("issues.derived", normalisedDerivedIssues);
 
     const hasAuthoritativeIssuesBeforeDerived = hasAuthoritativeAiIssues(issues);
-    logAiReviewStage("issues.authoritative.beforeDerived", hasAuthoritativeIssuesBeforeDerived);
 
     if (!issues.length && normalisedDerivedIssues.length) {
         issues = normalisedDerivedIssues;
     } else if (normalisedDerivedIssues.length && !hasAuthoritativeIssuesBeforeDerived) {
         issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
     } else if (normalisedDerivedIssues.length) {
-        logAiReviewStage("issues.skipDerivedMerge", true);
     }
-    logAiReviewStage("issues.afterDerivedMerge", issues);
 
     const parsedIssues = parsedJsonReport ? normaliseIssues(parsedJsonReport.issues) : [];
-    logAiReviewStage("issues.parsedJson", parsedIssues);
 
     const parsedChunkIssues = [];
     if (parsedJsonReport && Array.isArray(parsedJsonReport.chunks)) {
@@ -864,28 +858,21 @@ function normaliseAiReviewPayload(payload = {}) {
             }
         });
     }
-    logAiReviewStage("issues.parsedChunks", parsedChunkIssues);
 
     const parsedJsonIssues = dedupeIssues([...parsedIssues, ...normaliseIssues(parsedChunkIssues)]);
     if (parsedJsonIssues.length) {
         issues = dedupeIssues([...parsedJsonIssues, ...issues]);
     }
-    logAiReviewStage("issues.afterParsedMerge", issues);
 
     if (aggregatedObject && Array.isArray(aggregatedObject.issues)) {
         const aggregatedIssuesRaw = clonePlain(aggregatedObject.issues);
         const aggregatedIssues = normaliseIssues(aggregatedObject.issues);
-        logAiReviewStage("issues.aggregated.raw", aggregatedIssuesRaw);
-        logAiReviewStage("issues.aggregated.normalised", aggregatedIssues);
         if (aggregatedIssues.length) {
             issues = dedupeIssues([...aggregatedIssues, ...issues]);
         }
         aggregatedObject.issues = aggregatedIssuesRaw;
     }
-    logAiReviewStage("issues.final", issues);
     issues = filterDmlIssueList(issues);
-    logAiReviewStage("issues.filtered", issues);
-    logAiReviewStage("aggregated.object.output", aggregatedObject);
 
     const generatedAtCandidates = [
         payload.dmlGeneratedAt,
@@ -993,6 +980,8 @@ function normaliseAiReviewPayload(payload = {}) {
         logAiReviewStage("analysis.patch", analysisPatch);
     }
 
+    logAiIssuesJson("issues.json", issues);
+
     const result = {
         report,
         summary,
@@ -1005,7 +994,6 @@ function normaliseAiReviewPayload(payload = {}) {
         conversationId,
         analysisPatch: hasPatchEntries ? analysisPatch : null
     };
-    logAiReviewStage("payload.normalised", result);
     return result;
 }
 

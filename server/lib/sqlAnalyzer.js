@@ -12,22 +12,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const SCRIPT_PATH = resolve(__dirname, "sql_rule_engine.py");
 
-function safeSerialiseForLog(value) {
-    if (typeof value === "string") {
-        return value;
-    }
-    try {
-        return JSON.stringify(value, null, 2);
-    } catch (error) {
-        return `[unserialisable: ${error?.message || error}]`;
-    }
-}
-
-function logSqlPayloadStage(label, value) {
+function logIssuesJson(label, jsonString) {
     if (typeof console === "undefined" || typeof console.log !== "function") {
         return;
     }
-    console.log(`[sql-report] ${label}: ${safeSerialiseForLog(value)}`);
+    if (!jsonString || typeof jsonString !== "string" || !jsonString.trim()) {
+        return;
+    }
+    console.log(`[sql-report] ${label}: ${jsonString}`);
 }
 
 function cloneValue(value) {
@@ -1006,23 +998,17 @@ export async function analyseSqlToReport(sqlText, options = {}) {
 }
 
 export function buildSqlReportPayload({ analysis, content, dify, difyError, dml, dmlError }) {
-    logSqlPayloadStage("buildSqlReportPayload.input.analysis", analysis);
-    logSqlPayloadStage("buildSqlReportPayload.input.dify", dify);
-    logSqlPayloadStage("buildSqlReportPayload.input.dml", dml);
 
     const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
-    logSqlPayloadStage("analysis.rawReport", rawReport);
 
     const difyReport = typeof dify?.report === "string" && dify.report.trim().length
         ? dify.report
         : rawReport;
-    logSqlPayloadStage("dify.report", difyReport);
 
     const difyChunks = normaliseChunksForPersistence(
         Array.isArray(dify?.chunks) ? dify.chunks : [],
         { fallbackRaw: rawReport, defaultSource: "dify_workflow" }
     );
-    logSqlPayloadStage("dify.chunks", difyChunks);
     const segments = dify?.segments && Array.isArray(dify.segments) && dify.segments.length
         ? dify.segments
         : [rawReport || content || ""];
@@ -1050,7 +1036,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         : [];
     logSqlPayloadStage("dml.segments", dmlSegments);
     const dmlPrompt = dml?.dify || null;
-    logSqlPayloadStage("dml.prompt", dmlPrompt);
     const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
     const dmlReportTextHuman = typeof dmlPrompt?.textReport === "string" ? dmlPrompt.textReport : "";
     const dmlChunks = normaliseChunksForPersistence(
@@ -1060,14 +1045,10 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             defaultSource: "dml_prompt"
         }
     );
-    logSqlPayloadStage("dml.chunks", dmlChunks);
     const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError);
-    logSqlPayloadStage("dml.summary", dmlSummary);
     const dmlAggregated = dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
     const dmlIssues = Array.isArray(dmlAggregated?.issues) ? dmlAggregated.issues : [];
     const dmlIssuesWithSource = dmlIssues.map((issue) => annotateIssueSource(issue, "dml_prompt"));
-    logSqlPayloadStage("dml.aggregated", dmlAggregated);
-    logSqlPayloadStage("dml.issues", dmlIssues);
     const dmlConversationId = typeof dmlPrompt?.conversationId === "string" ? dmlPrompt.conversationId : "";
     const dmlGeneratedAt = dmlPrompt?.generatedAt || null;
     const dmlErrorMessage = dmlSummary.error_message || (dmlPrompt?.error ? String(dmlPrompt.error) : "");
@@ -1107,12 +1088,9 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     logSqlPayloadStage("issues.combined", combinedIssues);
 
     const compositeSummary = buildCompositeSummary(staticSummary, dmlSummary, difySummary, combinedIssues);
-    logSqlPayloadStage("summary.composite", compositeSummary);
 
     const staticIssuesForPersistence = cloneIssueListForPersistence(staticIssues);
     const aiIssuesForPersistence = filterAiIssuesForPersistence(dmlIssues);
-    logSqlPayloadStage("static.issues.persistence", staticIssuesForPersistence);
-    logSqlPayloadStage("dml.issues.filtered", aiIssuesForPersistence);
 
     const reportsStaticIssues = cloneIssueListForPersistence(staticIssuesForPersistence);
     const reportsAiIssues = cloneIssueListForPersistence(aiIssuesForPersistence);
@@ -1130,7 +1108,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             issues: cloneIssueListForPersistence(reportsAiIssues)
         }
     };
-    logSqlPayloadStage("reports.aggregated", aggregatedReports);
 
     dmlReportPayload.issues = cloneIssueListForPersistence(aiIssuesForPersistence);
 
@@ -1141,6 +1118,9 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const combinedIssuesJson = serialiseIssuesJson(aggregatedReports.combined?.issues);
     const staticIssuesJson = serialiseIssuesJson(reportsStaticIssues);
     const aiIssuesJson = serialiseIssuesJson(reportsAiIssues);
+
+    logIssuesJson("static.issues.json", staticIssuesJson);
+    logIssuesJson("ai.issues.json", aiIssuesJson);
 
     const issuesChunks = [];
     const chunkSources = [
@@ -1316,7 +1296,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         difyErrorMessage: difyErrorMessage || undefined,
         dmlErrorMessage: dmlErrorMessage || undefined
     };
-    logSqlPayloadStage("buildSqlReportPayload.output", result);
     return result;
 }
 
