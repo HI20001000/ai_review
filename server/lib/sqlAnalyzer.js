@@ -8,6 +8,10 @@ import {
     requestDifyReport
 } from "./difyClient.js";
 
+if (typeof globalThis !== "undefined" && typeof globalThis.logSqlPayloadStage !== "function") {
+    globalThis.logSqlPayloadStage = () => {};
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const SCRIPT_PATH = resolve(__dirname, "sql_rule_engine.py");

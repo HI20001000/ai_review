@@ -6,6 +6,10 @@ import {
     remapIssuesToSource
 } from "./shared.js";
 
+if (typeof globalThis !== "undefined" && typeof globalThis.logSqlPayloadStage !== "function") {
+    globalThis.logSqlPayloadStage = () => {};
+}
+
 const SHOULD_LOG_ISSUES = Boolean(
     typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV
 );

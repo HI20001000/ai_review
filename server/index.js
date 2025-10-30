@@ -101,7 +101,7 @@ function sanitiseCombinedReportJson(value) {
             : [];
         return JSON.stringify({ summary, issues });
     } catch (_error) {
-        return trimmed;
+        return "";
     }
 }
 
@@ -122,7 +122,7 @@ function sanitiseIssuesJson(value) {
             : [];
         return JSON.stringify({ issues });
     } catch (_error) {
-        return trimmed;
+        return "";
     }
 }
 
