@@ -184,6 +184,33 @@ function filterDmlIssueList(issues) {
     return result;
 }
 
+function isAuthoritativeAiIssue(issue) {
+    if (!isPlainObject(issue)) {
+        return false;
+    }
+
+    if (typeof issue.rule_id === "string" && issue.rule_id.trim()) {
+        return true;
+    }
+
+    if (Array.isArray(issue.rule_ids)) {
+        for (const ruleId of issue.rule_ids) {
+            if (typeof ruleId === "string" && ruleId.trim()) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+function hasAuthoritativeAiIssues(issues) {
+    if (!Array.isArray(issues)) {
+        return false;
+    }
+    return issues.some((issue) => isAuthoritativeAiIssue(issue));
+}
+
 function pickFirstString(candidates, options = {}) {
     const list = Array.isArray(candidates) ? candidates : [candidates];
     const allowEmpty = Boolean(options.allowEmpty);
@@ -770,12 +797,15 @@ function normaliseAiReviewPayload(payload = {}) {
     const normalisedDerivedIssues = normaliseIssues(derivedIssues);
     logAiReviewStage("issues.derived", normalisedDerivedIssues);
 
+    const hasAuthoritativeIssuesBeforeDerived = hasAuthoritativeAiIssues(issues);
+    logAiReviewStage("issues.authoritative.beforeDerived", hasAuthoritativeIssuesBeforeDerived);
+
     if (!issues.length && normalisedDerivedIssues.length) {
         issues = normalisedDerivedIssues;
-    }
-
-    if (normalisedDerivedIssues.length) {
+    } else if (normalisedDerivedIssues.length && !hasAuthoritativeIssuesBeforeDerived) {
         issues = dedupeIssues([...issues, ...normalisedDerivedIssues]);
+    } else if (normalisedDerivedIssues.length) {
+        logAiReviewStage("issues.skipDerivedMerge", true);
     }
     logAiReviewStage("issues.afterDerivedMerge", issues);
 
