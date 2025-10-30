@@ -943,6 +943,8 @@ const combinedReportJsonInfo = computed(() => {
 
         return buildJsonInfo(merged);
     }
+    return filterDmlIssues(Array.isArray(selected) ? selected : []);
+}
 
     return buildJsonInfo(combinedPayload);
 });
