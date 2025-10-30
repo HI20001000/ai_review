@@ -582,7 +582,15 @@ export function buildSummaryDetailList(source, options = {}) {
 
 export function buildCombinedReportPayload(state) {
     if (!state) {
-        return { summary: [], issues: [] };
+        return {
+            summary: [],
+            issues: [],
+            aggregated_reports: {
+                combined: { source: "combined", issues: [] },
+                static: { source: "static_analyzer", issues: [] },
+                ai: { source: "dml_prompt", issues: [] }
+            }
+        };
     }
 
     const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
@@ -590,9 +598,31 @@ export function buildCombinedReportPayload(state) {
     const aggregatedIssues = collectAggregatedIssues(state);
     const summaryRecords = buildAggregatedSummaryRecords(state, staticIssues, aiIssues, aggregatedIssues);
 
+    const cloneIssues = (issues) =>
+        (Array.isArray(issues) ? issues : []).map((issue) =>
+            issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+        );
+
+    const combinedIssueList = cloneIssues(aggregatedIssues);
+    const staticIssueList = cloneIssues(staticIssues);
+    const aiIssueList = cloneIssues(aiIssues);
+
+    const cloneSummaryRecords = Array.isArray(summaryRecords)
+        ? summaryRecords.map((record) =>
+              record && typeof record === "object" && !Array.isArray(record) ? { ...record } : record
+          )
+        : [];
+
+    const aggregatedReports = {
+        combined: { source: "combined", issues: combinedIssueList },
+        static: { source: "static_analyzer", issues: staticIssueList },
+        ai: { source: "dml_prompt", issues: aiIssueList }
+    };
+
     return {
-        summary: summaryRecords,
-        issues: aggregatedIssues
+        summary: cloneSummaryRecords,
+        issues: combinedIssueList,
+        aggregated_reports: aggregatedReports
     };
 }
 
