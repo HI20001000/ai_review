@@ -31,6 +31,11 @@ import {
 } from "../scripts/reports/aiReviewReport.js";
 import { exportJsonReport, normaliseJsonContent } from "../scripts/reports/exportJson.js";
 import {
+    exportCombinedReportToExcel,
+    exportStaticReportToExcel,
+    exportAiReviewReportToExcel
+} from "../scripts/reports/exportExcel.js";
+import {
     isPlainObject,
     normaliseReportObject,
     normaliseAiReviewPayload,
@@ -3226,6 +3231,38 @@ onBeforeUnmount(() => {
                                             >
                                                 <span v-if="structuredReportExportConfig.busy">匯出中…</span>
                                                 <span v-else>{{ structuredReportExportLabel }}</span>
+                                            </button>
+                                        </div>
+                                        <div class="reportExportRow" role="group" aria-label="匯出報告">
+                                            <button
+                                                type="button"
+                                                class="reportExportButton"
+                                                :disabled="!canExportCombinedReport || reportExportState.combined"
+                                                :aria-busy="reportExportState.combined ? 'true' : 'false'"
+                                                @click="exportCombinedReportExcel"
+                                            >
+                                                <span v-if="reportExportState.combined">匯出中…</span>
+                                                <span v-else>匯出聚合報告</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="reportExportButton"
+                                                :disabled="!canExportStaticReport || reportExportState.static"
+                                                :aria-busy="reportExportState.static ? 'true' : 'false'"
+                                                @click="exportStaticReportExcel"
+                                            >
+                                                <span v-if="reportExportState.static">匯出中…</span>
+                                                <span v-else>匯出靜態分析報告</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="reportExportButton"
+                                                :disabled="!canExportAiReport || reportExportState.ai"
+                                                :aria-busy="reportExportState.ai ? 'true' : 'false'"
+                                                @click="exportAiReportExcel"
+                                            >
+                                                <span v-if="reportExportState.ai">匯出中…</span>
+                                                <span v-else>匯出 AI 審查報告</span>
                                             </button>
                                         </div>
                                         <section
