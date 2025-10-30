@@ -25,19 +25,28 @@ function createLogger(logger) {
     return { info, error };
 }
 
-async function ensureColumn({ info, error }, table, columnDefinition) {
-    const statement = `ALTER TABLE ${table} ADD COLUMN ${columnDefinition}`;
+async function hasColumn(table, column) {
+    try {
+        const [rows] = await pool.query("SHOW COLUMNS FROM ?? LIKE ?", [table, column]);
+        return Array.isArray(rows) && rows.length > 0;
+    } catch (err) {
+        throw err;
+    }
+}
+
+async function ensureColumn({ info, error }, table, columnName, columnDefinition) {
+    if (await hasColumn(table, columnName)) {
+        info(`[schema] Column ${table}.${columnName} already exists, skipping.`);
+        return;
+    }
+
+    const statement = `ALTER TABLE ${table} ADD COLUMN ${columnName} ${columnDefinition}`;
     const preview = formatStatement(statement);
     info(`[schema] Executing: ${preview}`);
     try {
         await pool.query(statement);
         info(`[schema] Success: ${preview}`);
     } catch (err) {
-        if (err?.code === "ER_DUP_FIELDNAME") {
-            const [columnName] = columnDefinition.split(/\s+/);
-            info(`[schema] Column ${table}.${columnName} already exists, skipping.`);
-            return;
-        }
         error(`[schema] Failed: ${preview}`, err);
         throw err;
     }
@@ -77,12 +86,12 @@ export async function ensureSchema({ logger } = {}) {
     }
 
     const reportColumnDefinitions = [
-        "combined_report_json LONGTEXT NULL",
-        "static_report_json LONGTEXT NULL",
-        "ai_report_json LONGTEXT NULL"
+        { name: "combined_report_json", definition: "LONGTEXT NULL" },
+        { name: "static_report_json", definition: "LONGTEXT NULL" },
+        { name: "ai_report_json", definition: "LONGTEXT NULL" }
     ];
 
-    for (const definition of reportColumnDefinitions) {
-        await ensureColumn({ info, error }, "reports", definition);
+    for (const { name, definition } of reportColumnDefinitions) {
+        await ensureColumn({ info, error }, "reports", name, definition);
     }
 }
