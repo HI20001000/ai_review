@@ -26,12 +26,9 @@ function createLogger(logger) {
 }
 
 async function hasColumn(table, column) {
-    try {
-        const [rows] = await pool.query("SHOW COLUMNS FROM ?? LIKE ?", [table, column]);
-        return Array.isArray(rows) && rows.length > 0;
-    } catch (err) {
-        throw err;
-    }
+    const statement = pool.format("SHOW COLUMNS FROM ?? LIKE ?", [table, column]);
+    const [rows] = await pool.query(statement);
+    return Array.isArray(rows) && rows.length > 0;
 }
 
 async function ensureColumn({ info, error }, table, columnName, columnDefinition) {
@@ -40,7 +37,10 @@ async function ensureColumn({ info, error }, table, columnName, columnDefinition
         return;
     }
 
-    const statement = `ALTER TABLE ${table} ADD COLUMN ${columnName} ${columnDefinition}`;
+    const statement = pool.format(
+        `ALTER TABLE ?? ADD COLUMN ?? ${columnDefinition}`,
+        [table, columnName]
+    );
     const preview = formatStatement(statement);
     info(`[schema] Executing: ${preview}`);
     try {
