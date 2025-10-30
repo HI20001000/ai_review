@@ -25,6 +25,33 @@ function createLogger(logger) {
     return { info, error };
 }
 
+async function hasColumn(table, column) {
+    const statement = pool.format("SHOW COLUMNS FROM ?? LIKE ?", [table, column]);
+    const [rows] = await pool.query(statement);
+    return Array.isArray(rows) && rows.length > 0;
+}
+
+async function ensureColumn({ info, error }, table, columnName, columnDefinition) {
+    if (await hasColumn(table, columnName)) {
+        info(`[schema] Column ${table}.${columnName} already exists, skipping.`);
+        return;
+    }
+
+    const statement = pool.format(
+        `ALTER TABLE ?? ADD COLUMN ?? ${columnDefinition}`,
+        [table, columnName]
+    );
+    const preview = formatStatement(statement);
+    info(`[schema] Executing: ${preview}`);
+    try {
+        await pool.query(statement);
+        info(`[schema] Success: ${preview}`);
+    } catch (err) {
+        error(`[schema] Failed: ${preview}`, err);
+        throw err;
+    }
+}
+
 function formatStatement(statement) {
     const singleLine = statement.replace(/\s+/g, " ").trim();
     if (singleLine.length <= 120) {
@@ -56,5 +83,15 @@ export async function ensureSchema({ logger } = {}) {
             error(`[schema] Failed: ${preview}`, err);
             throw err;
         }
+    }
+
+    const reportColumnDefinitions = [
+        { name: "combined_report_json", definition: "LONGTEXT NULL" },
+        { name: "static_report_json", definition: "LONGTEXT NULL" },
+        { name: "ai_report_json", definition: "LONGTEXT NULL" }
+    ];
+
+    for (const { name, definition } of reportColumnDefinitions) {
+        await ensureColumn({ info, error }, "reports", name, definition);
     }
 }
