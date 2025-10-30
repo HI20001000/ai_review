@@ -12,6 +12,422 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const SCRIPT_PATH = resolve(__dirname, "sql_rule_engine.py");
 
+function logIssuesJson(label, jsonString) {
+    if (typeof console === "undefined" || typeof console.log !== "function") {
+        return;
+    }
+    if (!jsonString || typeof jsonString !== "string" || !jsonString.trim()) {
+        return;
+    }
+    console.log(`[sql-report] ${label}: ${jsonString}`);
+}
+
+function pickFirstString(...candidates) {
+    for (const value of candidates) {
+        if (typeof value === "string") {
+            const trimmed = value.trim();
+            if (trimmed) {
+                return trimmed;
+            }
+        }
+    }
+    return "";
+}
+
+function normaliseTimestampValue(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+    }
+    if (typeof value === "number") {
+        if (!Number.isFinite(value)) {
+            return "";
+        }
+        const fromNumber = new Date(value);
+        return Number.isNaN(fromNumber.getTime()) ? "" : fromNumber.toISOString();
+    }
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return "";
+        }
+        const numeric = Number(trimmed);
+        if (!Number.isNaN(numeric)) {
+            const fromNumeric = new Date(numeric);
+            if (!Number.isNaN(fromNumeric.getTime())) {
+                return fromNumeric.toISOString();
+            }
+        }
+        const parsed = new Date(trimmed);
+        if (!Number.isNaN(parsed.getTime())) {
+            return parsed.toISOString();
+        }
+        return trimmed;
+    }
+    return "";
+}
+
+function buildSummaryRecordForPersistence({
+    source,
+    label,
+    summary,
+    issues,
+    fallbackStatus,
+    fallbackGeneratedAt
+}) {
+    const issueCount = Array.isArray(issues) ? issues.length : 0;
+    const record = {
+        source,
+        label,
+        total_issues: issueCount
+    };
+
+    const status = pickFirstString(
+        summary?.status,
+        summary?.status_label,
+        summary?.statusLabel,
+        fallbackStatus
+    );
+    if (status) {
+        record.status = status;
+    }
+
+    const generatedAtCandidate =
+        summary?.generated_at ?? summary?.generatedAt ?? fallbackGeneratedAt;
+    const generatedAt = normaliseTimestampValue(generatedAtCandidate);
+    if (generatedAt) {
+        record.generated_at = generatedAt;
+    }
+
+    const errorMessage = pickFirstString(summary?.error_message, summary?.errorMessage);
+    if (errorMessage) {
+        record.error_message = errorMessage;
+    }
+
+    const message = pickFirstString(summary?.message, summary?.note);
+    if (message) {
+        record.message = message;
+    }
+
+    return record;
+}
+
+function cloneSummaryRecordsForPersistence(records) {
+    if (!Array.isArray(records)) {
+        return [];
+    }
+    const result = [];
+    for (const record of records) {
+        if (!record || typeof record !== "object" || Array.isArray(record)) {
+            continue;
+        }
+        const clone = {};
+        for (const [key, value] of Object.entries(record)) {
+            if (value === undefined || value === null) {
+                continue;
+            }
+            if (typeof value === "object") {
+                continue;
+            }
+            clone[key] = value;
+        }
+        if (Object.keys(clone).length) {
+            result.push(clone);
+        }
+    }
+    return result;
+}
+
+function serialiseCombinedReportJson(summaryRecords, issues) {
+    const safeSummary = cloneSummaryRecordsForPersistence(summaryRecords);
+    const safeIssues = cloneIssueListForPersistence(issues);
+    const payload = { summary: safeSummary, issues: safeIssues };
+    try {
+        return JSON.stringify(payload, null, 2);
+    } catch (error) {
+        try {
+            return JSON.stringify(payload);
+        } catch (_nestedError) {
+            return "{\"summary\":[],\"issues\":[]}";
+        }
+    }
+}
+
+function cloneValue(value) {
+    if (Array.isArray(value)) {
+        return value.map((entry) => cloneValue(entry));
+    }
+    if (value && typeof value === "object") {
+        const result = {};
+        for (const [key, entry] of Object.entries(value)) {
+            result[key] = cloneValue(entry);
+        }
+        return result;
+    }
+    return value;
+}
+
+function cloneIssueListForPersistence(issues) {
+    if (!Array.isArray(issues)) {
+        return [];
+    }
+    const result = [];
+    for (const issue of issues) {
+        if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
+            continue;
+        }
+        result.push(cloneValue(issue));
+    }
+    return result;
+}
+
+function serialiseIssuesJson(issues) {
+    const safeIssues = cloneIssueListForPersistence(issues);
+    try {
+        return JSON.stringify({ issues: safeIssues }, null, 2);
+    } catch (error) {
+        try {
+            return JSON.stringify({ issues: safeIssues });
+        } catch (_nestedError) {
+            return "{\"issues\":[]}";
+        }
+    }
+}
+
+function normaliseFallbackSource(issue) {
+    if (!issue || typeof issue !== "object") {
+        return "";
+    }
+    const value = issue.fallbackSource || issue.fallback_source || issue.fallback;
+    return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function hasAuthoritativeAiMarker(issue) {
+    if (!issue || typeof issue !== "object") {
+        return false;
+    }
+    const directRule = typeof issue.rule_id === "string" ? issue.rule_id.trim() : "";
+    if (directRule) {
+        return true;
+    }
+    if (Array.isArray(issue.rule_ids) && issue.rule_ids.some((entry) => typeof entry === "string" && entry.trim())) {
+        return true;
+    }
+    if (Array.isArray(issue.severity_levels) && issue.severity_levels.some((entry) => typeof entry === "string" && entry.trim())) {
+        return true;
+    }
+    const severity = typeof issue.severity === "string" ? issue.severity.trim() : "";
+    if (severity) {
+        return true;
+    }
+    if (Array.isArray(issue.details)) {
+        for (const detail of issue.details) {
+            if (hasAuthoritativeAiMarker(detail)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function filterAiIssuesForPersistence(issues) {
+    const list = Array.isArray(issues) ? issues : [];
+    const authoritative = [];
+    const fallback = [];
+
+    for (const issue of list) {
+        if (!issue || typeof issue !== "object") {
+            continue;
+        }
+        const fallbackSource = normaliseFallbackSource(issue);
+        if (fallbackSource === "markdown") {
+            fallback.push(issue);
+            continue;
+        }
+        if (hasAuthoritativeAiMarker(issue)) {
+            authoritative.push(issue);
+        } else {
+            fallback.push(issue);
+        }
+    }
+
+    if (authoritative.length) {
+        return cloneIssueListForPersistence(authoritative);
+    }
+
+    const filteredFallback = fallback.length
+        ? list.filter((issue) => normaliseFallbackSource(issue) !== "markdown")
+        : list;
+
+    return cloneIssueListForPersistence(filteredFallback);
+}
+
+function normaliseIdentitySegment(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    if (Array.isArray(value)) {
+        return value
+            .map((entry) => normaliseIdentitySegment(entry))
+            .filter((segment) => Boolean(segment))
+            .join("|");
+    }
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+        return String(value);
+    }
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        return trimmed;
+    }
+    return "";
+}
+
+function normaliseReportSourceKey(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function createIssueIdentity(issue) {
+    if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
+        return "";
+    }
+    const ruleId = issue.rule_id ?? issue.ruleId ?? "";
+    const message = issue.message ?? "";
+    const fallbackMessage =
+        !message && Array.isArray(issue.issues) && issue.issues.length ? issue.issues : [];
+    const snippet = issue.snippet ?? issue.statement ?? issue.evidence ?? "";
+    const objectName = issue.object ?? "";
+    const lineValue = Array.isArray(issue.line)
+        ? issue.line
+        : issue.line ?? issue.lineNumber ?? issue.line_no ?? "";
+    const columnValue = Array.isArray(issue.column)
+        ? issue.column
+        : issue.column ?? issue.columnNumber ?? issue.column_no ?? "";
+    const sourceCandidate =
+        issue.source ?? issue.analysis_source ?? issue.analysisSource ?? issue.from ?? issue.origin ?? "";
+    const sourceKey = normaliseReportSourceKey(sourceCandidate);
+    const segments = [
+        ruleId,
+        message,
+        fallbackMessage,
+        snippet,
+        objectName,
+        lineValue,
+        columnValue,
+        sourceKey
+    ]
+        .map((segment) => normaliseIdentitySegment(segment))
+        .filter((segment) => Boolean(segment));
+
+    if (segments.length) {
+        return segments.join("::");
+    }
+
+    try {
+        return JSON.stringify(issue);
+    } catch (error) {
+        return "";
+    }
+}
+
+function dedupeIssueList(issues) {
+    if (!Array.isArray(issues)) {
+        return [];
+    }
+    const seen = new Set();
+    const result = [];
+    for (const issue of issues) {
+        if (!issue || typeof issue !== "object" || Array.isArray(issue)) {
+            continue;
+        }
+        const key = createIssueIdentity(issue);
+        if (key && seen.has(key)) {
+            continue;
+        }
+        if (key) {
+            seen.add(key);
+        }
+        result.push(cloneValue(issue));
+    }
+    return result;
+}
+
+function serialiseChunkText(value, fallback = "") {
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (trimmed) {
+            return value;
+        }
+        return fallback || value;
+    }
+    if (value === null || value === undefined) {
+        return fallback || "";
+    }
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch (error) {
+        return String(value);
+    }
+}
+
+function normaliseChunksForPersistence(chunks, { fallbackRaw = "", defaultSource = "" } = {}) {
+    const list = Array.isArray(chunks) ? chunks : [];
+    if (!list.length) {
+        return [];
+    }
+    const total = list.length;
+    return list.map((entry, offset) => {
+        const index = offset + 1;
+        if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+            const clone = { ...entry };
+            const answerCandidate =
+                typeof clone.answer === "string" && clone.answer.trim()
+                    ? clone.answer
+                    : typeof clone.rawAnalysis === "string" && clone.rawAnalysis.trim()
+                    ? clone.rawAnalysis
+                    : typeof clone.raw === "string" && clone.raw.trim()
+                    ? clone.raw
+                    : typeof clone.text === "string"
+                    ? clone.text
+                    : null;
+            const answer = serialiseChunkText(answerCandidate, fallbackRaw);
+            const numericIndex = Number(clone.index);
+            const numericTotal = Number(clone.total);
+            clone.index = Number.isFinite(numericIndex) && numericIndex > 0 ? numericIndex : index;
+            clone.total = Number.isFinite(numericTotal) && numericTotal > 0 ? numericTotal : total;
+            clone.answer = answer;
+            if (typeof clone.raw !== "string" || !clone.raw.trim()) {
+                clone.raw = answer;
+            }
+            if (typeof clone.rawAnalysis !== "string" || !clone.rawAnalysis.trim()) {
+                clone.rawAnalysis = clone.raw;
+            }
+            if (defaultSource && !clone.source) {
+                clone.source = defaultSource;
+            }
+            return clone;
+        }
+        const answer = serialiseChunkText(entry, fallbackRaw);
+        const base = {
+            index,
+            total,
+            answer,
+            raw: answer
+        };
+        if (defaultSource) {
+            base.source = defaultSource;
+        }
+        return base;
+    });
+}
+
 function replaceRangeWithSpaces(text, start, end) {
     if (!text || start >= end) return text;
     const replacement = text
@@ -689,27 +1105,17 @@ export async function analyseSqlToReport(sqlText, options = {}) {
 }
 
 export function buildSqlReportPayload({ analysis, content, dify, difyError, dml, dmlError }) {
+
     const rawReport = typeof analysis?.result === "string" ? analysis.result : "";
+
     const difyReport = typeof dify?.report === "string" && dify.report.trim().length
         ? dify.report
         : rawReport;
-    const difyChunks = Array.isArray(dify?.chunks) && dify.chunks.length
-        ? dify.chunks
-        : null;
-    const annotatedChunks = difyChunks
-        ? difyChunks.map((chunk, index) => ({
-              ...chunk,
-              rawAnalysis: index === 0 ? rawReport : chunk.rawAnalysis
-          }))
-        : [
-              {
-                  index: 1,
-                  total: 1,
-                  answer: rawReport,
-                  raw: rawReport,
-                  rawAnalysis: rawReport
-              }
-          ];
+
+    const difyChunks = normaliseChunksForPersistence(
+        Array.isArray(dify?.chunks) ? dify.chunks : [],
+        { fallbackRaw: rawReport, defaultSource: "dify_workflow" }
+    );
     const segments = dify?.segments && Array.isArray(dify.segments) && dify.segments.length
         ? dify.segments
         : [rawReport || content || ""];
@@ -733,13 +1139,19 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
           }))
         : [];
     const dmlPrompt = dml?.dify || null;
+    const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
+    const dmlReportTextHuman = typeof dmlPrompt?.textReport === "string" ? dmlPrompt.textReport : "";
+    const dmlChunks = normaliseChunksForPersistence(
+        Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks : [],
+        {
+            fallbackRaw: dmlReportTextHuman || dmlReportText || rawReport,
+            defaultSource: "dml_prompt"
+        }
+    );
     const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError);
-    const dmlChunks = Array.isArray(dmlPrompt?.chunks) ? dmlPrompt.chunks : [];
     const dmlAggregated = dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
     const dmlIssues = Array.isArray(dmlAggregated?.issues) ? dmlAggregated.issues : [];
     const dmlIssuesWithSource = dmlIssues.map((issue) => annotateIssueSource(issue, "dml_prompt"));
-    const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
-    const dmlReportTextHuman = typeof dmlPrompt?.textReport === "string" ? dmlPrompt.textReport : "";
     const dmlConversationId = typeof dmlPrompt?.conversationId === "string" ? dmlPrompt.conversationId : "";
     const dmlGeneratedAt = dmlPrompt?.generatedAt || null;
     const dmlErrorMessage = dmlSummary.error_message || (dmlPrompt?.error ? String(dmlPrompt.error) : "");
@@ -776,12 +1188,36 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         : null;
 
     const compositeSummary = buildCompositeSummary(staticSummary, dmlSummary, difySummary, combinedIssues);
+
+    const staticIssuesForPersistence = cloneIssueListForPersistence(staticIssues);
+    const aiIssuesForPersistence = filterAiIssuesForPersistence(dmlIssues);
+
+    const reportsStaticIssues = cloneIssueListForPersistence(staticIssuesForPersistence);
+    const reportsAiIssues = cloneIssueListForPersistence(aiIssuesForPersistence);
+
+    const staticIssuesJson = serialiseIssuesJson(reportsStaticIssues);
+    const aiIssuesJson = serialiseIssuesJson(reportsAiIssues);
+
+    logIssuesJson("static.issues.json.pre_aggregate", staticIssuesJson);
+    logIssuesJson("ai.issues.json.pre_aggregate", aiIssuesJson);
+
+    const combinedIssuesForReports = dedupeIssueList([
+        ...reportsStaticIssues,
+        ...reportsAiIssues
+    ]);
+
+    dmlReportPayload.issues = cloneIssueListForPersistence(aiIssuesForPersistence);
+
+    if (parsedDify && typeof parsedDify === "object") {
+        staticReportPayload.enrichment = parsedDify;
+    }
+
     const finalPayload = {
         summary: compositeSummary,
         issues: combinedIssues,
         reports: {
-            static_analyzer: staticReportPayload,
-            dml_prompt: dmlReportPayload
+            static_analyzer: { issues: cloneIssueListForPersistence(reportsStaticIssues) },
+            dml_prompt: { issues: cloneIssueListForPersistence(reportsAiIssues) }
         },
         metadata: {
             analysis_source: "composite",
@@ -794,7 +1230,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     };
 
     if (parsedDify && typeof parsedDify === "object") {
-        finalPayload.reports.static_analyzer.enrichment = parsedDify;
         finalPayload.reports.dify_workflow = {
             type: "dify_workflow",
             summary: difySummary,
@@ -804,16 +1239,75 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         };
     }
 
-    if (dmlAggregated) {
-        finalPayload.reports.dml_prompt.aggregated = dmlAggregated;
-        if (!finalPayload.reports.dml_prompt.issues) {
-            finalPayload.reports.dml_prompt.issues = dmlIssues;
+    let annotatedChunks;
+    if (dmlChunks.length) {
+        annotatedChunks = dmlChunks;
+    } else if (difyChunks.length) {
+        annotatedChunks = difyChunks;
+    } else {
+        const fallbackCandidates = [
+            { text: dmlReportTextHuman, source: "dml_prompt" },
+            { text: dmlReportText, source: "dml_prompt" },
+            { text: difyReport, source: "dify_workflow" },
+            { text: rawReport, source: "static_analyzer" },
+            { text: content || "", source: "content" }
+        ];
+
+        let fallbackText = "";
+        let fallbackSource = "dml_prompt";
+        for (const candidate of fallbackCandidates) {
+            if (typeof candidate.text === "string" && candidate.text.trim()) {
+                fallbackText = candidate.text;
+                fallbackSource = candidate.source;
+                break;
+            }
         }
+
+        annotatedChunks = fallbackText
+            ? normaliseChunksForPersistence([fallbackText], {
+                  fallbackRaw: fallbackText,
+                  defaultSource: fallbackSource
+              })
+            : [];
     }
 
     finalReport = JSON.stringify(finalPayload, null, 2);
 
     const generatedAt = dify?.generatedAt || new Date().toISOString();
+    const combinedSummaryRecords = [
+        buildSummaryRecordForPersistence({
+            source: "static_analyzer",
+            label: "靜態分析器",
+            summary: staticSummary,
+            issues: reportsStaticIssues
+        }),
+        buildSummaryRecordForPersistence({
+            source: "dml_prompt",
+            label: "AI審查",
+            summary: dmlSummary,
+            issues: reportsAiIssues,
+            fallbackGeneratedAt: dmlGeneratedAt
+        }),
+        buildSummaryRecordForPersistence({
+            source: "combined",
+            label: "聚合報告",
+            summary: compositeSummary,
+            issues: combinedIssuesForReports,
+            fallbackStatus: difySummary?.status,
+            fallbackGeneratedAt:
+                difySummary?.generated_at ||
+                difySummary?.generatedAt ||
+                dify?.generatedAt ||
+                generatedAt
+        })
+    ];
+
+    const combinedReportJson = serialiseCombinedReportJson(
+        combinedSummaryRecords,
+        combinedIssuesForReports
+    );
+    logIssuesJson("combined.report.json.post_aggregate", combinedReportJson);
+
     const difyErrorMessage = difyError ? difyError.message || String(difyError) : "";
     const enrichmentStatus = dify ? "succeeded" : "failed";
 
@@ -837,11 +1331,12 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         analysisPayload.dmlReport = dmlReportPayload;
         analysisPayload.dmlSegments = dmlSegments;
         analysisPayload.dmlSummary = dmlSummary;
-        analysisPayload.dmlIssues = dmlIssues;
+        analysisPayload.dmlIssues = cloneIssueListForPersistence(aiIssuesForPersistence);
         if (dmlAggregated) {
             analysisPayload.dmlAggregated = dmlAggregated;
         }
         analysisPayload.combinedSummary = compositeSummary;
+        analysisPayload.combinedSummaryRecords = combinedSummaryRecords;
         analysisPayload.combinedIssues = combinedIssues;
         if (parsedDify && typeof parsedDify === "object") {
             analysisPayload.difyReport = parsedDify;
@@ -872,7 +1367,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         sourceLabels.push("dify");
     }
 
-    return {
+    const result = {
         report: finalReport,
         conversationId: typeof dify?.conversationId === "string" ? dify.conversationId : "",
         chunks: annotatedChunks,
@@ -885,8 +1380,12 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         source: sourceLabels.join("+"),
         enrichmentStatus,
         difyErrorMessage: difyErrorMessage || undefined,
-        dmlErrorMessage: dmlErrorMessage || undefined
+        dmlErrorMessage: dmlErrorMessage || undefined,
+        combinedReportJson,
+        staticReportJson: staticIssuesJson,
+        aiReportJson: aiIssuesJson
     };
+    return result;
 }
 
 export function isSqlPath(filePath) {

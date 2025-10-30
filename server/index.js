@@ -79,6 +79,71 @@ function safeParseArray(jsonText, { fallback = [] } = {}) {
     }
 }
 
+function sanitiseCombinedReportJson(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const summary = Array.isArray(parsed?.summary)
+            ? parsed.summary.map((record) =>
+                  record && typeof record === "object" && !Array.isArray(record) ? { ...record } : record
+              )
+            : [];
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.map((issue) =>
+                  issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+              )
+            : [];
+        return JSON.stringify({ summary, issues });
+    } catch (_error) {
+        return trimmed;
+    }
+}
+
+function sanitiseIssuesJson(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.map((issue) =>
+                  issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+              )
+            : [];
+        return JSON.stringify({ issues });
+    } catch (_error) {
+        return trimmed;
+    }
+}
+
+function safeSerialiseForLog(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch (error) {
+        return `[unserialisable: ${error?.message || error}]`;
+    }
+}
+
+function logReportPersistenceStage(label, value) {
+    if (typeof console === "undefined" || typeof console.log !== "function") {
+        return;
+    }
+    console.log(`[reports] ${label}: ${safeSerialiseForLog(value)}`);
+}
+
 function toIsoString(value) {
     if (value === null || value === undefined) return null;
     if (value instanceof Date) {
@@ -120,6 +185,9 @@ function mapReportRow(row) {
     const chunks = safeParseArray(row.chunks_json);
     const segments = safeParseArray(row.segments_json);
     const analysis = extractAnalysisFromChunks(chunks);
+    const combinedReportJson = sanitiseCombinedReportJson(row.combined_report_json || "");
+    const staticReportJson = sanitiseIssuesJson(row.static_report_json || "");
+    const aiReportJson = sanitiseIssuesJson(row.ai_report_json || "");
     return {
         projectId: row.project_id,
         path: row.path,
@@ -131,7 +199,10 @@ function mapReportRow(row) {
         userId: row.user_id || "",
         generatedAt: toIsoString(row.generated_at),
         createdAt: toIsoString(row.created_at),
-        updatedAt: toIsoString(row.updated_at)
+        updatedAt: toIsoString(row.updated_at),
+        combinedReportJson,
+        staticReportJson,
+        aiReportJson
     };
 }
 
@@ -213,7 +284,10 @@ async function upsertReport({
     segments,
     conversationId,
     userId,
-    generatedAt
+    generatedAt,
+    combinedReportJson,
+    staticReportJson,
+    aiReportJson
 }) {
     if (!projectId || !path) {
         throw new Error("Report upsert requires projectId and path");
@@ -235,6 +309,43 @@ async function upsertReport({
     const safeReport = typeof report === "string" ? report : "";
     const safeConversationId = typeof conversationId === "string" ? conversationId : "";
     const safeUserId = typeof userId === "string" ? userId : "";
+    const safeCombinedJson = sanitiseCombinedReportJson(
+        typeof combinedReportJson === "string" ? combinedReportJson : ""
+    );
+    const safeStaticJson = sanitiseIssuesJson(
+        typeof staticReportJson === "string" ? staticReportJson : ""
+    );
+    const safeAiJson = sanitiseIssuesJson(typeof aiReportJson === "string" ? aiReportJson : "");
+
+    logReportPersistenceStage("upsertReport.input", {
+        projectId,
+        path,
+        report,
+        chunks,
+        segments,
+        conversationId,
+        userId,
+        generatedAt,
+        combinedReportJson,
+        staticReportJson,
+        aiReportJson
+    });
+
+    logReportPersistenceStage("upsertReport.serialised", {
+        projectId: safeProjectId,
+        path: safePath,
+        report: safeReport,
+        chunks: serialisedChunks,
+        segments: serialisedSegments,
+        conversationId: safeConversationId,
+        userId: safeUserId,
+        generatedAt: storedGeneratedAt,
+        createdAt: now,
+        updatedAt: now,
+        combinedReportJson: safeCombinedJson,
+        staticReportJson: safeStaticJson,
+        aiReportJson: safeAiJson
+    });
 
     await pool.query(
         `INSERT INTO reports (
@@ -247,8 +358,11 @@ async function upsertReport({
             user_id,
             generated_at,
             created_at,
-            updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            updated_at,
+            combined_report_json,
+            static_report_json,
+            ai_report_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             report = VALUES(report),
             chunks_json = VALUES(chunks_json),
@@ -256,7 +370,10 @@ async function upsertReport({
             conversation_id = VALUES(conversation_id),
             user_id = VALUES(user_id),
             generated_at = VALUES(generated_at),
-            updated_at = VALUES(updated_at)`,
+            updated_at = VALUES(updated_at),
+            combined_report_json = VALUES(combined_report_json),
+            static_report_json = VALUES(static_report_json),
+            ai_report_json = VALUES(ai_report_json)`,
         [
             safeProjectId,
             safePath,
@@ -267,7 +384,10 @@ async function upsertReport({
             safeUserId,
             storedGeneratedAt,
             now,
-            now
+            now,
+            safeCombinedJson,
+            safeStaticJson,
+            safeAiJson
         ]
     );
 }
@@ -396,7 +516,8 @@ app.get("/api/projects/:projectId/reports", async (req, res, next) => {
     try {
         const { projectId } = req.params;
         const [rows] = await pool.query(
-            `SELECT project_id, path, report, chunks_json, segments_json, conversation_id, user_id, generated_at, created_at, updated_at
+            `SELECT project_id, path, report, chunks_json, segments_json, conversation_id, user_id, generated_at, created_at, updated_at,
+                    combined_report_json, static_report_json, ai_report_json
              FROM reports
              WHERE project_id = ?
              ORDER BY path ASC`,
@@ -457,7 +578,10 @@ app.post("/api/reports/dify", async (req, res, next) => {
                 segments: reportPayload.segments,
                 conversationId: reportPayload.conversationId,
                 userId: resolvedUserId,
-                generatedAt: reportPayload.generatedAt
+                generatedAt: reportPayload.generatedAt,
+                combinedReportJson: reportPayload.combinedReportJson,
+                staticReportJson: reportPayload.staticReportJson,
+                aiReportJson: reportPayload.aiReportJson
             });
             const savedAtIso = new Date().toISOString();
             res.json({
