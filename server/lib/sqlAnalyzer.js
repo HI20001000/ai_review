@@ -1441,14 +1441,12 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             : [];
     }
 
-    const chunksForReport = (() => {
-        if (dmlChunks.length) {
-            return dmlChunks;
-        }
-        if (difyChunks.length) {
-            return difyChunks;
-        }
-
+    let annotatedChunks = [];
+    if (dmlChunks.length) {
+        annotatedChunks = dmlChunks;
+    } else if (difyChunks.length) {
+        annotatedChunks = difyChunks;
+    } else {
         const fallbackCandidates = [
             { text: dmlReportTextHuman, source: "dml_prompt" },
             { text: dmlReportText, source: "dml_prompt" },
@@ -1467,13 +1465,13 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             }
         }
 
-        return fallbackText
+        annotatedChunks = fallbackText
             ? normaliseChunksForPersistence([fallbackText], {
                   fallbackRaw: fallbackText,
                   defaultSource: fallbackSource
               })
             : [];
-    })();
+    }
 
     finalReport = JSON.stringify(finalPayload, null, 2);
     logSqlPayloadStage("report.serialised", finalReport);
