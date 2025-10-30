@@ -608,12 +608,7 @@ export function buildCombinedReportPayload(state) {
     if (!state) {
         return {
             summary: [],
-            issues: [],
-            aggregated_reports: {
-                combined: { source: "combined", issues: [] },
-                static: { source: "static_analyzer", issues: [] },
-                ai: { source: "dml_prompt", issues: [] }
-            }
+            issues: []
         };
     }
 
@@ -631,8 +626,6 @@ export function buildCombinedReportPayload(state) {
         );
 
     const combinedIssueList = cloneIssues(aggregatedIssues);
-    const staticIssueList = cloneIssues(staticIssues);
-    const aiIssueList = cloneIssues(aiIssues);
 
     const cloneSummaryRecords = Array.isArray(summaryRecords)
         ? summaryRecords.map((record) =>
@@ -640,64 +633,28 @@ export function buildCombinedReportPayload(state) {
           )
         : [];
 
-    const aggregatedReports = {
-        combined: { source: "combined", issues: combinedIssueList },
-        static: { source: "static_analyzer", issues: staticIssueList },
-        ai: { source: "dml_prompt", issues: aiIssueList }
-    };
-
     logClientIssuesJson("combined.issues.json", combinedIssueList);
 
     return {
         summary: cloneSummaryRecords,
-        issues: combinedIssueList,
-        aggregated_reports: aggregatedReports
-    };
-}
-
-function cloneIssuesForExport(entry, fallbackSource) {
-    const fallback = typeof fallbackSource === "string" ? fallbackSource.trim() : "";
-    const sourceKey =
-        (entry && typeof entry.source === "string" && entry.source.trim()) || fallback || null;
-
-    const issues = Array.isArray(entry?.issues) ? entry.issues : [];
-
-    return {
-        source: sourceKey,
-        issues: issues.map((issue) =>
-            issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
-        )
+        issues: combinedIssueList
     };
 }
 
 export function buildCombinedReportJsonExport(state) {
     const payload = buildCombinedReportPayload(state);
-    const aggregatedReports =
-        payload && typeof payload === "object" && !Array.isArray(payload)
-            ? payload.aggregated_reports
-            : null;
+    const summary = Array.isArray(payload?.summary)
+        ? payload.summary.map((entry) =>
+              entry && typeof entry === "object" && !Array.isArray(entry) ? { ...entry } : entry
+          )
+        : [];
+    const issues = Array.isArray(payload?.issues)
+        ? payload.issues.map((issue) =>
+              issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+          )
+        : [];
 
-    if (!aggregatedReports || typeof aggregatedReports !== "object") {
-        return {
-            aggregated_reports: {
-                combined: cloneIssuesForExport({}, "combined"),
-                static: cloneIssuesForExport({}, "static_analyzer"),
-                ai: cloneIssuesForExport({}, "dml_prompt")
-            }
-        };
-    }
-
-    const combined = cloneIssuesForExport(aggregatedReports.combined, "combined");
-    const staticReport = cloneIssuesForExport(aggregatedReports.static, "static_analyzer");
-    const aiReport = cloneIssuesForExport(aggregatedReports.ai, "dml_prompt");
-
-    return {
-        aggregated_reports: {
-            combined,
-            static: staticReport,
-            ai: aiReport
-        }
-    };
+    return { summary, issues };
 }
 
 function normaliseDetailSeverity(detail) {

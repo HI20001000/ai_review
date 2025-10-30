@@ -1169,20 +1169,10 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     logIssuesJson("static.issues.json.pre_aggregate", staticIssuesJson);
     logIssuesJson("ai.issues.json.pre_aggregate", aiIssuesJson);
 
-    const aggregatedReports = {
-        combined: {
-            source: "combined",
-            issues: dedupeIssueList([...reportsStaticIssues, ...reportsAiIssues])
-        },
-        static: {
-            source: "static_analyzer",
-            issues: cloneIssueListForPersistence(reportsStaticIssues)
-        },
-        ai: {
-            source: "dml_prompt",
-            issues: cloneIssueListForPersistence(reportsAiIssues)
-        }
-    };
+    const combinedIssuesForReports = dedupeIssueList([
+        ...reportsStaticIssues,
+        ...reportsAiIssues
+    ]);
 
     dmlReportPayload.issues = cloneIssueListForPersistence(aiIssuesForPersistence);
 
@@ -1190,7 +1180,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         staticReportPayload.enrichment = parsedDify;
     }
 
-    const combinedIssuesJson = serialiseIssuesJson(aggregatedReports.combined?.issues);
+    const combinedIssuesJson = serialiseIssuesJson(combinedIssuesForReports);
     logIssuesJson("combined.issues.json.post_aggregate", combinedIssuesJson);
 
     const issuesChunks = [];
