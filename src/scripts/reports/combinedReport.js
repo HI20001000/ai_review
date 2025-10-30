@@ -655,6 +655,51 @@ export function buildCombinedReportPayload(state) {
     };
 }
 
+function cloneIssuesForExport(entry, fallbackSource) {
+    const fallback = typeof fallbackSource === "string" ? fallbackSource.trim() : "";
+    const sourceKey =
+        (entry && typeof entry.source === "string" && entry.source.trim()) || fallback || null;
+
+    const issues = Array.isArray(entry?.issues) ? entry.issues : [];
+
+    return {
+        source: sourceKey,
+        issues: issues.map((issue) =>
+            issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+        )
+    };
+}
+
+export function buildCombinedReportJsonExport(state) {
+    const payload = buildCombinedReportPayload(state);
+    const aggregatedReports =
+        payload && typeof payload === "object" && !Array.isArray(payload)
+            ? payload.aggregated_reports
+            : null;
+
+    if (!aggregatedReports || typeof aggregatedReports !== "object") {
+        return {
+            aggregated_reports: {
+                combined: cloneIssuesForExport({}, "combined"),
+                static: cloneIssuesForExport({}, "static_analyzer"),
+                ai: cloneIssuesForExport({}, "dml_prompt")
+            }
+        };
+    }
+
+    const combined = cloneIssuesForExport(aggregatedReports.combined, "combined");
+    const staticReport = cloneIssuesForExport(aggregatedReports.static, "static_analyzer");
+    const aiReport = cloneIssuesForExport(aggregatedReports.ai, "dml_prompt");
+
+    return {
+        aggregated_reports: {
+            combined,
+            static: staticReport,
+            ai: aiReport
+        }
+    };
+}
+
 function normaliseDetailSeverity(detail) {
     const candidates = [detail?.severityLabel, detail?.severity];
     for (const candidate of candidates) {

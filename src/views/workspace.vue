@@ -10,6 +10,7 @@ import {
     buildSummaryDetailList,
     updateIssueSummaryTotals,
     buildCombinedReportPayload,
+    buildCombinedReportJsonExport,
     buildIssueDistributions,
     buildSourceSummaries,
     buildAggregatedSummaryRecords,
@@ -928,7 +929,7 @@ const combinedReportJsonInfo = computed(() => {
         return { raw: "", preview: "" };
     }
 
-    const combinedPayload = buildCombinedReportPayload(report.state);
+    const combinedPayload = buildCombinedReportJsonExport(report.state);
     return buildJsonInfo(combinedPayload);
 });
 
