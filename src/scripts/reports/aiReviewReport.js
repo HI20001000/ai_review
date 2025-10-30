@@ -129,6 +129,61 @@ function logAiReviewStage(label, data) {
     console.log(`[ai-review] ${label}: ${serialised}`);
 }
 
+function normaliseIssueSourceValue(value) {
+    return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function collectIssueSourceCandidates(issue) {
+    if (!issue || typeof issue !== "object") {
+        return [];
+    }
+    const candidates = [];
+    const direct = normaliseIssueSourceValue(issue.source);
+    if (direct) candidates.push(direct);
+    const analysisSource = normaliseIssueSourceValue(issue.analysis_source || issue.analysisSource);
+    if (analysisSource) candidates.push(analysisSource);
+    if (issue.metadata && typeof issue.metadata === "object") {
+        const metaSource = normaliseIssueSourceValue(
+            issue.metadata.analysis_source || issue.metadata.analysisSource || issue.metadata.source
+        );
+        if (metaSource) candidates.push(metaSource);
+    }
+    if (issue.details && Array.isArray(issue.details)) {
+        issue.details.forEach((detail) => {
+            if (!detail || typeof detail !== "object") return;
+            const detailSource = normaliseIssueSourceValue(detail.analysis_source || detail.analysisSource);
+            if (detailSource) candidates.push(detailSource);
+        });
+    }
+    return candidates;
+}
+
+function isNonDmlSource(source) {
+    if (!source) return false;
+    if (source.includes("dml")) return false;
+    if (source.includes("ai")) return false;
+    if (source.includes("review")) return false;
+    if (source.includes("markdown")) return false;
+    return source.includes("static") || source.includes("dify") || source.includes("workflow") || source.includes("composite");
+}
+
+function filterDmlIssueList(issues) {
+    const result = [];
+    for (const issue of issues || []) {
+        if (!issue) continue;
+        if (typeof issue !== "object") {
+            result.push(issue);
+            continue;
+        }
+        const sources = collectIssueSourceCandidates(issue);
+        if (sources.some((candidate) => isNonDmlSource(candidate))) {
+            continue;
+        }
+        result.push(issue);
+    }
+    return result;
+}
+
 function pickFirstString(candidates, options = {}) {
     const list = Array.isArray(candidates) ? candidates : [candidates];
     const allowEmpty = Boolean(options.allowEmpty);
@@ -767,6 +822,8 @@ function normaliseAiReviewPayload(payload = {}) {
         aggregatedObject.issues = aggregatedIssuesRaw;
     }
     logAiReviewStage("issues.final", issues);
+    issues = filterDmlIssueList(issues);
+    logAiReviewStage("issues.filtered", issues);
     logAiReviewStage("aggregated.object.output", aggregatedObject);
 
     const generatedAtCandidates = [
@@ -1043,6 +1100,10 @@ export function buildAiReviewPersistencePayload(state) {
         analysis: state.analysis
     });
     return payload.analysisPatch;
+}
+
+export function filterDmlIssues(issues) {
+    return filterDmlIssueList(issues);
 }
 
 export default {

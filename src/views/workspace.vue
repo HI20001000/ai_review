@@ -27,14 +27,10 @@ import {
     applyAiReviewResultToState,
     hydrateAiReviewStateFromRecord,
     buildAiReviewSourceSummaryConfig,
-    buildAiReviewPersistencePayload
+    buildAiReviewPersistencePayload,
+    filterDmlIssues
 } from "../scripts/reports/aiReviewReport.js";
 import { exportJsonReport, normaliseJsonContent } from "../scripts/reports/exportJson.js";
-import {
-    exportCombinedReportToExcel,
-    exportStaticReportToExcel,
-    exportAiReviewReportToExcel
-} from "../scripts/reports/exportExcel.js";
 import {
     isPlainObject,
     normaliseReportObject,
@@ -882,6 +878,32 @@ const STRUCTURED_EXPORT_CONFIG = {
     }
 };
 
+function extractAiIssuesForJsonExport(state) {
+    if (!state || typeof state !== "object") {
+        return [];
+    }
+    const reports = state.parsedReport?.reports;
+    const candidates = [
+        state.analysis?.dmlIssues,
+        state.analysis?.dmlReport?.issues,
+        state.dml?.issues,
+        state.dml?.aggregated?.issues,
+        reports?.dml_prompt?.issues,
+        reports?.dmlPrompt?.issues
+    ];
+    let selected = null;
+    for (const candidate of candidates) {
+        if (Array.isArray(candidate) && candidate.length) {
+            selected = candidate;
+            break;
+        }
+        if (!selected && Array.isArray(candidate)) {
+            selected = candidate;
+        }
+    }
+    return filterDmlIssues(Array.isArray(selected) ? selected : []);
+}
+
 function buildJsonInfo(candidate) {
     const raw = normaliseJsonContent(candidate);
     if (!raw) {
@@ -934,20 +956,8 @@ const aiReportJsonInfo = computed(() => {
     if (!report || !report.state) {
         return { raw: "", preview: "" };
     }
-    const analysisDml = report.state.analysis?.dmlReport;
-    if (analysisDml && typeof analysisDml === "object") {
-        return buildJsonInfo(analysisDml);
-    }
-    const stateDml = report.state.dml;
-    if (stateDml && typeof stateDml === "object") {
-        return buildJsonInfo(stateDml);
-    }
-    const reports = report.state.parsedReport?.reports;
-    const dmlEntry = reports?.dml_prompt || reports?.dmlPrompt || null;
-    if (dmlEntry) {
-        return buildJsonInfo(dmlEntry);
-    }
-    return { raw: "", preview: "" };
+    const issues = extractAiIssuesForJsonExport(report.state);
+    return buildJsonInfo({ issues });
 });
 
 const structuredReportExportConfig = computed(() => {
@@ -3231,38 +3241,6 @@ onBeforeUnmount(() => {
                                             >
                                                 <span v-if="structuredReportExportConfig.busy">匯出中…</span>
                                                 <span v-else>{{ structuredReportExportLabel }}</span>
-                                            </button>
-                                        </div>
-                                        <div class="reportExportRow" role="group" aria-label="匯出報告">
-                                            <button
-                                                type="button"
-                                                class="reportExportButton"
-                                                :disabled="!canExportCombinedReport || reportExportState.combined"
-                                                :aria-busy="reportExportState.combined ? 'true' : 'false'"
-                                                @click="exportCombinedReportExcel"
-                                            >
-                                                <span v-if="reportExportState.combined">匯出中…</span>
-                                                <span v-else>匯出聚合報告</span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class="reportExportButton"
-                                                :disabled="!canExportStaticReport || reportExportState.static"
-                                                :aria-busy="reportExportState.static ? 'true' : 'false'"
-                                                @click="exportStaticReportExcel"
-                                            >
-                                                <span v-if="reportExportState.static">匯出中…</span>
-                                                <span v-else>匯出靜態分析報告</span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class="reportExportButton"
-                                                :disabled="!canExportAiReport || reportExportState.ai"
-                                                :aria-busy="reportExportState.ai ? 'true' : 'false'"
-                                                @click="exportAiReportExcel"
-                                            >
-                                                <span v-if="reportExportState.ai">匯出中…</span>
-                                                <span v-else>匯出 AI 審查報告</span>
                                             </button>
                                         </div>
                                         <section
