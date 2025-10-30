@@ -927,6 +927,8 @@ const combinedReportJsonInfo = computed(() => {
     const combinedPayload = buildCombinedReportPayload(report.state);
     const parsed = report.state.parsedReport;
 
+    let candidate = combinedPayload;
+
     if (parsed && typeof parsed === "object") {
         const merged = { ...parsed };
         merged.summary = combinedPayload.summary;
@@ -941,12 +943,10 @@ const combinedReportJsonInfo = computed(() => {
             ai_json: combinedPayload.aggregated_reports.ai
         };
 
-        return buildJsonInfo(merged);
+        candidate = merged;
     }
-    return filterDmlIssues(Array.isArray(selected) ? selected : []);
-}
 
-    return buildJsonInfo(combinedPayload);
+    return buildJsonInfo(candidate);
 });
 
 function filterStaticIssuesForJsonExport(issues) {
