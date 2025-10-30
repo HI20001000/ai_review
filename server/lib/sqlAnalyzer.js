@@ -1317,6 +1317,46 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         staticReportPayload.enrichment = parsedDify;
     }
 
+    const generatedAt = dify?.generatedAt || new Date().toISOString();
+    const combinedSummaryRecords = [
+        buildSummaryRecordForPersistence({
+            source: "static_analyzer",
+            label: "靜態分析器",
+            summary: staticSummary,
+            issues: reportsStaticIssues
+        }),
+        buildSummaryRecordForPersistence({
+            source: "dml_prompt",
+            label: "AI審查",
+            summary: dmlSummary,
+            issues: reportsAiIssues,
+            fallbackGeneratedAt: dmlGeneratedAt
+        }),
+        buildSummaryRecordForPersistence({
+            source: "combined",
+            label: "聚合報告",
+            summary: compositeSummary,
+            issues: combinedIssuesForReports,
+            fallbackStatus: difySummary?.status,
+            fallbackGeneratedAt:
+                difySummary?.generated_at ||
+                difySummary?.generatedAt ||
+                dify?.generatedAt ||
+                generatedAt
+        })
+    ];
+
+    const aggregatedReports = {
+        summary: cloneSummaryRecordsForPersistence(combinedSummaryRecords),
+        issues: cloneIssueListForPersistence(combinedIssuesForReports)
+    };
+
+    const combinedReportJson = serialiseCombinedReportJson(
+        combinedSummaryRecords,
+        combinedIssuesForReports
+    );
+    logIssuesJson("combined.report.json.post_aggregate", combinedReportJson);
+
     const finalPayload = {
         summary: compositeSummary,
         issues: combinedIssues,
@@ -1379,43 +1419,13 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     }
     logSqlPayloadStage("chunks.annotated", annotatedChunks);
 
+    const chunksForReport = Array.isArray(annotatedChunks)
+        ? cloneValue(annotatedChunks)
+        : [];
+    logSqlPayloadStage("chunks.final", chunksForReport);
+
     finalReport = JSON.stringify(finalPayload, null, 2);
     logSqlPayloadStage("report.serialised", finalReport);
-
-    const generatedAt = dify?.generatedAt || new Date().toISOString();
-    const combinedSummaryRecords = [
-        buildSummaryRecordForPersistence({
-            source: "static_analyzer",
-            label: "靜態分析器",
-            summary: staticSummary,
-            issues: reportsStaticIssues
-        }),
-        buildSummaryRecordForPersistence({
-            source: "dml_prompt",
-            label: "AI審查",
-            summary: dmlSummary,
-            issues: reportsAiIssues,
-            fallbackGeneratedAt: dmlGeneratedAt
-        }),
-        buildSummaryRecordForPersistence({
-            source: "combined",
-            label: "聚合報告",
-            summary: compositeSummary,
-            issues: combinedIssuesForReports,
-            fallbackStatus: difySummary?.status,
-            fallbackGeneratedAt:
-                difySummary?.generated_at ||
-                difySummary?.generatedAt ||
-                dify?.generatedAt ||
-                generatedAt
-        })
-    ];
-
-    const combinedReportJson = serialiseCombinedReportJson(
-        combinedSummaryRecords,
-        combinedIssuesForReports
-    );
-    logIssuesJson("combined.report.json.post_aggregate", combinedReportJson);
 
     const difyErrorMessage = difyError ? difyError.message || String(difyError) : "";
     const enrichmentStatus = dify ? "succeeded" : "failed";
