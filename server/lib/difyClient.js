@@ -194,7 +194,7 @@ function gatherRuleIds(issue) {
     pushValue(issue.ruleId);
     pushValue(issue.rule);
 
-    return values;
+    return Array.from(new Set(values));
 }
 
 function gatherSeverity(issue) {
@@ -283,12 +283,10 @@ function aggregateDifyChunkResults(results) {
     }
 
     if (!aggregatedIssues.length && !hasParsedChunk) {
-        return { aggregate: null, chunks: processedChunks };
+        return { aggregate: null, issues: [], chunks: processedChunks };
     }
 
-    const aggregate = {
-        issues: aggregatedIssues
-    };
+    const aggregate = {};
 
     if (aggregatedIssues.length) {
         aggregate.total_issues = aggregatedIssues.length;
@@ -307,7 +305,7 @@ function aggregateDifyChunkResults(results) {
         aggregate.message = messages.join(" ");
     }
 
-    aggregate.chunks = processedChunks.map((chunk) => {
+    const aggregateChunks = processedChunks.map((chunk) => {
         const entry = { index: chunk.index, total: chunk.total };
         if (Array.isArray(chunk.issues) && chunk.issues.length) {
             entry.issues = chunk.issues;
@@ -316,13 +314,27 @@ function aggregateDifyChunkResults(results) {
         if (parsed) {
             const { issues, ...rest } = parsed;
             if (Object.keys(rest).length) {
-                entry.summary = rest;
+                if (typeof rest.summary === "string" && Object.keys(rest).length === 1) {
+                    entry.summary = rest.summary;
+                } else {
+                    entry.summary = rest;
+                }
             }
         }
         return entry;
     });
 
-    return { aggregate, chunks: processedChunks };
+    if (aggregateChunks.length) {
+        aggregate.chunks = aggregateChunks;
+    }
+
+    const hasAggregateContent = Object.keys(aggregate).length > 0;
+
+    return {
+        aggregate: hasAggregateContent ? aggregate : null,
+        issues: aggregatedIssues,
+        chunks: processedChunks
+    };
 }
 
 function normaliseSelectionMeta(selection) {
@@ -593,13 +605,15 @@ export async function requestDifyReport({
         .join("\n\n")
         .trim();
 
-    const { aggregate, chunks } = aggregateDifyChunkResults(processedResults);
+    const { aggregate, issues: aggregateIssues, chunks } = aggregateDifyChunkResults(processedResults);
     const reportPayload = aggregate ? JSON.stringify(aggregate, null, 2) : textReport;
+    const issues = Array.isArray(aggregateIssues) ? aggregateIssues : [];
 
     return {
         report: reportPayload,
         textReport: textReport || undefined,
         aggregated: aggregate || undefined,
+        issues,
         conversationId,
         chunks,
         segments,
