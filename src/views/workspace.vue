@@ -786,6 +786,11 @@ const structuredReportViewMode = ref("combined");
 const canShowStructuredSummary = computed(() => Boolean(activeReportDetails.value));
 
 const canShowStructuredStatic = computed(() => {
+    const reportState = activeReport.value?.state;
+    if (reportState && normaliseJsonContent(reportState.staticReportJson)) {
+        return true;
+    }
+
     const details = activeReportDetails.value;
     if (!details) return false;
 
@@ -821,6 +826,11 @@ const canShowStructuredStatic = computed(() => {
 });
 
 const canShowStructuredDml = computed(() => {
+    const reportState = activeReport.value?.state;
+    if (reportState && normaliseJsonContent(reportState.aiReportJson)) {
+        return true;
+    }
+
     const report = activeReportDetails.value?.dmlReport;
     if (!report) return false;
 
@@ -2368,8 +2378,17 @@ async function hydrateReportsForProject(projectId) {
             const state = ensureFileReportState(projectId, record.path);
             if (!state) continue;
             const hydratedStatus = normaliseHydratedString(record.status).trim();
-            state.status = hydratedStatus || (record.report ? "ready" : "idle");
-            state.report = normaliseHydratedReportText(record.report);
+            const hydratedReportText = normaliseHydratedReportText(record.report);
+            const trimmedReportText = typeof hydratedReportText === "string" ? hydratedReportText.trim() : "";
+            const combinedJson = normaliseHydratedString(record.combinedReportJson).trim();
+            const staticJson = normaliseHydratedString(record.staticReportJson).trim();
+            const aiJson = normaliseHydratedString(record.aiReportJson).trim();
+            const hasStoredSnapshots = Boolean(combinedJson || staticJson || aiJson);
+
+            state.status =
+                hydratedStatus ||
+                (trimmedReportText || hasStoredSnapshots ? "ready" : "idle");
+            state.report = hydratedReportText;
             state.error = normaliseHydratedString(record.error);
             state.chunks = Array.isArray(record.chunks) ? record.chunks : [];
             state.segments = Array.isArray(record.segments) ? record.segments : [];
@@ -2398,6 +2417,9 @@ async function hydrateReportsForProject(projectId) {
                 state.difyErrorMessage = normaliseHydratedString(record.analysis?.difyErrorMessage);
             }
             state.parsedReport = parseReportJson(state.report);
+            if ((!state.parsedReport || typeof state.parsedReport !== "object") && hasStoredSnapshots) {
+                state.parsedReport = { summary: null, reports: {} };
+            }
             state.issueSummary = computeIssueSummary(state.report, state.parsedReport);
             hydrateAiReviewStateFromRecord(state, record);
             normaliseReportAnalysisState(state);

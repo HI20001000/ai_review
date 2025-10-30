@@ -134,10 +134,100 @@ function extractAnalysisFromChunks(chunks) {
     return null;
 }
 
+function safeParseReport(reportText) {
+    if (typeof reportText !== "string") {
+        return null;
+    }
+    const trimmed = reportText.trim();
+    if (!trimmed) {
+        return null;
+    }
+    if (!/^\s*[\[{]/.test(trimmed)) {
+        return null;
+    }
+    try {
+        return JSON.parse(trimmed);
+    } catch (_error) {
+        return null;
+    }
+}
+
 function mapReportRow(row) {
     const chunks = safeParseArray(row.chunks_json);
     const segments = safeParseArray(row.segments_json);
-    const analysis = extractAnalysisFromChunks(chunks);
+    const parsedReport = safeParseReport(row.report);
+    const reportsBlock =
+        parsedReport && typeof parsedReport === "object" && !Array.isArray(parsedReport.reports)
+            ? parsedReport.reports
+            : parsedReport && typeof parsedReport.reports === "object"
+            ? parsedReport.reports
+            : {};
+    const staticReport =
+        reportsBlock?.static_analyzer || reportsBlock?.staticAnalyzer || null;
+    const dmlReport = reportsBlock?.dml_prompt || reportsBlock?.dmlPrompt || null;
+    const difyReport = reportsBlock?.dify_workflow || reportsBlock?.difyWorkflow || null;
+
+    let analysis = extractAnalysisFromChunks(chunks);
+    const ensureAnalysis = () => {
+        if (!analysis) {
+            analysis = {};
+        }
+        return analysis;
+    };
+
+    if (parsedReport && typeof parsedReport === "object") {
+        const target = ensureAnalysis();
+        if (parsedReport.summary && typeof parsedReport.summary === "object") {
+            target.combinedSummary = parsedReport.summary;
+        }
+        if (Array.isArray(parsedReport.issues)) {
+            target.combinedIssues = parsedReport.issues;
+        }
+    }
+
+    if (staticReport && typeof staticReport === "object") {
+        const target = ensureAnalysis();
+        target.staticReport = staticReport;
+    }
+
+    if (difyReport && typeof difyReport === "object") {
+        const target = ensureAnalysis();
+        target.difyReport = difyReport;
+        if (difyReport.summary && typeof difyReport.summary === "object") {
+            target.difySummary = difyReport.summary;
+        }
+        if (Array.isArray(difyReport.issues)) {
+            target.difyIssues = difyReport.issues;
+        }
+    }
+
+    if (dmlReport && typeof dmlReport === "object") {
+        const target = ensureAnalysis();
+        target.dmlReport = dmlReport;
+        if (Array.isArray(dmlReport.issues)) {
+            target.dmlIssues = dmlReport.issues;
+        }
+        if (Array.isArray(dmlReport.segments)) {
+            target.dmlSegments = dmlReport.segments;
+        }
+        if (dmlReport.aggregated && typeof dmlReport.aggregated === "object") {
+            target.dmlAggregated = dmlReport.aggregated;
+        }
+        if (dmlReport.summary && typeof dmlReport.summary === "object") {
+            target.dmlSummary = dmlReport.summary;
+        }
+        if (dmlReport.generatedAt || dmlReport.generated_at) {
+            target.dmlGeneratedAt = dmlReport.generatedAt || dmlReport.generated_at;
+        }
+        if (typeof dmlReport.conversationId === "string" && dmlReport.conversationId) {
+            target.dmlConversationId = dmlReport.conversationId;
+        }
+    }
+
+    const combinedReportJson = sanitiseCombinedReportJson(row.combined_report_json || "");
+    const staticReportJson = sanitiseIssuesJson(row.static_report_json || "");
+    const aiReportJson = sanitiseIssuesJson(row.ai_report_json || "");
+
     return {
         projectId: row.project_id,
         path: row.path,
@@ -145,6 +235,9 @@ function mapReportRow(row) {
         chunks,
         segments,
         analysis,
+        dml: dmlReport || null,
+        dify: difyReport || null,
+        staticReport: staticReport || null,
         conversationId: row.conversation_id || "",
         userId: row.user_id || "",
         generatedAt: toIsoString(row.generated_at),
@@ -479,8 +572,10 @@ app.get("/api/projects/:projectId/reports", async (req, res, next) => {
 });
 
 app.post("/api/reports/dify", async (req, res, next) => {
+    const { projectId, projectName, path, content, userId, files } = req.body || {};
+    let resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+
     try {
-        const { projectId, projectName, path, content, userId, files } = req.body || {};
         if (!projectId || !path || typeof content !== "string") {
             res.status(400).json({ message: "Missing projectId, path, or content for report generation" });
             return;
@@ -489,8 +584,7 @@ app.post("/api/reports/dify", async (req, res, next) => {
             res.status(400).json({ message: "檔案內容為空，無法生成報告" });
             return;
         }
-
-        const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+        resolvedUserId = typeof userId === "string" ? userId.trim() : "";
         if (isSqlPath(path)) {
             console.log(`[sql] Running static SQL analysis project=${projectId} path=${path}`);
             let sqlAnalysis;
@@ -579,8 +673,61 @@ app.post("/api/reports/dify", async (req, res, next) => {
         });
     } catch (error) {
         console.error("[dify] Failed to generate report", error);
-        const status = error?.message?.includes("not configured") ? 500 : 502;
-        res.status(status).json({ message: error?.message || "Failed to generate report" });
+
+        const errorMessage = typeof error?.message === "string" ? error.message : "";
+        const shouldFallback =
+            errorMessage && errorMessage.toLowerCase().includes("aggregatedreports is not defined");
+
+        if (shouldFallback && projectId && path) {
+            const fallbackGeneratedAt = new Date().toISOString();
+            const fallbackCombined = buildFallbackCombinedReport(errorMessage, fallbackGeneratedAt);
+            const combinedJson = JSON.stringify(fallbackCombined);
+            const savedAtIso = new Date().toISOString();
+
+            try {
+                await upsertReport({
+                    projectId,
+                    path,
+                    report: "",
+                    chunks: [],
+                    segments: [],
+                    conversationId: "",
+                    userId: resolvedUserId,
+                    generatedAt: fallbackGeneratedAt,
+                    combinedReportJson: combinedJson,
+                    staticReportJson: EMPTY_ISSUES_JSON,
+                    aiReportJson: EMPTY_ISSUES_JSON
+                });
+            } catch (persistError) {
+                console.error("[dify] Failed to persist fallback report", persistError);
+                const status = errorMessage.includes("not configured") ? 500 : 502;
+                res.status(status).json({ message: errorMessage || "Failed to generate report" });
+                return;
+            }
+
+            res.json({
+                projectId,
+                path,
+                report: "",
+                chunks: [],
+                segments: [],
+                conversationId: "",
+                generatedAt: fallbackGeneratedAt,
+                combinedReportJson: combinedJson,
+                staticReportJson: EMPTY_ISSUES_JSON,
+                aiReportJson: EMPTY_ISSUES_JSON,
+                dify: null,
+                dml: null,
+                analysis: null,
+                savedAt: savedAtIso,
+                difyErrorMessage: errorMessage,
+                dmlErrorMessage: ""
+            });
+            return;
+        }
+
+        const status = errorMessage.includes("not configured") ? 500 : 502;
+        res.status(status).json({ message: errorMessage || "Failed to generate report" });
     }
 });
 
