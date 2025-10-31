@@ -10,6 +10,24 @@ const SHOULD_LOG_ISSUES = Boolean(
     typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV
 );
 
+export function parseIssuesFromJson(json) {
+    if (typeof json !== "string") {
+        return [];
+    }
+    const trimmed = json.trim();
+    if (!trimmed) {
+        return [];
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const issues = Array.isArray(parsed?.issues) ? parsed.issues : [];
+        return issues.filter((issue) => issue !== null && issue !== undefined);
+    } catch (error) {
+        console.warn("[report] Failed to parse issues JSON", error);
+        return [];
+    }
+}
+
 function logClientIssuesJson(label, issues) {
     if (!SHOULD_LOG_ISSUES) return;
     if (typeof console === "undefined" || typeof console.log !== "function") {
@@ -201,24 +219,7 @@ export function collectIssuesForSource(state, sourceKeys) {
     }
 
     if (sourceKeySet.has(normaliseReportSourceKey("dml_prompt"))) {
-        const aiReportIssues = (() => {
-            const json = state?.aiReportJson;
-            if (typeof json !== "string") {
-                return [];
-            }
-            const trimmed = json.trim();
-            if (!trimmed) {
-                return [];
-            }
-            try {
-                const parsed = JSON.parse(trimmed);
-                const issues = Array.isArray(parsed?.issues) ? parsed.issues : [];
-                return issues.filter((issue) => issue !== null && issue !== undefined);
-            } catch (error) {
-                console.warn("[report] Failed to parse issues JSON", error);
-                return [];
-            }
-        })();
+        const aiReportIssues = parseIssuesFromJson(state?.aiReportJson);
         if (aiReportIssues.length) {
             const aiKey = normaliseReportSourceKey("dml_prompt");
             removeIssuesBySource(aiKey);
