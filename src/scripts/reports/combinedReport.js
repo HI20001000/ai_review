@@ -10,6 +10,24 @@ const SHOULD_LOG_ISSUES = Boolean(
     typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV
 );
 
+export function parseIssuesFromJson(json) {
+    if (typeof json !== "string") {
+        return [];
+    }
+    const trimmed = json.trim();
+    if (!trimmed) {
+        return [];
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const issues = Array.isArray(parsed?.issues) ? parsed.issues : [];
+        return issues.filter((issue) => issue !== null && issue !== undefined);
+    } catch (error) {
+        console.warn("[report] Failed to parse issues JSON", error);
+        return [];
+    }
+}
+
 function logClientIssuesJson(label, issues) {
     if (!SHOULD_LOG_ISSUES) return;
     if (typeof console === "undefined" || typeof console.log !== "function") {
@@ -26,30 +44,6 @@ function logClientIssuesJson(label, issues) {
         }
     }
     console.log(`[report] ${label}: ${serialised}`);
-}
-
-/**
- * Parse issues from a serialised JSON payload.
- *
- * @param {string | null | undefined} json - Serialised JSON string containing an issues array.
- * @returns {Array<any>} Extracted issues.
- */
-function parseIssuesFromJson(json) {
-    if (typeof json !== "string") {
-        return [];
-    }
-    const trimmed = json.trim();
-    if (!trimmed) {
-        return [];
-    }
-    try {
-        const parsed = JSON.parse(trimmed);
-        const issues = Array.isArray(parsed?.issues) ? parsed.issues : [];
-        return issues.filter((issue) => issue !== null && issue !== undefined);
-    } catch (error) {
-        console.warn("[report] Failed to parse issues JSON", error);
-        return [];
-    }
 }
 
 /**
@@ -225,7 +219,7 @@ export function collectIssuesForSource(state, sourceKeys) {
     }
 
     if (sourceKeySet.has(normaliseReportSourceKey("dml_prompt"))) {
-        const aiReportIssues = parseIssuesFromJson(state.aiReportJson);
+        const aiReportIssues = parseIssuesFromJson(state?.aiReportJson);
         if (aiReportIssues.length) {
             const aiKey = normaliseReportSourceKey("dml_prompt");
             removeIssuesBySource(aiKey);
@@ -257,17 +251,19 @@ export function collectAggregatedIssues(state) {
     if (!state) return [];
     const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
     const aiIssues = collectIssuesForSource(state, ["dml_prompt"]);
-    const combined = dedupeIssues([...staticIssues, ...aiIssues]);
+    const difyIssues = collectIssuesForSource(state, ["dify_workflow"]);
+    const difyAsStatic =
+        difyIssues.length > 0
+            ? remapIssuesToSource(difyIssues, "static_analyzer", { force: true })
+            : [];
+
+    const combined = dedupeIssues([...difyAsStatic, ...staticIssues, ...aiIssues]);
     if (combined.length > 0) {
         return combined;
     }
 
-    const difyIssues = collectIssuesForSource(state, ["dify_workflow"]);
-    if (difyIssues.length > 0) {
-        return dedupeIssues([
-            ...remapIssuesToSource(difyIssues, "static_analyzer", { force: true }),
-            ...aiIssues
-        ]);
+    if (difyAsStatic.length > 0) {
+        return dedupeIssues([...difyAsStatic, ...aiIssues]);
     }
 
     const parsedIssues = Array.isArray(state.parsedReport?.issues)
