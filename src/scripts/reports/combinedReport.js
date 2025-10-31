@@ -183,10 +183,19 @@ export function collectIssuesForSource(state, sourceKeys) {
     }
 
     if (sourceKeySet.has(normaliseReportSourceKey("dml_prompt"))) {
+        const aiReportIssues = parseIssuesFromJson(state.aiReportJson);
+        if (aiReportIssues.length) {
+            const aiKey = normaliseReportSourceKey("dml_prompt");
+            removeIssuesBySource(aiKey);
+            dedupeIssues(remapIssuesToSource(aiReportIssues, "dml_prompt", { force: true })).forEach(
+                (issue) => pushIssue(issue)
+            );
+        }
+
         const dmlReport = state.analysis?.dmlReport && typeof state.analysis.dmlReport === "object"
             ? state.analysis.dmlReport
             : null;
-        if (Array.isArray(dmlReport?.issues)) {
+        if (!aiReportIssues.length && Array.isArray(dmlReport?.issues)) {
             dedupeIssues(remapIssuesToSource(dmlReport.issues, "dml_prompt")).forEach((issue) =>
                 pushIssue(issue)
             );

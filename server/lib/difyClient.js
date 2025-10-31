@@ -194,7 +194,7 @@ function gatherRuleIds(issue) {
     pushValue(issue.ruleId);
     pushValue(issue.rule);
 
-    return values;
+    return Array.from(new Set(values));
 }
 
 function gatherSeverity(issue) {
@@ -283,12 +283,10 @@ function aggregateDifyChunkResults(results) {
     }
 
     if (!aggregatedIssues.length && !hasParsedChunk) {
-        return { aggregate: null, chunks: processedChunks };
+        return { aggregate: null, issues: [], chunks: processedChunks };
     }
 
-    const aggregate = {
-        issues: aggregatedIssues
-    };
+    const aggregate = {};
 
     if (aggregatedIssues.length) {
         aggregate.total_issues = aggregatedIssues.length;
@@ -307,7 +305,7 @@ function aggregateDifyChunkResults(results) {
         aggregate.message = messages.join(" ");
     }
 
-    aggregate.chunks = processedChunks.map((chunk) => {
+    const aggregateChunks = processedChunks.map((chunk) => {
         const entry = { index: chunk.index, total: chunk.total };
         if (Array.isArray(chunk.issues) && chunk.issues.length) {
             entry.issues = chunk.issues;
@@ -316,13 +314,27 @@ function aggregateDifyChunkResults(results) {
         if (parsed) {
             const { issues, ...rest } = parsed;
             if (Object.keys(rest).length) {
-                entry.summary = rest;
+                if (typeof rest.summary === "string" && Object.keys(rest).length === 1) {
+                    entry.summary = rest.summary;
+                } else {
+                    entry.summary = rest;
+                }
             }
         }
         return entry;
     });
 
-    return { aggregate, chunks: processedChunks };
+    if (aggregateChunks.length) {
+        aggregate.chunks = aggregateChunks;
+    }
+
+    const hasAggregateContent = Object.keys(aggregate).length > 0;
+
+    return {
+        aggregate: hasAggregateContent ? aggregate : null,
+        issues: aggregatedIssues,
+        chunks: processedChunks
+    };
 }
 
 function normaliseSelectionMeta(selection) {
@@ -443,7 +455,105 @@ function describeSelection(selection) {
     return "";
 }
 
-function buildPrompt({ segment, projectName, filePath, chunkIndex, chunkTotal, selection }) {
+function normaliseChunkInteger(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+        return null;
+    }
+    return Math.floor(numeric);
+}
+
+function describeSegmentLocation(location) {
+    if (!location || typeof location !== "object") {
+        return "";
+    }
+
+    const startLine = normaliseChunkInteger(location.startLine ?? location.line);
+    const endLine = normaliseChunkInteger(location.endLine ?? startLine);
+    const startColumn = normaliseChunkInteger(location.startColumn ?? location.column);
+    const endColumn = normaliseChunkInteger(location.endColumn ?? startColumn);
+
+    const parts = [];
+    if (startLine && endLine) {
+        parts.push(startLine === endLine ? `第 ${startLine} 行` : `第 ${startLine}-${endLine} 行`);
+    } else if (startLine) {
+        parts.push(`第 ${startLine} 行`);
+    }
+
+    if (startColumn && endColumn) {
+        if (startColumn === endColumn) {
+            parts.push(`字元 ${startColumn}`);
+        } else {
+            parts.push(`字元 ${startColumn}-${endColumn}`);
+        }
+    } else if (startColumn) {
+        parts.push(`起始字元 ${startColumn}`);
+    } else if (endColumn) {
+        parts.push(`結束字元 ${endColumn}`);
+    }
+
+    if (!parts.length) {
+        return "";
+    }
+
+    return `程式碼位置：${parts.join("，")}`;
+}
+
+function normaliseSegmentEntry(segment, index, total) {
+    const baseIndex = index + 1;
+    const baseTotal = total;
+
+    if (!segment || typeof segment !== "object") {
+        const textValue = typeof segment === "string" ? segment : String(segment ?? "");
+        return {
+            text: textValue,
+            rawText: textValue,
+            index: baseIndex,
+            total: baseTotal
+        };
+    }
+
+    const clone = { ...segment };
+    const textValue = typeof clone.text === "string"
+        ? clone.text
+        : typeof clone.rawText === "string"
+        ? clone.rawText
+        : typeof clone.raw === "string"
+        ? clone.raw
+        : "";
+    const indexValue = normaliseChunkInteger(clone.index) || baseIndex;
+    const totalValue = normaliseChunkInteger(clone.total) || baseTotal;
+    const startLine = normaliseChunkInteger(clone.startLine ?? clone.line);
+    const endLine = normaliseChunkInteger(clone.endLine ?? startLine);
+    const startColumn = normaliseChunkInteger(clone.startColumn ?? clone.column);
+    const endColumn = normaliseChunkInteger(clone.endColumn);
+
+    const entry = {
+        ...clone,
+        text: textValue,
+        rawText: typeof clone.rawText === "string" ? clone.rawText : textValue,
+        index: indexValue,
+        total: totalValue
+    };
+
+    if (startLine) {
+        entry.startLine = startLine;
+        entry.line = startLine;
+    }
+    if (endLine) {
+        entry.endLine = endLine;
+    }
+    if (startColumn) {
+        entry.startColumn = startColumn;
+    }
+    if (endColumn) {
+        entry.endColumn = endColumn;
+    }
+
+    return entry;
+}
+
+function buildPrompt({ segmentText, projectName, filePath, chunkIndex, chunkTotal, selection, location }) {
     const headerLines = [
         "你是一位資深的程式碼審查專家，請針對以下程式碼段落提供深入的審查報告。",
         "請重點標記潛在缺陷、最佳化建議、安全性問題、可維護性與測試建議。",
@@ -451,12 +561,13 @@ function buildPrompt({ segment, projectName, filePath, chunkIndex, chunkTotal, s
         "",
         `專案：${projectName || "(未命名專案)"}`,
         `檔案：${filePath}`,
+        describeSegmentLocation(location),
         describeSelection(selection),
         chunkTotal > 1 ? `分段：${chunkIndex}/${chunkTotal}` : "",
         "",
         "以下是本段程式碼：",
         "```",
-        segment.trimEnd(),
+        segmentText.trimEnd(),
         "```"
     ].filter(Boolean);
     return headerLines.join("\n");
@@ -481,17 +592,22 @@ export async function requestDifyReport({
     selection
 }) {
     assertConfig();
-    const segments = Array.isArray(presetSegments) && presetSegments.length
+    const rawSegments = Array.isArray(presetSegments) && presetSegments.length
         ? presetSegments
         : partitionContent(content || "");
+    const normalisedSegments = rawSegments.map((segment, index) =>
+        normaliseSegmentEntry(segment, index, rawSegments.length)
+    );
     const results = [];
     let conversationId = "";
     const fetchImpl = await resolveFetch();
     const fileAttachments = Array.isArray(files) ? files : [];
     const selectionMeta = normaliseSelectionMeta(selection);
-    for (let index = 0; index < segments.length; index += 1) {
-        const segment = segments[index];
-        const chunkIndex = index + 1;
+    const totalSegments = normalisedSegments.length || 1;
+    for (let index = 0; index < normalisedSegments.length; index += 1) {
+        const segmentMeta = normalisedSegments[index];
+        const segmentText = typeof segmentMeta.text === "string" ? segmentMeta.text : "";
+        const chunkIndex = normaliseChunkInteger(segmentMeta.index) || index + 1;
         const resolvedUserId = typeof userId === "string" && userId.trim() ? userId.trim() : DIFY_USER_ID;
         if (!resolvedUserId) {
             throw new Error("Dify user identifier is required; set DIFY_USER_ID or pass userId");
@@ -501,21 +617,44 @@ export async function requestDifyReport({
                 project_name: projectName || "",
                 file_path: filePath,
                 chunk_index: chunkIndex,
-                chunk_total: segments.length
+                chunk_total: totalSegments
             },
             query: buildPrompt({
-                segment,
+                segmentText,
                 projectName,
                 filePath,
                 chunkIndex,
-                chunkTotal: segments.length,
-                selection: selectionMeta
+                chunkTotal: totalSegments,
+                selection: selectionMeta,
+                location: segmentMeta
             }),
             response_mode: responseMode,
             conversation_id: conversationId,
             user: resolvedUserId,
             files: fileAttachments
         };
+        const startLine = normaliseChunkInteger(segmentMeta.startLine ?? segmentMeta.line);
+        const endLine = normaliseChunkInteger(segmentMeta.endLine ?? startLine);
+        const startColumn = normaliseChunkInteger(segmentMeta.startColumn ?? segmentMeta.column);
+        const endColumn = normaliseChunkInteger(segmentMeta.endColumn);
+        if (startLine) {
+            body.inputs.chunk_start_line = startLine;
+            body.inputs.chunk_line = startLine;
+            body.inputs.line = startLine;
+            body.inputs.start_line = startLine;
+        }
+        if (endLine) {
+            body.inputs.chunk_end_line = endLine;
+            body.inputs.end_line = endLine;
+        }
+        if (startColumn) {
+            body.inputs.chunk_start_column = startColumn;
+            body.inputs.start_column = startColumn;
+        }
+        if (endColumn) {
+            body.inputs.chunk_end_column = endColumn;
+            body.inputs.end_column = endColumn;
+        }
         if (selectionMeta) {
             if (typeof selectionMeta.startLine === "number") {
                 body.inputs.selection_start_line = selectionMeta.startLine;
@@ -556,7 +695,7 @@ export async function requestDifyReport({
         if (!response.ok) {
             const text = await response.text().catch(() => "");
             throw new Error(
-                `Dify request failed for chunk ${chunkIndex}/${segments.length}: ${response.status} ${response.statusText}${text ? ` - ${text}` : ""}`
+                `Dify request failed for chunk ${chunkIndex}/${totalSegments}: ${response.status} ${response.statusText}${text ? ` - ${text}` : ""}`
             );
         }
         const payload = await response.json();
@@ -565,7 +704,7 @@ export async function requestDifyReport({
         const parsedAnswer = parseDifyAnswer(answer);
         results.push({
             index: chunkIndex,
-            total: segments.length,
+            total: totalSegments,
             answer,
             text: parsedAnswer.text,
             json: parsedAnswer.json,
@@ -585,7 +724,7 @@ export async function requestDifyReport({
 
     const textReport = processedResults
         .map((item) => {
-            if (segments.length === 1) {
+            if (normalisedSegments.length === 1) {
                 return item.text;
             }
             return [`### 第 ${item.index} 段審查`, item.text].join("\n\n");
@@ -593,16 +732,18 @@ export async function requestDifyReport({
         .join("\n\n")
         .trim();
 
-    const { aggregate, chunks } = aggregateDifyChunkResults(processedResults);
+    const { aggregate, issues: aggregateIssues, chunks } = aggregateDifyChunkResults(processedResults);
     const reportPayload = aggregate ? JSON.stringify(aggregate, null, 2) : textReport;
+    const issues = Array.isArray(aggregateIssues) ? aggregateIssues : [];
 
     return {
         report: reportPayload,
         textReport: textReport || undefined,
         aggregated: aggregate || undefined,
+        issues,
         conversationId,
         chunks,
-        segments,
+        segments: normalisedSegments,
         generatedAt: new Date().toISOString(),
         selection: selectionMeta || undefined
     };

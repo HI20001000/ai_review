@@ -213,7 +213,7 @@ function handlePointerDown(event) {
     box-sizing: border-box;
     overflow: hidden;
     position: relative;
-    box-shadow: 0 18px 32px rgba(15, 23, 42, 0.18);
+    box-shadow: 0 24px 44px rgba(148, 163, 184, 0.28);
 }
 
 .panelRail--resizeEdge {
@@ -280,12 +280,13 @@ function handlePointerDown(event) {
 
 .projectItem:hover {
     border-color: var(--panel-border-strong);
+    background: var(--panel-surface);
     transform: translateY(-1px);
 }
 
 .projectItem.active {
     border-color: var(--panel-border-strong);
-    background: rgba(82, 82, 91, 0.32);
+    background: var(--panel-accent-soft);
 }
 
 .projectHeader {
@@ -319,8 +320,8 @@ function handlePointerDown(event) {
 
 .delBtn {
     background: rgba(239, 68, 68, 0.12);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    color: #dc2626;
     font-size: 12px;
     line-height: 1;
     padding: 4px 6px;
@@ -330,8 +331,8 @@ function handlePointerDown(event) {
 }
 
 .delBtn:hover {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: rgba(239, 68, 68, 0.45);
+    background: rgba(239, 68, 68, 0.18);
+    border-color: rgba(239, 68, 68, 0.5);
 }
 
 .emptyProjects {

@@ -475,6 +475,98 @@ function maskCommentsAndStrings(sqlText) {
     return masked;
 }
 
+function stripSqlComments(sqlText) {
+    if (typeof sqlText !== "string" || !sqlText.length) {
+        return "";
+    }
+
+    let result = "";
+    let index = 0;
+    const length = sqlText.length;
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+
+    while (index < length) {
+        const char = sqlText[index];
+        const next = index + 1 < length ? sqlText[index + 1] : "";
+
+        if (!inSingleQuote && !inDoubleQuote) {
+            if (char === "-" && next === "-") {
+                index += 2;
+                while (index < length) {
+                    const lineChar = sqlText[index];
+                    if (lineChar === "\r" && sqlText[index + 1] === "\n") {
+                        result += "\r\n";
+                        index += 2;
+                        break;
+                    }
+                    if (lineChar === "\n" || lineChar === "\r") {
+                        result += lineChar;
+                        index += 1;
+                        break;
+                    }
+                    index += 1;
+                }
+                continue;
+            }
+
+            if (char === "/" && next === "*") {
+                index += 2;
+                while (index < length) {
+                    const blockChar = sqlText[index];
+                    const blockNext = sqlText[index + 1];
+                    if (blockChar === "*" && blockNext === "/") {
+                        index += 2;
+                        break;
+                    }
+                    if (blockChar === "\r" && blockNext === "\n") {
+                        result += "\r\n";
+                        index += 2;
+                        continue;
+                    }
+                    if (blockChar === "\n" || blockChar === "\r") {
+                        result += blockChar;
+                        index += 1;
+                        continue;
+                    }
+                    index += 1;
+                }
+                continue;
+            }
+        }
+
+        result += char;
+
+        if (char === "'" && !inDoubleQuote) {
+            if (inSingleQuote) {
+                if (next === "'") {
+                    result += "'";
+                    index += 2;
+                    continue;
+                }
+                inSingleQuote = false;
+            } else {
+                inSingleQuote = true;
+            }
+        } else if (char === '"' && !inSingleQuote) {
+            if (inDoubleQuote) {
+                if (next === '"') {
+                    result += '"';
+                    index += 2;
+                    continue;
+                }
+                inDoubleQuote = false;
+            } else {
+                inDoubleQuote = true;
+            }
+        }
+
+        index += 1;
+    }
+
+    return result;
+}
+
 function findStatementTerminator(maskedSql, startIndex) {
     if (!maskedSql || startIndex >= maskedSql.length) {
         return maskedSql ? maskedSql.length : 0;
@@ -495,32 +587,68 @@ function indexToLineCol(text, index) {
     return { line, column };
 }
 
+function normalisePositiveInteger(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+        return null;
+    }
+    return Math.floor(numeric);
+}
+
 function extractDmlStatements(sqlText) {
     if (typeof sqlText !== "string" || !sqlText.trim()) {
         return [];
     }
+
     const masked = maskCommentsAndStrings(sqlText);
-    const regex = /\b(INSERT|UPDATE|DELETE)\b/gi;
     const segments = [];
-    let match;
-    while ((match = regex.exec(masked)) !== null) {
-        const start = match.index;
+
+    let offset = 0;
+    while (offset < masked.length) {
+        let start = offset;
+        while (start < masked.length && /\s/.test(masked[start])) {
+            start += 1;
+        }
+
+        if (start >= masked.length) {
+            break;
+        }
+
         const end = findStatementTerminator(masked, start);
-        const snippet = sqlText.slice(start, end).trim();
-        if (!snippet) continue;
-        const startMeta = indexToLineCol(sqlText, start);
-        const endMeta = indexToLineCol(sqlText, end);
-        segments.push({
-            index: segments.length + 1,
-            text: snippet,
-            start,
-            end,
-            startLine: startMeta.line,
-            startColumn: startMeta.column,
-            endLine: endMeta.line,
-            endColumn: endMeta.column
-        });
+        if (end <= start) {
+            offset = start + 1;
+            continue;
+        }
+
+        const snippet = sqlText.slice(start, end);
+        const cleanedSnippet = stripSqlComments(snippet).trim();
+        if (cleanedSnippet) {
+            const keywordMatch = cleanedSnippet.match(/^(SELECT|WITH|INSERT|UPDATE|DELETE|MERGE|UPSERT|REPLACE)\b/i);
+            if (keywordMatch) {
+                const startMeta = indexToLineCol(sqlText, start);
+                const endMeta = indexToLineCol(sqlText, end);
+                const startColumn = normalisePositiveInteger(startMeta.column) || 1;
+                const endColumn = normalisePositiveInteger(endMeta.column) || startColumn;
+                const startLine = normalisePositiveInteger(startMeta.line) || 1;
+                const endLine = normalisePositiveInteger(endMeta.line) || startLine;
+                segments.push({
+                    index: segments.length + 1,
+                    text: cleanedSnippet,
+                    rawText: snippet.trim(),
+                    start,
+                    end,
+                    line: startLine,
+                    startLine,
+                    startColumn,
+                    endLine,
+                    endColumn
+                });
+            }
+        }
+
+        offset = end;
     }
+
     return segments;
 }
 
@@ -1058,6 +1186,27 @@ export async function analyseSqlToReport(sqlText, options = {}) {
     let dmlError = null;
     if (dmlSegments.length) {
         const segmentTexts = dmlSegments.map((segment) => segment.text);
+        const segmentsForDify = dmlSegments.map((segment) => {
+            const startLine = normalisePositiveInteger(segment.startLine ?? segment.line);
+            const endLine = normalisePositiveInteger(segment.endLine);
+            const startColumn = normalisePositiveInteger(segment.startColumn);
+            const endColumn = normalisePositiveInteger(segment.endColumn);
+            const text = typeof segment.text === "string"
+                ? segment.text
+                : typeof segment.rawText === "string"
+                ? segment.rawText
+                : "";
+            return {
+                text,
+                rawText: typeof segment.rawText === "string" ? segment.rawText : text,
+                index: segment.index,
+                startLine: startLine || undefined,
+                endLine: endLine || startLine || undefined,
+                startColumn: startColumn || undefined,
+                endColumn: endColumn || undefined,
+                line: startLine || undefined
+            };
+        });
         const dmlFilePath = path ? `${path}.dml.txt` : "analysis.dml.txt";
         try {
             console.log(
@@ -1068,7 +1217,7 @@ export async function analyseSqlToReport(sqlText, options = {}) {
                 filePath: dmlFilePath,
                 content: segmentTexts.join("\n\n"),
                 userId: resolvedUserId,
-                segments: segmentTexts,
+                segments: segmentsForDify,
                 files
             });
         } catch (error) {
@@ -1123,25 +1272,70 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const segments = dify?.segments && Array.isArray(dify.segments) && dify.segments.length
         ? dify.segments
         : [rawReport || content || ""];
+    logSqlPayloadStage("segments.normalised", segments);
 
     const parsedStaticReport = parseStaticReport(rawReport) || {};
+    logSqlPayloadStage("static.parsedReport", parsedStaticReport);
     const staticSummary = normaliseStaticSummary(parsedStaticReport.summary, ".sql");
     const staticIssues = Array.isArray(parsedStaticReport.issues) ? parsedStaticReport.issues : [];
     const staticIssuesWithSource = staticIssues.map((issue) => annotateIssueSource(issue, "static_analyzer"));
     const staticMetadata = normaliseStaticMetadata(parsedStaticReport.metadata);
+    const staticIssuesForPersistence = cloneIssueListForPersistence(staticIssues);
     const staticReportPayload = {
         ...parsedStaticReport,
         summary: staticSummary,
-        issues: staticIssues,
+        issues: staticIssuesForPersistence,
         metadata: staticMetadata
     };
+    logSqlPayloadStage("static.reportPayload", staticReportPayload);
 
     const dmlSegments = Array.isArray(dml?.segments)
-        ? dml.segments.map((segment, index) => ({
-              ...segment,
-              index: Number.isFinite(Number(segment?.index)) ? segment.index : index + 1
-          }))
+        ? dml.segments.map((segment, index) => {
+              const baseIndex = index + 1;
+              if (!segment || typeof segment !== "object") {
+                  const textValue = typeof segment === "string" ? segment : String(segment ?? "");
+                  return {
+                      index: baseIndex,
+                      text: textValue,
+                      rawText: textValue
+                  };
+              }
+              const clone = { ...segment };
+              const numericIndex = normalisePositiveInteger(clone.index);
+              clone.index = numericIndex || baseIndex;
+              if (typeof clone.text !== "string" || !clone.text.trim()) {
+                  if (typeof clone.rawText === "string" && clone.rawText.trim()) {
+                      clone.text = clone.rawText.trim();
+                  } else if (typeof clone.raw === "string" && clone.raw.trim()) {
+                      clone.text = clone.raw;
+                  } else {
+                      clone.text = "";
+                  }
+              }
+              if (typeof clone.rawText !== "string" || !clone.rawText.trim()) {
+                  clone.rawText = clone.text;
+              }
+              const startLine = normalisePositiveInteger(clone.startLine ?? clone.line);
+              const endLine = normalisePositiveInteger(clone.endLine);
+              const startColumn = normalisePositiveInteger(clone.startColumn ?? clone.column);
+              const endColumn = normalisePositiveInteger(clone.endColumn);
+              if (startLine) {
+                  clone.startLine = startLine;
+                  clone.line = startLine;
+              }
+              if (endLine) {
+                  clone.endLine = endLine;
+              }
+              if (startColumn) {
+                  clone.startColumn = startColumn;
+              }
+              if (endColumn) {
+                  clone.endColumn = endColumn;
+              }
+              return clone;
+          })
         : [];
+    logSqlPayloadStage("dml.segments", dmlSegments);
     const dmlPrompt = dml?.dify || null;
     const dmlReportText = typeof dmlPrompt?.report === "string" ? dmlPrompt.report : "";
     const dmlReportTextHuman = typeof dmlPrompt?.textReport === "string" ? dmlPrompt.textReport : "";
@@ -1154,7 +1348,12 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     );
     const dmlSummary = normaliseDmlSummary(dmlSegments, dmlPrompt, dmlError);
     const dmlAggregated = dmlPrompt && typeof dmlPrompt.aggregated === "object" ? dmlPrompt.aggregated : null;
-    const dmlIssues = Array.isArray(dmlAggregated?.issues) ? dmlAggregated.issues : [];
+    const dmlIssuesRaw = Array.isArray(dmlPrompt?.issues)
+        ? dmlPrompt.issues
+        : Array.isArray(dmlAggregated?.issues)
+        ? dmlAggregated.issues
+        : [];
+    const dmlIssues = cloneIssueListForPersistence(dmlIssuesRaw);
     const dmlIssuesWithSource = dmlIssues.map((issue) => annotateIssueSource(issue, "dml_prompt"));
     const dmlConversationId = typeof dmlPrompt?.conversationId === "string" ? dmlPrompt.conversationId : "";
     const dmlGeneratedAt = dmlPrompt?.generatedAt || null;
@@ -1172,6 +1371,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         generatedAt: dmlGeneratedAt,
         metadata: { analysis_source: "dml_prompt" }
     };
+    logSqlPayloadStage("dml.reportPayload", dmlReportPayload);
 
     let finalReport = difyReport && difyReport.trim() ? difyReport : rawReport;
     let parsedDify;
@@ -1190,6 +1390,8 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const difySummary = parsedDify && typeof parsedDify === "object"
         ? normaliseDifySummary(parsedDify, difyIssuesRaw.length)
         : null;
+    logSqlPayloadStage("dify.summary", difySummary);
+    logSqlPayloadStage("issues.combined", combinedIssues);
 
     const compositeSummary = buildCompositeSummary(staticSummary, dmlSummary, difySummary, combinedIssues);
 
@@ -1215,12 +1417,10 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     }
 
     const finalPayload = {
-        summary: compositeSummary,
-        issues: combinedIssues,
-        reports: {
-            static_analyzer: staticReportPayload,
-            dml_prompt: dmlReportPayload
-        },
+        summary: cloneValue(compositeSummary),
+        issues: cloneIssueListForPersistence(combinedIssues),
+        reports: finalReports,
+        aggregated_reports: aggregatedReports,
         metadata: {
             analysis_source: "composite",
             components: [
@@ -1230,24 +1430,24 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             ].filter(Boolean)
         }
     };
+    logSqlPayloadStage("payload.final", finalPayload);
 
     if (parsedDify && typeof parsedDify === "object") {
-        finalPayload.reports.static_analyzer.enrichment = parsedDify;
         finalPayload.reports.dify_workflow = {
             type: "dify_workflow",
-            summary: difySummary,
-            issues: difyIssuesRaw,
+            summary: cloneValue(difySummary),
+            issues: cloneIssueListForPersistence(difyIssuesRaw),
             metadata: { analysis_source: "dify_workflow" },
-            raw: parsedDify
+            raw: parsedDify,
+            report: difyReport
         };
     }
 
-    if (dmlAggregated) {
-        finalPayload.reports.dml_prompt.aggregated = dmlAggregated;
-        if (!finalPayload.reports.dml_prompt.issues) {
-            finalPayload.reports.dml_prompt.issues = dmlIssues;
-        }
-    }
+    const aiChunkSummaries = cloneValue(dmlChunks);
+    logSqlPayloadStage("chunks.ai", aiChunkSummaries);
+
+    const chunksForReport = [];
+    logSqlPayloadStage("chunks.final", chunksForReport);
 
     let annotatedChunks = [];
     if (dmlChunks.length) {
@@ -1282,6 +1482,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     }
 
     finalReport = JSON.stringify(finalPayload, null, 2);
+    logSqlPayloadStage("report.serialised", finalReport);
 
     const generatedAt = dify?.generatedAt || new Date().toISOString();
     const combinedSummaryRecords = [
@@ -1348,6 +1549,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         analysisPayload.combinedSummary = compositeSummary;
         analysisPayload.combinedSummaryRecords = combinedSummaryRecords;
         analysisPayload.combinedIssues = combinedIssues;
+        analysisPayload.aggregatedReports = aggregatedReports;
         if (parsedDify && typeof parsedDify === "object") {
             analysisPayload.difyReport = parsedDify;
             analysisPayload.difySummary = difySummary;
@@ -1368,6 +1570,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             analysisPayload.difyErrorMessage = "";
         }
     }
+    logSqlPayloadStage("analysis.payload", analysisPayload);
 
     const sourceLabels = ["sql-rule-engine"];
     if (dmlSegments.length) {
@@ -1380,7 +1583,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const result = {
         report: finalReport,
         conversationId: typeof dify?.conversationId === "string" ? dify.conversationId : "",
-        chunks: annotatedChunks,
+        chunks: chunksForReport,
         segments,
         generatedAt,
         analysis: analysisPayload,
