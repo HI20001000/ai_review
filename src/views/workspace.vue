@@ -3605,36 +3605,35 @@ onBeforeUnmount(() => {
                                                     <pre
                                                         v-if="segment.text || segment.sql"
                                                         class="reportDmlSql codeScroll themed-scrollbar"
-                                                    >
-                                                        {{ segment.text || segment.sql }}
-                                                    </pre>
+                                                        v-text="segment.text || segment.sql"
+                                                    ></pre>
                                                     <pre
                                                         v-if="segment.analysis"
                                                         class="reportDmlAnalysis codeScroll themed-scrollbar"
-                                                    >
-                                                        {{ segment.analysis }}
-                                                    </pre>
+                                                        v-text="segment.analysis"
+                                                    ></pre>
                                                 </details>
                                             </div>
                                             <p v-else class="reportDmlEmpty">尚未取得 AI審查拆分結果。</p>
                                             <pre
                                                 v-if="dmlReportDetails.reportText"
                                                 class="reportDmlSummary codeScroll themed-scrollbar"
-                                            >
-                                                {{ dmlReportDetails.reportText }}
-                                            </pre>
+                                                v-text="dmlReportDetails.reportText"
+                                            ></pre>
                                         </section>
                                         <section
                                             v-if="structuredReportJsonPreview"
                                             class="reportJsonPreviewSection"
                                         >
-                                            <h4 class="reportJsonPreviewHeading">
-                                                {{ structuredReportJsonHeading }}
-                                            </h4>
-                                            <pre
-                                                class="reportJsonPreview codeScroll themed-scrollbar"
-                                                v-text="structuredReportJsonPreview"
-                                            ></pre>
+                                            <details class="reportJsonPreviewDetails">
+                                                <summary class="reportJsonPreviewSummary">
+                                                    {{ structuredReportJsonHeading }}
+                                                </summary>
+                                                <pre
+                                                    class="reportJsonPreview codeScroll themed-scrollbar"
+                                                    v-text="structuredReportJsonPreview"
+                                                ></pre>
+                                            </details>
                                         </section>
                                         <section
                                             v-if="shouldShowReportIssuesSection"
@@ -4354,23 +4353,58 @@ body,
 
 .reportJsonPreviewSection {
     margin-top: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
 }
 
-.reportJsonPreviewHeading {
+.reportJsonPreviewDetails {
+    border: 1px solid #334155;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.65);
+    overflow: hidden;
+}
+
+.reportJsonPreviewSummary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     margin: 0;
+    padding: 10px 12px;
     font-size: 13px;
     font-weight: 600;
     color: #bfdbfe;
+    list-style: none;
+    cursor: pointer;
+}
+
+.reportJsonPreviewSummary::-webkit-details-marker {
+    display: none;
+}
+
+.reportJsonPreviewDetails[open] .reportJsonPreviewSummary {
+    border-bottom: 1px solid rgba(59, 130, 246, 0.35);
+}
+
+.reportJsonPreviewDetails:not([open]) .reportJsonPreviewSummary::after,
+.reportJsonPreviewDetails[open] .reportJsonPreviewSummary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border: 1px solid currentColor;
+    border-left: 0;
+    border-top: 0;
+    transform: rotate(45deg);
+    margin-left: auto;
+    transition: transform 0.2s ease;
+}
+
+.reportJsonPreviewDetails[open] .reportJsonPreviewSummary::after {
+    transform: rotate(225deg);
 }
 
 .reportJsonPreview {
     margin: 0;
     padding: 12px;
-    border: 1px solid #334155;
-    background: rgba(15, 23, 42, 0.65);
+    border-top: 1px solid rgba(59, 130, 246, 0.35);
+    background: rgba(15, 23, 42, 0.45);
     color: #e2e8f0;
     font-size: 12px;
     line-height: 1.45;
@@ -5500,13 +5534,18 @@ body,
     color: #1d4ed8;
 }
 
-.page--light .reportJsonPreviewHeading {
+.page--light .reportJsonPreviewDetails {
+    background: #f8fafc;
+    border-color: #cbd5f5;
+}
+
+.page--light .reportJsonPreviewSummary {
     color: #1d4ed8;
 }
 
 .page--light .reportJsonPreview {
-    background: #f8fafc;
-    border-color: #cbd5f5;
+    background: #ffffff;
+    border-top-color: rgba(59, 130, 246, 0.2);
     color: #1f2937;
 }
 
