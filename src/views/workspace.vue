@@ -3664,7 +3664,7 @@ onBeforeUnmount(() => {
                                                     >
                                                         無法載入檔案內容：{{ activeReport.state.sourceError }}
                                                     </div>
-                                                    <template v-else>
+                                                    <div v-else>
                                                         <div
                                                             v-if="shouldShowAiUnavailableNotice"
                                                             class="reportIssuesNotice reportIssuesNotice--warning"
@@ -3738,7 +3738,7 @@ onBeforeUnmount(() => {
                                                             </div>
                                                         </div>
                                                         <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
-                                                    </template>
+                                                    </div>
                                                 </template>
                                                 <p v-else class="reportIssuesEmpty">尚未能載入完整的代碼內容。</p>
                                             </div>
