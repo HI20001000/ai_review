@@ -79,6 +79,107 @@ function safeParseArray(jsonText, { fallback = [] } = {}) {
     }
 }
 
+function sanitiseCombinedReportJson(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const summary = Array.isArray(parsed?.summary)
+            ? parsed.summary.map((record) =>
+                  record && typeof record === "object" && !Array.isArray(record) ? { ...record } : record
+              )
+            : [];
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.map((issue) =>
+                  issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+              )
+            : [];
+        return JSON.stringify({ summary, issues });
+    } catch (_error) {
+        return "";
+    }
+}
+
+function sanitiseIssuesJson(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.map((issue) =>
+                  issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+              )
+            : [];
+        return JSON.stringify({ issues });
+    } catch (_error) {
+        return "";
+    }
+}
+
+const EMPTY_ISSUES_JSON = JSON.stringify({ issues: [] });
+
+function buildFallbackCombinedReport(errorMessage, generatedAt) {
+    const trimmedMessage = typeof errorMessage === "string" ? errorMessage.trim() : "";
+    const baseMessage = trimmedMessage
+        ? `AI 審查流程執行失敗：${trimmedMessage}`
+        : "AI 審查流程執行失敗。";
+    const summary = [
+        {
+            source: "static_analyzer",
+            label: "靜態分析器",
+            total_issues: 0,
+            status: "skipped",
+            generated_at: generatedAt
+        },
+        {
+            source: "dml_prompt",
+            label: "AI審查",
+            total_issues: 0,
+            status: "failed",
+            message: baseMessage,
+            generated_at: generatedAt
+        },
+        {
+            source: "combined",
+            label: "聚合報告",
+            total_issues: 0,
+            status: "failed",
+            message: baseMessage,
+            generated_at: generatedAt
+        }
+    ];
+
+    return { summary, issues: [] };
+}
+
+function safeSerialiseForLog(value) {
+    if (typeof value === "string") {
+        return value;
+    }
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch (error) {
+        return `[unserialisable: ${error?.message || error}]`;
+    }
+}
+
+function logReportPersistenceStage(label, value) {
+    if (typeof console === "undefined" || typeof console.log !== "function") {
+        return;
+    }
+    console.log(`[reports] ${label}: ${safeSerialiseForLog(value)}`);
+}
+
 function toIsoString(value) {
     if (value === null || value === undefined) return null;
     if (value instanceof Date) {
@@ -116,10 +217,100 @@ function extractAnalysisFromChunks(chunks) {
     return null;
 }
 
+function safeParseReport(reportText) {
+    if (typeof reportText !== "string") {
+        return null;
+    }
+    const trimmed = reportText.trim();
+    if (!trimmed) {
+        return null;
+    }
+    if (!/^\s*[\[{]/.test(trimmed)) {
+        return null;
+    }
+    try {
+        return JSON.parse(trimmed);
+    } catch (_error) {
+        return null;
+    }
+}
+
 function mapReportRow(row) {
     const chunks = safeParseArray(row.chunks_json);
     const segments = safeParseArray(row.segments_json);
-    const analysis = extractAnalysisFromChunks(chunks);
+    const parsedReport = safeParseReport(row.report);
+    const reportsBlock =
+        parsedReport && typeof parsedReport === "object" && !Array.isArray(parsedReport.reports)
+            ? parsedReport.reports
+            : parsedReport && typeof parsedReport.reports === "object"
+            ? parsedReport.reports
+            : {};
+    const staticReport =
+        reportsBlock?.static_analyzer || reportsBlock?.staticAnalyzer || null;
+    const dmlReport = reportsBlock?.dml_prompt || reportsBlock?.dmlPrompt || null;
+    const difyReport = reportsBlock?.dify_workflow || reportsBlock?.difyWorkflow || null;
+
+    let analysis = extractAnalysisFromChunks(chunks);
+    const ensureAnalysis = () => {
+        if (!analysis) {
+            analysis = {};
+        }
+        return analysis;
+    };
+
+    if (parsedReport && typeof parsedReport === "object") {
+        const target = ensureAnalysis();
+        if (parsedReport.summary && typeof parsedReport.summary === "object") {
+            target.combinedSummary = parsedReport.summary;
+        }
+        if (Array.isArray(parsedReport.issues)) {
+            target.combinedIssues = parsedReport.issues;
+        }
+    }
+
+    if (staticReport && typeof staticReport === "object") {
+        const target = ensureAnalysis();
+        target.staticReport = staticReport;
+    }
+
+    if (difyReport && typeof difyReport === "object") {
+        const target = ensureAnalysis();
+        target.difyReport = difyReport;
+        if (difyReport.summary && typeof difyReport.summary === "object") {
+            target.difySummary = difyReport.summary;
+        }
+        if (Array.isArray(difyReport.issues)) {
+            target.difyIssues = difyReport.issues;
+        }
+    }
+
+    if (dmlReport && typeof dmlReport === "object") {
+        const target = ensureAnalysis();
+        target.dmlReport = dmlReport;
+        if (Array.isArray(dmlReport.issues)) {
+            target.dmlIssues = dmlReport.issues;
+        }
+        if (Array.isArray(dmlReport.segments)) {
+            target.dmlSegments = dmlReport.segments;
+        }
+        if (dmlReport.aggregated && typeof dmlReport.aggregated === "object") {
+            target.dmlAggregated = dmlReport.aggregated;
+        }
+        if (dmlReport.summary && typeof dmlReport.summary === "object") {
+            target.dmlSummary = dmlReport.summary;
+        }
+        if (dmlReport.generatedAt || dmlReport.generated_at) {
+            target.dmlGeneratedAt = dmlReport.generatedAt || dmlReport.generated_at;
+        }
+        if (typeof dmlReport.conversationId === "string" && dmlReport.conversationId) {
+            target.dmlConversationId = dmlReport.conversationId;
+        }
+    }
+
+    const combinedReportJson = sanitiseCombinedReportJson(row.combined_report_json || "");
+    const staticReportJson = sanitiseIssuesJson(row.static_report_json || "");
+    const aiReportJson = sanitiseIssuesJson(row.ai_report_json || "");
+
     return {
         projectId: row.project_id,
         path: row.path,
@@ -127,11 +318,17 @@ function mapReportRow(row) {
         chunks,
         segments,
         analysis,
+        dml: dmlReport || null,
+        dify: difyReport || null,
+        staticReport: staticReport || null,
         conversationId: row.conversation_id || "",
         userId: row.user_id || "",
         generatedAt: toIsoString(row.generated_at),
         createdAt: toIsoString(row.created_at),
-        updatedAt: toIsoString(row.updated_at)
+        updatedAt: toIsoString(row.updated_at),
+        combinedReportJson,
+        staticReportJson,
+        aiReportJson
     };
 }
 
@@ -213,7 +410,10 @@ async function upsertReport({
     segments,
     conversationId,
     userId,
-    generatedAt
+    generatedAt,
+    combinedReportJson,
+    staticReportJson,
+    aiReportJson
 }) {
     if (!projectId || !path) {
         throw new Error("Report upsert requires projectId and path");
@@ -235,6 +435,43 @@ async function upsertReport({
     const safeReport = typeof report === "string" ? report : "";
     const safeConversationId = typeof conversationId === "string" ? conversationId : "";
     const safeUserId = typeof userId === "string" ? userId : "";
+    const safeCombinedJson = sanitiseCombinedReportJson(
+        typeof combinedReportJson === "string" ? combinedReportJson : ""
+    );
+    const safeStaticJson = sanitiseIssuesJson(
+        typeof staticReportJson === "string" ? staticReportJson : ""
+    );
+    const safeAiJson = sanitiseIssuesJson(typeof aiReportJson === "string" ? aiReportJson : "");
+
+    logReportPersistenceStage("upsertReport.input", {
+        projectId,
+        path,
+        report,
+        chunks,
+        segments,
+        conversationId,
+        userId,
+        generatedAt,
+        combinedReportJson,
+        staticReportJson,
+        aiReportJson
+    });
+
+    logReportPersistenceStage("upsertReport.serialised", {
+        projectId: safeProjectId,
+        path: safePath,
+        report: safeReport,
+        chunks: serialisedChunks,
+        segments: serialisedSegments,
+        conversationId: safeConversationId,
+        userId: safeUserId,
+        generatedAt: storedGeneratedAt,
+        createdAt: now,
+        updatedAt: now,
+        combinedReportJson: safeCombinedJson,
+        staticReportJson: safeStaticJson,
+        aiReportJson: safeAiJson
+    });
 
     await pool.query(
         `INSERT INTO reports (
@@ -247,8 +484,11 @@ async function upsertReport({
             user_id,
             generated_at,
             created_at,
-            updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            updated_at,
+            combined_report_json,
+            static_report_json,
+            ai_report_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             report = VALUES(report),
             chunks_json = VALUES(chunks_json),
@@ -256,7 +496,10 @@ async function upsertReport({
             conversation_id = VALUES(conversation_id),
             user_id = VALUES(user_id),
             generated_at = VALUES(generated_at),
-            updated_at = VALUES(updated_at)`,
+            updated_at = VALUES(updated_at),
+            combined_report_json = VALUES(combined_report_json),
+            static_report_json = VALUES(static_report_json),
+            ai_report_json = VALUES(ai_report_json)`,
         [
             safeProjectId,
             safePath,
@@ -267,7 +510,10 @@ async function upsertReport({
             safeUserId,
             storedGeneratedAt,
             now,
-            now
+            now,
+            safeCombinedJson,
+            safeStaticJson,
+            safeAiJson
         ]
     );
 }
@@ -396,7 +642,8 @@ app.get("/api/projects/:projectId/reports", async (req, res, next) => {
     try {
         const { projectId } = req.params;
         const [rows] = await pool.query(
-            `SELECT project_id, path, report, chunks_json, segments_json, conversation_id, user_id, generated_at, created_at, updated_at
+            `SELECT project_id, path, report, chunks_json, segments_json, conversation_id, user_id, generated_at, created_at, updated_at,
+                    combined_report_json, static_report_json, ai_report_json
              FROM reports
              WHERE project_id = ?
              ORDER BY path ASC`,
@@ -412,8 +659,10 @@ app.get("/api/projects/:projectId/reports", async (req, res, next) => {
 });
 
 app.post("/api/reports/dify", async (req, res, next) => {
+    const { projectId, projectName, path, content, userId, files } = req.body || {};
+    let resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+
     try {
-        const { projectId, projectName, path, content, userId, files } = req.body || {};
         if (!projectId || !path || typeof content !== "string") {
             res.status(400).json({ message: "Missing projectId, path, or content for report generation" });
             return;
@@ -422,8 +671,7 @@ app.post("/api/reports/dify", async (req, res, next) => {
             res.status(400).json({ message: "檔案內容為空，無法生成報告" });
             return;
         }
-
-        const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+        resolvedUserId = typeof userId === "string" ? userId.trim() : "";
         if (isSqlPath(path)) {
             console.log(`[sql] Running static SQL analysis project=${projectId} path=${path}`);
             let sqlAnalysis;
@@ -457,7 +705,10 @@ app.post("/api/reports/dify", async (req, res, next) => {
                 segments: reportPayload.segments,
                 conversationId: reportPayload.conversationId,
                 userId: resolvedUserId,
-                generatedAt: reportPayload.generatedAt
+                generatedAt: reportPayload.generatedAt,
+                combinedReportJson: reportPayload.combinedReportJson,
+                staticReportJson: reportPayload.staticReportJson,
+                aiReportJson: reportPayload.aiReportJson
             });
             const savedAtIso = new Date().toISOString();
             res.json({
@@ -509,8 +760,61 @@ app.post("/api/reports/dify", async (req, res, next) => {
         });
     } catch (error) {
         console.error("[dify] Failed to generate report", error);
-        const status = error?.message?.includes("not configured") ? 500 : 502;
-        res.status(status).json({ message: error?.message || "Failed to generate report" });
+
+        const errorMessage = typeof error?.message === "string" ? error.message : "";
+        const shouldFallback =
+            errorMessage && errorMessage.toLowerCase().includes("aggregatedreports is not defined");
+
+        if (shouldFallback && projectId && path) {
+            const fallbackGeneratedAt = new Date().toISOString();
+            const fallbackCombined = buildFallbackCombinedReport(errorMessage, fallbackGeneratedAt);
+            const combinedJson = JSON.stringify(fallbackCombined);
+            const savedAtIso = new Date().toISOString();
+
+            try {
+                await upsertReport({
+                    projectId,
+                    path,
+                    report: "",
+                    chunks: [],
+                    segments: [],
+                    conversationId: "",
+                    userId: resolvedUserId,
+                    generatedAt: fallbackGeneratedAt,
+                    combinedReportJson: combinedJson,
+                    staticReportJson: EMPTY_ISSUES_JSON,
+                    aiReportJson: EMPTY_ISSUES_JSON
+                });
+            } catch (persistError) {
+                console.error("[dify] Failed to persist fallback report", persistError);
+                const status = errorMessage.includes("not configured") ? 500 : 502;
+                res.status(status).json({ message: errorMessage || "Failed to generate report" });
+                return;
+            }
+
+            res.json({
+                projectId,
+                path,
+                report: "",
+                chunks: [],
+                segments: [],
+                conversationId: "",
+                generatedAt: fallbackGeneratedAt,
+                combinedReportJson: combinedJson,
+                staticReportJson: EMPTY_ISSUES_JSON,
+                aiReportJson: EMPTY_ISSUES_JSON,
+                dify: null,
+                dml: null,
+                analysis: null,
+                savedAt: savedAtIso,
+                difyErrorMessage: errorMessage,
+                dmlErrorMessage: ""
+            });
+            return;
+        }
+
+        const status = errorMessage.includes("not configured") ? 500 : 502;
+        res.status(status).json({ message: errorMessage || "Failed to generate report" });
     }
 });
 
