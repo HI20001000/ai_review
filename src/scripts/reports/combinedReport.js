@@ -257,17 +257,19 @@ export function collectAggregatedIssues(state) {
     if (!state) return [];
     const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
     const aiIssues = collectIssuesForSource(state, ["dml_prompt"]);
-    const combined = dedupeIssues([...staticIssues, ...aiIssues]);
+    const difyIssues = collectIssuesForSource(state, ["dify_workflow"]);
+    const difyAsStatic =
+        difyIssues.length > 0
+            ? remapIssuesToSource(difyIssues, "static_analyzer", { force: true })
+            : [];
+
+    const combined = dedupeIssues([...difyAsStatic, ...staticIssues, ...aiIssues]);
     if (combined.length > 0) {
         return combined;
     }
 
-    const difyIssues = collectIssuesForSource(state, ["dify_workflow"]);
-    if (difyIssues.length > 0) {
-        return dedupeIssues([
-            ...remapIssuesToSource(difyIssues, "static_analyzer", { force: true }),
-            ...aiIssues
-        ]);
+    if (difyAsStatic.length > 0) {
+        return dedupeIssues([...difyAsStatic, ...aiIssues]);
     }
 
     const parsedIssues = Array.isArray(state.parsedReport?.issues)

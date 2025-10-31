@@ -205,7 +205,7 @@ const reportPanelConfig = computed(() => {
     const projectIssueGetter = showIssueBadge ? getProjectIssueCount : null;
 
     return {
-        panelTitle: viewMode === "reports" ? "代碼審查" : "Project Files",
+        panelTitle: viewMode === "reports" ? "代碼審查" : "專案檔案",
         showProjectActions,
         showIssueBadge,
         showFileActions,
@@ -3305,7 +3305,7 @@ onBeforeUnmount(() => {
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
                         <path d="M256,0C114.6,0,0,114.6,0,256s114.6,256,256,256s256-114.6,256-256S397.4,0,256,0z M405.3,277.3c0,11.8-9.5,21.3-21.3,21.3h-85.3V384c0,11.8-9.5,21.3-21.3,21.3h-42.7c-11.8,0-21.3-9.6-21.3-21.3v-85.3H128c-11.8,0-21.3-9.6-21.3-21.3v-42.7c0-11.8,9.5-21.3,21.3-21.3h85.3V128c0-11.8,9.5-21.3,21.3-21.3h42.7c11.8,0,21.3,9.6,21.3,21.3v85.3H384c11.8,0,21.3,9.6,21.3,21.3V277.3z" />
                     </svg>
-                    <p>Add Project</p>
+                    <p>新增專案</p>
                 </div>
             </div>
         </div>
@@ -3318,7 +3318,7 @@ onBeforeUnmount(() => {
                     :class="{ active: isProjectToolActive }"
                     @click="toggleProjectTool"
                     :aria-pressed="isProjectToolActive"
-                    title="Projects"
+                    title="專案列表"
                 >
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                         <rect x="3" y="5" width="18" height="14" rx="2" ry="2" fill="currentColor" opacity="0.18" />
@@ -3681,6 +3681,7 @@ onBeforeUnmount(() => {
                                                                         v-for="line in reportIssueLines"
                                                                         :key="line.key"
                                                                         class="codeLine"
+                                                                        :data-line="line.number != null ? line.number : undefined"
                                                                         :class="{
                                                                             'codeLine--issue': line.type === 'code' && line.hasIssue,
                                                                             'codeLine--meta': line.type !== 'code',
@@ -3696,7 +3697,7 @@ onBeforeUnmount(() => {
                                                                                 'codeLineNo--issues': line.type === 'issues',
                                                                                 'codeLineNo--fix': line.type === 'fix'
                                                                             }"
-                                                                            :data-line="line.displayNumber"
+                                                                            :data-line="line.number != null ? line.displayNumber : ''"
                                                                             :aria-label="line.type !== 'code' ? line.iconLabel : null"
                                                                             :aria-hidden="line.type === 'code'"
                                                                         >
@@ -4715,7 +4716,7 @@ body,
 .reportIssuesHeader h4 {
     margin: 0;
     font-size: 16px;
-    color: #f8fafc;
+    color: #0b1120;
 }
 
 .reportIssuesTotal {
@@ -4830,31 +4831,31 @@ body,
 }
 
 .codeLineNo--issue {
-    color: #fca5a5;
+    color: #b91c1c;
 }
 
 .codeLineContent--issueHighlight {
-    color: #fee2e2;
-    background: rgba(248, 113, 113, 0.08);
+    color: #7f1d1d;
+    background: rgba(248, 113, 113, 0.18);
 }
 
 .reportIssuesRow .codeLine--meta {
-    background: rgba(15, 23, 42, 0.92);
-    border-left-color: rgba(148, 163, 184, 0.4);
+    background: rgba(226, 232, 240, 0.75);
+    border-left-color: rgba(148, 163, 184, 0.6);
 }
 
 .reportIssuesRow .codeLine--issuesMeta {
-    background: rgba(251, 146, 60, 0.18);
-    border-left-color: rgba(251, 146, 60, 0.55);
+    background: rgba(251, 146, 60, 0.24);
+    border-left-color: rgba(251, 146, 60, 0.6);
 }
 
 .reportIssuesRow .codeLine--fixMeta {
-    background: rgba(56, 189, 248, 0.14);
-    border-left-color: rgba(56, 189, 248, 0.5);
+    background: rgba(56, 189, 248, 0.2);
+    border-left-color: rgba(56, 189, 248, 0.55);
 }
 
 .codeLineNo--meta {
-    color: #cbd5f5;
+    color: #1f2937;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -4866,11 +4867,11 @@ body,
 }
 
 .codeLineNo--issues {
-    color: #f97316;
+    color: #c2410c;
 }
 
 .codeLineNo--fix {
-    color: #38bdf8;
+    color: #0284c7;
 }
 
 .codeLineNoIcon {
@@ -4892,11 +4893,11 @@ body,
 }
 
 .codeLineContent--issues {
-    color: #fed7aa;
+    color: #9a3412;
 }
 
 .codeLineContent--fix {
-    color: #bae6fd;
+    color: #0369a1;
 }
 
 .reportIssueInlineRow {
@@ -4905,7 +4906,7 @@ body,
     gap: 8px;
     align-items: flex-start;
     margin: 0 0 6px;
-    color: #f8fafc;
+    color: #0f172a;
 }
 
 .reportIssueInlineRow:last-child {
@@ -4913,7 +4914,7 @@ body,
 }
 
 .reportIssueInlineRow--empty {
-    color: #cbd5f5;
+    color: #475569;
     font-style: italic;
 }
 
@@ -4947,14 +4948,14 @@ body,
 }
 
 .reportIssueInlineIndex {
-    color: #bfdbfe;
+    color: #1e3a8a;
 }
 
 .reportIssueInlineRule {
     padding: 2px 8px;
     border-radius: 999px;
-    background: rgba(59, 130, 246, 0.2);
-    color: #bfdbfe;
+    background: rgba(59, 130, 246, 0.15);
+    color: #1d4ed8;
     font-weight: 600;
 }
 
@@ -4963,30 +4964,31 @@ body,
     border-radius: 999px;
     font-weight: 600;
     border: 1px solid transparent;
+    color: #0f172a;
 }
 
 .reportIssueInlineSeverity--error {
-    background: rgba(248, 113, 113, 0.18);
-    color: #fca5a5;
-    border-color: rgba(248, 113, 113, 0.35);
+    background: rgba(248, 113, 113, 0.22);
+    color: #991b1b;
+    border-color: rgba(248, 113, 113, 0.45);
 }
 
 .reportIssueInlineSeverity--warn {
-    background: rgba(234, 179, 8, 0.2);
-    color: #facc15;
-    border-color: rgba(234, 179, 8, 0.35);
+    background: rgba(234, 179, 8, 0.24);
+    color: #92400e;
+    border-color: rgba(234, 179, 8, 0.45);
 }
 
 .reportIssueInlineSeverity--info {
     background: rgba(59, 130, 246, 0.2);
-    color: #bfdbfe;
-    border-color: rgba(59, 130, 246, 0.35);
+    color: #1d4ed8;
+    border-color: rgba(59, 130, 246, 0.45);
 }
 
 .reportIssueInlineSeverity--muted {
-    background: rgba(148, 163, 184, 0.2);
-    color: #cbd5f5;
-    border-color: rgba(148, 163, 184, 0.35);
+    background: rgba(148, 163, 184, 0.24);
+    color: #1f2937;
+    border-color: rgba(148, 163, 184, 0.45);
 }
 
 .reportIssueInlineLine {
@@ -5001,6 +5003,7 @@ body,
     flex: 1 1 220px;
     min-width: 200px;
     font-weight: 600;
+    color: #0b1120;
 }
 
 .reportIssueInlineMeta {
@@ -5008,7 +5011,7 @@ body,
     flex-wrap: wrap;
     gap: 6px;
     font-size: 12px;
-    color: #cbd5f5;
+    color: #334155;
 }
 
 .reportIssueInlineObject {
@@ -5016,7 +5019,7 @@ body,
 }
 
 .reportIssueInlineColumn {
-    color: #e2e8f0;
+    color: #1f2937;
 }
 
 .reportIssuesEmpty {
@@ -5212,8 +5215,8 @@ body,
     font-family: Consolas, "Courier New", monospace;
     font-size: 13px;
     line-height: 1.45;
-    color: #d1d5db;
-    background: #1b1b1b;
+    color: #1f2937;
+    background: #f8fafc;
     cursor: text;
 }
 
@@ -5246,10 +5249,11 @@ body,
 .codeLineNo {
     position: relative;
     flex: 0 0 auto;
-    width: 3.5ch;
+    width: 5ch;
+    min-width: 5ch;
     padding: 0 12px 0 0;
     text-align: right;
-    color: #9ca3af;
+    color: #4b5563;
     font-variant-numeric: tabular-nums;
     user-select: none;
 }
@@ -5275,8 +5279,8 @@ body,
 }
 
 .codeSelectionHighlight {
-    background: rgba(59, 130, 246, 0.35);
-    color: #f8fafc;
+    background: rgba(59, 130, 246, 0.25);
+    color: #1f2937;
     border-radius: 2px;
 }
 
