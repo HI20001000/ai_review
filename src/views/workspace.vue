@@ -620,10 +620,6 @@ const activeReportDetails = computed(() => {
 
 
 const hasStructuredReport = computed(() => Boolean(activeReportDetails.value));
-const summarySourceItems = computed(() => {
-    const sources = activeReportDetails.value?.sourceSummaries;
-    return Array.isArray(sources) ? sources : [];
-});
 const combinedSummaryItems = computed(() => {
     const items = activeReportDetails.value?.combinedSummaryDetails;
     return Array.isArray(items) ? items : [];
@@ -3256,7 +3252,7 @@ onBeforeUnmount(() => {
 
 
 <template>
-    <div class="page">
+    <div class="page page--light">
         <div class="topBar">
             <div class="topBar_left">
                 <h1 class="topBar_title">
@@ -3442,53 +3438,6 @@ onBeforeUnmount(() => {
                                             class="reportSummaryGrid"
                                         >
                                             <div
-                                                v-if="summarySourceItems.length"
-                                                class="reportSummaryCard reportSummaryCard--span"
-                                            >
-                                                <span class="reportSummaryLabel">來源摘要</span>
-                                                <ul class="reportSummarySources">
-                                                    <li
-                                                        v-for="item in summarySourceItems"
-                                                        :key="item.key"
-                                                        class="reportSummarySource"
-                                                    >
-                                                        <div class="reportSummarySourceHeading">
-                                                            <span class="reportSummaryItemLabel">{{ item.label }}</span>
-                                                            <span
-                                                                v-if="item.status"
-                                                                class="reportSummarySourceStatus"
-                                                            >
-                                                                {{ item.status }}
-                                                            </span>
-                                                        </div>
-                                                        <p
-                                                            v-if="item.generatedAt"
-                                                            class="reportSummarySourceTimestamp"
-                                                        >
-                                                            產生於 {{ item.generatedAt }}
-                                                        </p>
-                                                        <ul
-                                                            v-if="item.metrics?.length"
-                                                            class="reportSummarySourceMetrics"
-                                                        >
-                                                            <li
-                                                                v-for="metric in item.metrics"
-                                                                :key="`${item.key}-${metric.label}`"
-                                                            >
-                                                                <span class="reportSummaryItemLabel">{{ metric.label }}</span>
-                                                                <span class="reportSummaryItemValue">{{ metric.value }}</span>
-                                                            </li>
-                                                        </ul>
-                                                        <p
-                                                            v-if="item.errorMessage"
-                                                            class="reportSummarySourceError"
-                                                        >
-                                                            {{ item.errorMessage }}
-                                                        </p>
-                                                    </li>
-                                                </ul>
-                                            </div>
-                                            <div
                                                 v-if="combinedSummaryItems.length"
                                                 class="reportSummaryCard reportSummaryCard--span"
                                             >
@@ -3628,8 +3577,11 @@ onBeforeUnmount(() => {
                                                             ）
                                                         </span>
                                                     </summary>
-                                                    <pre class="reportDmlSql codeScroll themed-scrollbar">
-                                                        {{ segment.sql }}
+                                                    <pre
+                                                        v-if="segment.text || segment.sql"
+                                                        class="reportDmlSql codeScroll themed-scrollbar"
+                                                    >
+                                                        {{ segment.text || segment.sql }}
                                                     </pre>
                                                     <pre
                                                         v-if="segment.analysis"
@@ -4505,68 +4457,6 @@ body,
     color: #cbd5f5;
 }
 
-.reportSummarySources {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.reportSummarySource {
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 6px;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    background: rgba(30, 41, 59, 0.32);
-}
-
-.reportSummarySourceHeading {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
-.reportSummarySourceStatus {
-    font-size: 12px;
-    font-weight: 600;
-    color: #38bdf8;
-    text-transform: uppercase;
-}
-
-.reportSummarySourceTimestamp {
-    margin: 0;
-    font-size: 12px;
-    color: #94a3b8;
-}
-
-.reportSummarySourceMetrics {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 16px;
-    font-size: 13px;
-    color: #e2e8f0;
-    word-break: break-word;
-}
-
-.reportSummarySourceMetrics li {
-    display: flex;
-    gap: 6px;
-}
-
-.reportSummarySourceError {
-    margin: 0;
-    font-size: 12px;
-    color: #f87171;
-}
-
 .reportStaticSection {
     margin-top: 24px;
     padding: 16px;
@@ -5428,6 +5318,381 @@ body,
     color: #e5e7eb;
     border-color: #4b5563;
 }
+
+/* Light theme overrides */
+.page--light {
+    background-color: #f8fafc;
+    color: #1f2937;
+    --panel-surface: #ffffff;
+    --panel-surface-alt: #f8fafc;
+    --panel-border: #e2e8f0;
+    --panel-border-strong: #cbd5f5;
+    --panel-divider: rgba(148, 163, 184, 0.35);
+    --panel-heading: #0f172a;
+    --panel-muted: #64748b;
+    --panel-accent: #2563eb;
+    --panel-accent-soft: rgba(37, 99, 235, 0.12);
+    --tree-row-hover: rgba(148, 163, 184, 0.18);
+    --tree-row-active: rgba(59, 130, 246, 0.18);
+    --tree-text: #1f2937;
+    --tree-icon: #475569;
+    --tree-connector: rgba(148, 163, 184, 0.4);
+    --tree-badge-text: #1f2937;
+    --tree-badge-idle: rgba(148, 163, 184, 0.24);
+    --tree-badge-processing: rgba(234, 179, 8, 0.35);
+    --tree-badge-ready: rgba(34, 197, 94, 0.28);
+    --tree-badge-error: rgba(239, 68, 68, 0.32);
+    --scrollbar-track: #e2e8f0;
+    --scrollbar-thumb: #cbd5f5;
+    --scrollbar-thumb-hover: #93c5fd;
+}
+
+.page--light .topBar {
+    background: linear-gradient(90deg, #ffffff, #f1f5f9);
+    border-bottom: 1px solid #cbd5f5;
+    box-shadow: 0 2px 6px rgba(148, 163, 184, 0.35);
+    color: #0f172a;
+}
+
+.page--light .topBar_iconBtn {
+    background: #ffffff;
+    border-color: #cbd5f5;
+    color: #1f2937;
+}
+
+.page--light .topBar_iconBtn:hover:not(:disabled) {
+    background: #e2e8f0;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.page--light .topBar_iconBtn.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(14, 165, 233, 0.18));
+    color: #1d4ed8;
+}
+
+.page--light .topBar_addProject {
+    background-color: #2563eb;
+    box-shadow: 0 4px 12px rgba(148, 163, 184, 0.35);
+}
+
+.page--light .topBar_addProject:hover {
+    background-color: #1d4ed8;
+}
+
+.page--light .mainContent {
+    background-color: #f8fafc;
+}
+
+.page--light .workSpace {
+    background: #ffffff;
+    border-color: #e2e8f0;
+}
+
+.page--light .toolColumn {
+    background: #e2e8f0;
+    border-right: 1px solid #cbd5f5;
+}
+
+.page--light .toolColumn_btn {
+    background: #ffffff;
+    border-color: #cbd5f5;
+    color: #1f2937;
+}
+
+.page--light .toolColumn_btn:hover {
+    background: #e2e8f0;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.page--light .toolColumn_btn.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(14, 165, 233, 0.18));
+    color: #1d4ed8;
+}
+
+.page--light .panelHeader {
+    color: #475569;
+}
+
+.page--light .reportViewerContent {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .reportViewerProcessingOverlay {
+    background: rgba(148, 163, 184, 0.35);
+}
+
+.page--light .reportViewerProcessingText {
+    color: #1f2937;
+}
+
+.page--light .reportViewerPlaceholder {
+    color: #64748b;
+}
+
+.page--light .reportTabs {
+    gap: 10px;
+}
+
+.page--light .reportTab {
+    background: #e2e8f0;
+    border-color: #cbd5f5;
+    color: #1f2937;
+}
+
+.page--light .reportTab.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(14, 165, 233, 0.18));
+    border-color: rgba(59, 130, 246, 0.45);
+    color: #1d4ed8;
+}
+
+.page--light .reportTitle {
+    color: #0f172a;
+}
+
+.page--light .reportViewerTimestamp {
+    color: #64748b;
+}
+
+.page--light .reportBody {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .reportStructuredToggleButton {
+    background: #e2e8f0;
+    border-color: #cbd5f5;
+    color: #1f2937;
+}
+
+.page--light .reportStructuredToggleButton.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(14, 165, 233, 0.2));
+    color: #1d4ed8;
+}
+
+.page--light .reportJsonPreviewHeading {
+    color: #1d4ed8;
+}
+
+.page--light .reportJsonPreview {
+    background: #f8fafc;
+    border-color: #cbd5f5;
+    color: #1f2937;
+}
+
+.page--light .reportExportButton {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #ffffff;
+}
+
+.page--light .reportExportButton:hover:not(:disabled) {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+    color: #ffffff;
+}
+
+.page--light .reportExportButton:disabled {
+    background: #e2e8f0;
+    border-color: #cbd5f5;
+    color: #94a3b8;
+}
+
+.page--light .reportSummaryCard {
+    background: #f1f5f9;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .reportSummaryLabel {
+    color: #475569;
+}
+
+.page--light .reportSummaryList {
+    color: #1f2937;
+}
+
+.page--light .reportSummaryItemLabel {
+    color: #0f172a;
+}
+
+.page--light .reportSummaryText {
+    color: #1f2937;
+}
+
+.page--light .reportSummaryValue {
+    color: #0f172a;
+}
+
+.page--light .reportSummaryItemValue {
+    color: #1d4ed8;
+}
+
+.page--light .reportStaticSection,
+.page--light .reportDmlSection {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .reportStaticHeader h4,
+.page--light .reportDmlHeader h4 {
+    color: #0f172a;
+}
+
+.page--light .reportStaticEngine,
+.page--light .reportDmlTimestamp,
+.page--light .reportDmlEmpty {
+    color: #64748b;
+}
+
+.page--light .reportStaticBlock h5 {
+    color: #1f2937;
+}
+
+.page--light .reportStaticItemValue {
+    color: #1d4ed8;
+}
+
+.page--light .reportDmlStatus {
+    color: #1d4ed8;
+}
+
+.page--light .reportDmlSegment {
+    background: #f1f5f9;
+    border-color: #e2e8f0;
+}
+
+.page--light .reportDmlSegment summary {
+    color: #1f2937;
+}
+
+.page--light .reportDmlSegment pre {
+    background: #ffffff;
+    color: #1f2937;
+}
+
+.page--light .reportDmlSql {
+    background: rgba(59, 130, 246, 0.12);
+    color: #1d4ed8;
+}
+
+.page--light .reportDmlAnalysis {
+    background: rgba(14, 165, 233, 0.12);
+    color: #0f172a;
+}
+
+.page--light .reportDmlSummary {
+    background: #f1f5f9;
+    color: #1f2937;
+}
+
+.page--light .reportErrorPanel {
+    background: rgba(248, 113, 113, 0.12);
+    border-color: rgba(248, 113, 113, 0.35);
+    color: #b91c1c;
+}
+
+.page--light .reportErrorHint {
+    color: #b91c1c;
+}
+
+.page--light .reportChunks {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .reportChunkTitle,
+.page--light .reportChunkIssueMeta,
+.page--light .reportChunkEmpty {
+    color: #64748b;
+}
+
+.page--light .reportChunkIssueMessage {
+    color: #0f172a;
+}
+
+.page--light .reportChunkIssueContext {
+    color: #1d4ed8;
+}
+
+.page--light .reportChunkBody {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .pvName {
+    color: #0f172a;
+}
+
+.page--light .pvMeta {
+    color: #64748b;
+}
+
+.page--light .pvBox {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .codeScroll {
+    background: #f8fafc;
+    color: #1f2937;
+}
+
+.page--light .codeLineNo {
+    color: #94a3b8;
+}
+
+.page--light .codeSelectionHighlight {
+    background: rgba(59, 130, 246, 0.18);
+    color: #1d4ed8;
+}
+
+.page--light .modalBackdrop {
+    background: rgba(148, 163, 184, 0.35);
+}
+
+.page--light .modalCard {
+    background: #ffffff;
+    color: #1f2937;
+    border-color: #e2e8f0;
+    box-shadow: 0 16px 32px rgba(148, 163, 184, 0.4);
+}
+
+.page--light .dropZone {
+    border-color: #cbd5f5;
+    background: #f8fafc;
+    color: #64748b;
+}
+
+.page--light .dropZone:hover {
+    background: #e2e8f0;
+}
+
+.page--light .btn {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #ffffff;
+}
+
+.page--light .btn.ghost {
+    background: transparent;
+    color: #1d4ed8;
+}
+
+.page--light .btn.outline {
+    background: transparent;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
 </style>
 
 
