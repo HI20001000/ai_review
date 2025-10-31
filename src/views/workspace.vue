@@ -4755,11 +4755,11 @@ body,
 .reportRow {
     flex: 1 1 auto;
     min-height: 0;
-    border: 1px solid #2f2f2f;
     border-radius: 6px;
     background: #1b1b1b;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 .reportRowActions {
@@ -4802,12 +4802,12 @@ body,
     background: transparent;
     white-space: pre-wrap;
     word-break: break-word;
-    min-height: 800px;
+    min-height: 0;
 }
 
 .reportRowContent.codeScroll {
-    overflow: visible;
-    max-height: none;
+    overflow: auto;
+    max-height: 100%;
 }
 
 .reportRowNotice {
