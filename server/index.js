@@ -964,6 +964,17 @@ const server = app.listen(PORT, HOST, () => {
     console.log(`API server listening on http://${HOST}:${PORT}`);
 });
 
+server.on("error", (error) => {
+    if (error?.code === "EADDRINUSE") {
+        console.error(
+            `[server] Port ${PORT} is already in use. Set PORT or API_PORT to a free port before starting the server.`
+        );
+    } else {
+        console.error("[server] Failed to start server", error);
+    }
+    process.exit(1);
+});
+
 let isShuttingDown = false;
 
 async function shutdown(signal) {
