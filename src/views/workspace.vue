@@ -5779,6 +5779,35 @@ body,
     color: #0f172a;
 }
 
+.page--light .reportIssueInlineRule {
+    background: rgba(37, 99, 235, 0.14);
+    color: #1d4ed8;
+}
+
+.page--light .reportIssueInlineSeverity--error {
+    background: rgba(248, 113, 113, 0.18);
+    color: #b91c1c;
+    border-color: rgba(220, 38, 38, 0.45);
+}
+
+.page--light .reportIssueInlineSeverity--warn {
+    background: rgba(250, 204, 21, 0.18);
+    color: #92400e;
+    border-color: rgba(217, 119, 6, 0.45);
+}
+
+.page--light .reportIssueInlineSeverity--info {
+    background: rgba(59, 130, 246, 0.14);
+    color: #1d4ed8;
+    border-color: rgba(37, 99, 235, 0.45);
+}
+
+.page--light .reportIssueInlineSeverity--muted {
+    background: rgba(148, 163, 184, 0.16);
+    color: #475569;
+    border-color: rgba(148, 163, 184, 0.4);
+}
+
 .page--light .reportChunkIssueContext {
     color: #1d4ed8;
 }
