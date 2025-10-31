@@ -5433,6 +5433,28 @@ body,
 .page--light {
     background-color: #f8fafc;
     color: #1f2937;
+    --panel-surface: #ffffff;
+    --panel-surface-alt: #f8fafc;
+    --panel-border: #e2e8f0;
+    --panel-border-strong: #cbd5f5;
+    --panel-divider: rgba(148, 163, 184, 0.35);
+    --panel-heading: #0f172a;
+    --panel-muted: #64748b;
+    --panel-accent: #2563eb;
+    --panel-accent-soft: rgba(37, 99, 235, 0.12);
+    --tree-row-hover: rgba(148, 163, 184, 0.18);
+    --tree-row-active: rgba(59, 130, 246, 0.18);
+    --tree-text: #1f2937;
+    --tree-icon: #475569;
+    --tree-connector: rgba(148, 163, 184, 0.4);
+    --tree-badge-text: #1f2937;
+    --tree-badge-idle: rgba(148, 163, 184, 0.24);
+    --tree-badge-processing: rgba(234, 179, 8, 0.35);
+    --tree-badge-ready: rgba(34, 197, 94, 0.28);
+    --tree-badge-error: rgba(239, 68, 68, 0.32);
+    --scrollbar-track: #e2e8f0;
+    --scrollbar-thumb: #cbd5f5;
+    --scrollbar-thumb-hover: #93c5fd;
 }
 
 .page--light .topBar {
