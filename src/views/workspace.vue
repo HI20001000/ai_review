@@ -315,30 +315,14 @@ const activeReportIssueSources = computed(() => {
 
 const activeReportDetails = computed(() => {
     const report = activeReport.value;
-    if (!report || !report.state) return null;
-
-    const state = report.state;
-    const hasStoredSnapshots =
-        Boolean(normaliseJsonContent(state.combinedReportJson)) ||
-        Boolean(normaliseJsonContent(state.staticReportJson)) ||
-        Boolean(normaliseJsonContent(state.aiReportJson));
-
-    if (state.status !== "ready" && !hasStoredSnapshots) return null;
-
-    const parsedCandidate = state.parsedReport;
-    const parsed =
-        parsedCandidate && typeof parsedCandidate === "object" && !Array.isArray(parsedCandidate)
-            ? parsedCandidate
-            : {};
+    if (!report || report.state.status !== "ready") return null;
+    const parsed = report.state.parsedReport;
+    if (!parsed || typeof parsed !== "object") return null;
 
     const reports = parsed.reports && typeof parsed.reports === "object" ? parsed.reports : null;
     const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
 
-    const combinedPayload = buildCombinedReportPayload(report.state);
-    const aggregatedPayload =
-        combinedPayload && typeof combinedPayload === "object" && !Array.isArray(combinedPayload)
-            ? combinedPayload
-            : null;
+    const aggregatedPayload = isPlainObject(parsed) ? parsed : null;
     const { staticIssues, aiIssues, aggregatedIssues: derivedAggregatedIssues } =
         activeReportIssueSources.value;
     let aggregatedIssues = Array.isArray(aggregatedPayload?.issues)
@@ -1188,9 +1172,10 @@ const structuredReportJsonHeading = computed(
 const structuredReportExportLabel = computed(
     () => structuredReportExportConfig.value.exportLabel || "匯出 JSON"
 );
-const structuredReportJsonPreview = computed(
-    () => structuredReportExportConfig.value.info.preview
-);
+const structuredReportJsonPreview = computed(() => {
+    const preview = structuredReportExportConfig.value.info.preview;
+    return typeof preview === "string" ? trimLeadingWhitespace(preview) : preview;
+});
 const shouldShowStructuredExportButton = computed(
     () => structuredReportExportConfig.value.canExport
 );
@@ -2578,9 +2563,9 @@ async function hydrateReportsForProject(projectId) {
             state.error = normaliseHydratedString(record.error);
             state.chunks = Array.isArray(record.chunks) ? record.chunks : [];
             state.segments = Array.isArray(record.segments) ? record.segments : [];
-            state.combinedReportJson = combinedJson;
-            state.staticReportJson = staticJson;
-            state.aiReportJson = aiJson;
+            state.combinedReportJson = normaliseHydratedString(record.combinedReportJson);
+            state.staticReportJson = normaliseHydratedString(record.staticReportJson);
+            state.aiReportJson = normaliseHydratedString(record.aiReportJson);
             state.conversationId = normaliseHydratedString(record.conversationId);
             state.analysis =
                 record.analysis && typeof record.analysis === "object" && !Array.isArray(record.analysis)
@@ -3651,18 +3636,6 @@ onBeforeUnmount(() => {
                                             </details>
                                         </section>
                                         <section
-                                            v-if="structuredReportJsonPreview"
-                                            class="reportJsonPreviewSection"
-                                        >
-                                            <h4 class="reportJsonPreviewHeading">
-                                                {{ structuredReportJsonHeading }}
-                                            </h4>
-                                            <pre
-                                                class="reportJsonPreview codeScroll themed-scrollbar"
-                                                v-text="structuredReportJsonPreview"
-                                            ></pre>
-                                        </section>
-                                        <section
                                             v-if="shouldShowReportIssuesSection"
                                             class="reportIssuesSection"
                                         >
@@ -4380,23 +4353,58 @@ body,
 
 .reportJsonPreviewSection {
     margin-top: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
 }
 
-.reportJsonPreviewHeading {
+.reportJsonPreviewDetails {
+    border: 1px solid #334155;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.65);
+    overflow: hidden;
+}
+
+.reportJsonPreviewSummary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     margin: 0;
+    padding: 10px 12px;
     font-size: 13px;
     font-weight: 600;
     color: #bfdbfe;
+    list-style: none;
+    cursor: pointer;
+}
+
+.reportJsonPreviewSummary::-webkit-details-marker {
+    display: none;
+}
+
+.reportJsonPreviewDetails[open] .reportJsonPreviewSummary {
+    border-bottom: 1px solid rgba(59, 130, 246, 0.35);
+}
+
+.reportJsonPreviewDetails:not([open]) .reportJsonPreviewSummary::after,
+.reportJsonPreviewDetails[open] .reportJsonPreviewSummary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border: 1px solid currentColor;
+    border-left: 0;
+    border-top: 0;
+    transform: rotate(45deg);
+    margin-left: auto;
+    transition: transform 0.2s ease;
+}
+
+.reportJsonPreviewDetails[open] .reportJsonPreviewSummary::after {
+    transform: rotate(225deg);
 }
 
 .reportJsonPreview {
     margin: 0;
     padding: 12px;
-    border: 1px solid #334155;
-    background: rgba(15, 23, 42, 0.65);
+    border-top: 1px solid rgba(59, 130, 246, 0.35);
+    background: rgba(15, 23, 42, 0.45);
     color: #e2e8f0;
     font-size: 12px;
     line-height: 1.45;
@@ -4925,7 +4933,6 @@ body,
 
 .reportIssueInlineCode code {
     font-family: inherit;
-    color: #f8fafc;
 }
 
 .reportIssueInlineBadges {
@@ -4936,11 +4943,11 @@ body,
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #e2e8f0;
+    color: #cbd5f5;
 }
 
 .reportIssueInlineIndex {
-    color: #f8fafc;
+    color: #bfdbfe;
 }
 
 .reportIssueInlineRule {
@@ -4994,7 +5001,6 @@ body,
     flex: 1 1 220px;
     min-width: 200px;
     font-weight: 600;
-    color: #f8fafc;
 }
 
 .reportIssueInlineMeta {
@@ -5235,7 +5241,6 @@ body,
     display: flex;
     align-items: flex-start;
     width: 100%;
-    color: #f1f5f9;
 }
 
 .codeLineNo {
@@ -5267,7 +5272,6 @@ body,
     -moz-user-select: text;
     -ms-user-select: text;
     user-select: text;
-    color: #f8fafc;
 }
 
 .codeSelectionHighlight {
