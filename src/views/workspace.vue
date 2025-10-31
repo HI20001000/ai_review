@@ -4354,6 +4354,9 @@ body,
 
 .reportJsonPreviewSection {
     margin-top: 12px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .reportJsonPreviewDetails {
@@ -4361,6 +4364,7 @@ body,
     border-radius: 6px;
     background: rgba(15, 23, 42, 0.65);
     overflow: hidden;
+    max-width: 100%;
 }
 
 .reportJsonPreviewSummary {
@@ -4408,6 +4412,8 @@ body,
     background: rgba(15, 23, 42, 0.45);
     color: #e2e8f0;
     font-size: 12px;
+    max-width: 100%;
+    overflow-x: auto;
     line-height: 1.45;
     white-space: pre;
 }
@@ -4711,6 +4717,10 @@ body,
     display: flex;
     flex-direction: column;
     gap: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 8px;
+    padding: 12px;
+    background: rgba(15, 23, 42, 0.02);
 }
 
 .reportIssuesHeader h4 {
@@ -4928,7 +4938,7 @@ body,
     font-size: 13px;
     line-height: 1.55;
     white-space: pre-wrap;
-    color: #e2e8f0;
+    color: #0f172a;
     background-clip: padding-box;
 }
 
