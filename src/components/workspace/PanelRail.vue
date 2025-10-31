@@ -86,7 +86,7 @@ const treeHeaderLabel = computed(() => {
     if (configHasTitle(props.reportConfig)) {
         return props.reportConfig.panelTitle;
     }
-    return isProjectsMode.value ? "Project Files" : "代碼審查";
+    return isProjectsMode.value ? "專案檔案" : "代碼審查";
 });
 
 const showReportTree = computed(() => Boolean(reportPanelProps.value));
@@ -134,7 +134,7 @@ function handlePointerDown(event) {
         <template v-if="showContent">
             <template v-if="isProjectsMode">
                 <div class="projectPanel">
-                    <div class="panelHeader">Projects</div>
+                    <div class="panelHeader">專案列表</div>
                     <template v-if="hasProjects">
                         <ul class="projectList themed-scrollbar">
                             <li
