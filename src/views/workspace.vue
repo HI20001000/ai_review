@@ -3591,59 +3591,50 @@ onBeforeUnmount(() => {
                                             v-if="structuredReportViewMode === 'dml' && dmlReportDetails"
                                             class="reportDmlSection"
                                         >
-                                            <details class="reportDmlDetails">
-                                                <summary class="reportDmlSummaryToggle">
-                                                    <div class="reportDmlHeader">
-                                                        <h4>AI審查</h4>
-                                                        <span v-if="dmlReportDetails.status" class="reportDmlStatus">
-                                                            {{ dmlReportDetails.status }}
+                                            <div class="reportDmlHeader">
+                                                <h4>AI審查</h4>
+                                                <span v-if="dmlReportDetails.status" class="reportDmlStatus">
+                                                    {{ dmlReportDetails.status }}
+                                                </span>
+                                                <span v-if="dmlReportDetails.generatedAt" class="reportDmlTimestamp">
+                                                    產生於 {{ dmlReportDetails.generatedAt }}
+                                                </span>
+                                            </div>
+                                            <p v-if="dmlReportDetails.error" class="reportDmlError">
+                                                {{ dmlReportDetails.error }}
+                                            </p>
+                                            <div v-if="hasDmlSegments" class="reportDmlSegments">
+                                                <details
+                                                    v-for="segment in dmlSegments"
+                                                    :key="segment.key"
+                                                    class="reportDmlSegment"
+                                                >
+                                                    <summary>
+                                                        第 {{ segment.index }} 段
+                                                        <span v-if="segment.startLine">
+                                                            （第 {{ segment.startLine }} 行起
+                                                            <span v-if="segment.endLine">，至第 {{ segment.endLine }} 行止</span>
+                                                            ）
                                                         </span>
-                                                        <span
-                                                            v-if="dmlReportDetails.generatedAt"
-                                                            class="reportDmlTimestamp"
-                                                        >
-                                                            產生於 {{ dmlReportDetails.generatedAt }}
-                                                        </span>
-                                                    </div>
-                                                </summary>
-                                                <div class="reportDmlBody">
-                                                    <p v-if="dmlReportDetails.error" class="reportDmlError">
-                                                        {{ dmlReportDetails.error }}
-                                                    </p>
-                                                    <div v-if="hasDmlSegments" class="reportDmlSegments">
-                                                        <details
-                                                            v-for="segment in dmlSegments"
-                                                            :key="segment.key"
-                                                            class="reportDmlSegment"
-                                                        >
-                                                            <summary>
-                                                                第 {{ segment.index }} 段
-                                                                <span v-if="segment.startLine">
-                                                                    （第 {{ segment.startLine }} 行起
-                                                                    <span v-if="segment.endLine">，至第 {{ segment.endLine }} 行止</span>
-                                                                    ）
-                                                                </span>
-                                                            </summary>
-                                                            <pre
-                                                                v-if="segment.text || segment.sql"
-                                                                class="reportDmlSql codeScroll themed-scrollbar"
-                                                                v-text="segment.text || segment.sql"
-                                                            ></pre>
-                                                            <pre
-                                                                v-if="segment.analysis"
-                                                                class="reportDmlAnalysis codeScroll themed-scrollbar"
-                                                                v-text="segment.analysis"
-                                                            ></pre>
-                                                        </details>
-                                                    </div>
-                                                    <p v-else class="reportDmlEmpty">尚未取得 AI審查拆分結果。</p>
+                                                    </summary>
                                                     <pre
-                                                        v-if="dmlReportDetails.reportText"
-                                                        class="reportDmlSummary codeScroll themed-scrollbar"
-                                                        v-text="dmlReportDetails.reportText"
+                                                        v-if="segment.text || segment.sql"
+                                                        class="reportDmlSql codeScroll themed-scrollbar"
+                                                        v-text="segment.text || segment.sql"
                                                     ></pre>
-                                                </div>
-                                            </details>
+                                                    <pre
+                                                        v-if="segment.analysis"
+                                                        class="reportDmlAnalysis codeScroll themed-scrollbar"
+                                                        v-text="segment.analysis"
+                                                    ></pre>
+                                                </details>
+                                            </div>
+                                            <p v-else class="reportDmlEmpty">尚未取得 AI審查拆分結果。</p>
+                                            <pre
+                                                v-if="dmlReportDetails.reportText"
+                                                class="reportDmlSummary codeScroll themed-scrollbar"
+                                                v-text="dmlReportDetails.reportText"
+                                            ></pre>
                                         </section>
                                         <section
                                             v-if="structuredReportJsonPreview"
@@ -4590,30 +4581,7 @@ body,
     background: rgba(15, 23, 42, 0.4);
     display: flex;
     flex-direction: column;
-}
-
-.reportDmlDetails {
-    display: flex;
-    flex-direction: column;
     gap: 12px;
-}
-
-.reportDmlSummaryToggle {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 8px 12px;
-    border-radius: 6px;
-    background: rgba(15, 23, 42, 0.45);
-    color: #e2e8f0;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-}
-
-.reportDmlSummaryToggle:focus-visible {
-    outline: 2px solid rgba(94, 234, 212, 0.65);
-    outline-offset: 2px;
 }
 
 .reportDmlHeader {
@@ -4621,14 +4589,6 @@ body,
     flex-wrap: wrap;
     align-items: baseline;
     gap: 8px;
-    flex: 1 1 auto;
-    min-width: 0;
-}
-
-.reportDmlBody {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
 }
 
 .reportDmlHeader h4 {
@@ -5640,15 +5600,6 @@ body,
     color: #1f2937;
 }
 
-.page--light .reportDmlSummaryToggle {
-    background: #e2e8f0;
-    color: #0f172a;
-}
-
-.page--light .reportDmlSummaryToggle:focus-visible {
-    outline-color: rgba(37, 99, 235, 0.45);
-}
-
 .page--light .reportStaticHeader h4,
 .page--light .reportDmlHeader h4 {
     color: #0f172a;
@@ -5703,50 +5654,6 @@ body,
 .page--light .reportDmlSummary {
     background: #f1f5f9;
     color: #1f2937;
-}
-
-.page--light .reportIssuesSection {
-    color: #1f2937;
-}
-
-.page--light .reportIssuesHeader h4 {
-    color: #0f172a;
-}
-
-.page--light .reportIssuesTotal {
-    color: #475569;
-}
-
-.page--light .reportIssuesNotice {
-    background: #e2e8f0;
-    color: #1f2937;
-}
-
-.page--light .reportIssuesNotice--error {
-    background: rgba(248, 113, 113, 0.18);
-    color: #b91c1c;
-}
-
-.page--light .reportIssuesNotice--warning {
-    background: rgba(250, 204, 21, 0.18);
-    color: #b45309;
-}
-
-.page--light .reportRow {
-    border-color: #e2e8f0;
-    background: #ffffff;
-}
-
-.page--light .reportRowContent {
-    color: #1f2937;
-}
-
-.page--light .reportRowNotice {
-    color: #475569;
-}
-
-.page--light .reportIssuesEmpty {
-    color: #94a3b8;
 }
 
 .page--light .reportErrorPanel {
