@@ -620,10 +620,6 @@ const activeReportDetails = computed(() => {
 
 
 const hasStructuredReport = computed(() => Boolean(activeReportDetails.value));
-const combinedSummaryItems = computed(() => {
-    const items = activeReportDetails.value?.combinedSummaryDetails;
-    return Array.isArray(items) ? items : [];
-});
 const ruleBreakdownItems = computed(() => {
     const items = activeReportDetails.value?.ruleBreakdown;
     return Array.isArray(items) ? items : [];
@@ -669,9 +665,52 @@ const staticSourceName = computed(() => {
     const source = activeReportDetails.value?.staticSummary?.analysis_source;
     return typeof source === "string" ? source : "";
 });
+const trimLeadingWhitespace = (value) => {
+    if (typeof value !== "string") return value;
+    return value.replace(/^\s+/, "");
+};
 const dmlReportDetails = computed(() => {
     const report = activeReportDetails.value?.dmlReport;
-    return report && typeof report === "object" ? report : null;
+    if (!report || typeof report !== "object") return null;
+
+    const normalised = { ...report };
+
+    if (typeof normalised.reportText === "string") {
+        normalised.reportText = trimLeadingWhitespace(normalised.reportText);
+    }
+
+    if (Array.isArray(normalised.segments)) {
+        normalised.segments = normalised.segments.map((segment) => {
+            if (!isPlainObject(segment)) return segment;
+            const next = { ...segment };
+            if (typeof next.text === "string") {
+                next.text = trimLeadingWhitespace(next.text);
+            }
+            if (typeof next.sql === "string") {
+                next.sql = trimLeadingWhitespace(next.sql);
+            }
+            if (typeof next.analysis === "string") {
+                next.analysis = trimLeadingWhitespace(next.analysis);
+            }
+            return next;
+        });
+    }
+
+    if (Array.isArray(normalised.chunks)) {
+        normalised.chunks = normalised.chunks.map((chunk) => {
+            if (!isPlainObject(chunk)) return chunk;
+            const nextChunk = { ...chunk };
+            if (typeof nextChunk.report === "string") {
+                nextChunk.report = trimLeadingWhitespace(nextChunk.report);
+            }
+            if (typeof nextChunk.summary === "string") {
+                nextChunk.summary = trimLeadingWhitespace(nextChunk.summary);
+            }
+            return nextChunk;
+        });
+    }
+
+    return normalised;
 });
 const dmlSegments = computed(() => {
     const segments = dmlReportDetails.value?.segments;
@@ -1133,9 +1172,10 @@ const structuredReportJsonHeading = computed(
 const structuredReportExportLabel = computed(
     () => structuredReportExportConfig.value.exportLabel || "匯出 JSON"
 );
-const structuredReportJsonPreview = computed(
-    () => structuredReportExportConfig.value.info.preview
-);
+const structuredReportJsonPreview = computed(() => {
+    const preview = structuredReportExportConfig.value.info.preview;
+    return typeof preview === "string" ? trimLeadingWhitespace(preview) : preview;
+});
 const shouldShowStructuredExportButton = computed(
     () => structuredReportExportConfig.value.canExport
 );
@@ -3437,21 +3477,6 @@ onBeforeUnmount(() => {
                                             v-if="structuredReportViewMode === 'combined' && canShowStructuredSummary"
                                             class="reportSummaryGrid"
                                         >
-                                            <div
-                                                v-if="combinedSummaryItems.length"
-                                                class="reportSummaryCard reportSummaryCard--span"
-                                            >
-                                                <span class="reportSummaryLabel">整合摘要</span>
-                                                <ul class="reportSummaryList">
-                                                    <li
-                                                        v-for="item in combinedSummaryItems"
-                                                        :key="`combined-${item.label}-${item.value}`"
-                                                    >
-                                                        <span class="reportSummaryItemLabel">{{ item.label }}</span>
-                                                        <span class="reportSummaryItemValue">{{ item.value }}</span>
-                                                    </li>
-                                                </ul>
-                                            </div>
                                             <div class="reportSummaryCard reportSummaryCard--total">
                                                 <span class="reportSummaryLabel">問題</span>
                                                 <span class="reportSummaryValue">{{ activeReportTotalIssuesDisplay }}</span>
@@ -4515,6 +4540,7 @@ body,
 .reportStaticItemLabel {
     font-weight: 600;
     margin-right: 6px;
+    color: #cbd5f5;
 }
 
 .reportStaticItemValue {
@@ -5552,6 +5578,10 @@ body,
 
 .page--light .reportStaticBlock h5 {
     color: #1f2937;
+}
+
+.page--light .reportStaticItemLabel {
+    color: #0f172a;
 }
 
 .page--light .reportStaticItemValue {
