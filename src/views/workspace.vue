@@ -4906,7 +4906,7 @@ body,
     gap: 8px;
     align-items: flex-start;
     margin: 0 0 6px;
-    color: #f8fafc;
+    color: #0f172a;
 }
 
 .reportIssueInlineRow:last-child {
@@ -4954,8 +4954,8 @@ body,
 .reportIssueInlineRule {
     padding: 2px 8px;
     border-radius: 999px;
-    background: rgba(59, 130, 246, 0.2);
-    color: #bfdbfe;
+    background: rgba(59, 130, 246, 0.15);
+    color: #1d4ed8;
     font-weight: 600;
 }
 
@@ -4964,30 +4964,31 @@ body,
     border-radius: 999px;
     font-weight: 600;
     border: 1px solid transparent;
+    color: #0f172a;
 }
 
 .reportIssueInlineSeverity--error {
-    background: rgba(248, 113, 113, 0.18);
-    color: #fca5a5;
-    border-color: rgba(248, 113, 113, 0.35);
+    background: rgba(248, 113, 113, 0.22);
+    color: #991b1b;
+    border-color: rgba(248, 113, 113, 0.45);
 }
 
 .reportIssueInlineSeverity--warn {
-    background: rgba(234, 179, 8, 0.2);
-    color: #facc15;
-    border-color: rgba(234, 179, 8, 0.35);
+    background: rgba(234, 179, 8, 0.24);
+    color: #92400e;
+    border-color: rgba(234, 179, 8, 0.45);
 }
 
 .reportIssueInlineSeverity--info {
     background: rgba(59, 130, 246, 0.2);
-    color: #bfdbfe;
-    border-color: rgba(59, 130, 246, 0.35);
+    color: #1d4ed8;
+    border-color: rgba(59, 130, 246, 0.45);
 }
 
 .reportIssueInlineSeverity--muted {
-    background: rgba(148, 163, 184, 0.2);
-    color: #cbd5f5;
-    border-color: rgba(148, 163, 184, 0.35);
+    background: rgba(148, 163, 184, 0.24);
+    color: #1f2937;
+    border-color: rgba(148, 163, 184, 0.45);
 }
 
 .reportIssueInlineLine {
@@ -5002,6 +5003,7 @@ body,
     flex: 1 1 220px;
     min-width: 200px;
     font-weight: 600;
+    color: #0b1120;
 }
 
 .reportIssueInlineMeta {
@@ -5009,7 +5011,7 @@ body,
     flex-wrap: wrap;
     gap: 6px;
     font-size: 12px;
-    color: #cbd5f5;
+    color: #334155;
 }
 
 .reportIssueInlineObject {
