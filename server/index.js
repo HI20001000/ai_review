@@ -79,6 +79,89 @@ function safeParseArray(jsonText, { fallback = [] } = {}) {
     }
 }
 
+function sanitiseCombinedReportJson(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const summary = Array.isArray(parsed?.summary)
+            ? parsed.summary.map((record) =>
+                  record && typeof record === "object" && !Array.isArray(record) ? { ...record } : record
+              )
+            : [];
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.map((issue) =>
+                  issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+              )
+            : [];
+        return JSON.stringify({ summary, issues });
+    } catch (_error) {
+        return "";
+    }
+}
+
+function sanitiseIssuesJson(value) {
+    if (typeof value !== "string") {
+        return "";
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        const issues = Array.isArray(parsed?.issues)
+            ? parsed.issues.map((issue) =>
+                  issue && typeof issue === "object" && !Array.isArray(issue) ? { ...issue } : issue
+              )
+            : [];
+        return JSON.stringify({ issues });
+    } catch (_error) {
+        return "";
+    }
+}
+
+const EMPTY_ISSUES_JSON = JSON.stringify({ issues: [] });
+
+function buildFallbackCombinedReport(errorMessage, generatedAt) {
+    const trimmedMessage = typeof errorMessage === "string" ? errorMessage.trim() : "";
+    const baseMessage = trimmedMessage
+        ? `AI 審查流程執行失敗：${trimmedMessage}`
+        : "AI 審查流程執行失敗。";
+    const summary = [
+        {
+            source: "static_analyzer",
+            label: "靜態分析器",
+            total_issues: 0,
+            status: "skipped",
+            generated_at: generatedAt
+        },
+        {
+            source: "dml_prompt",
+            label: "AI審查",
+            total_issues: 0,
+            status: "failed",
+            message: baseMessage,
+            generated_at: generatedAt
+        },
+        {
+            source: "combined",
+            label: "聚合報告",
+            total_issues: 0,
+            status: "failed",
+            message: baseMessage,
+            generated_at: generatedAt
+        }
+    ];
+
+    return { summary, issues: [] };
+}
+
 function safeSerialiseForLog(value) {
     if (typeof value === "string") {
         return value;
@@ -150,107 +233,6 @@ function safeParseReport(reportText) {
     } catch (_error) {
         return null;
     }
-}
-
-function isPlainObject(value) {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function clonePlainValue(value) {
-    if (Array.isArray(value)) {
-        return value.map((entry) => clonePlainValue(entry));
-    }
-    if (isPlainObject(value)) {
-        const clone = {};
-        for (const [key, entry] of Object.entries(value)) {
-            if (entry === undefined || typeof entry === "function" || typeof entry === "symbol") {
-                continue;
-            }
-            clone[key] = clonePlainValue(entry);
-        }
-        return clone;
-    }
-    return value;
-}
-
-const EMPTY_ISSUES_JSON = JSON.stringify({ issues: [] }, null, 2);
-const EMPTY_COMBINED_REPORT_JSON = JSON.stringify({ summary: [], issues: [] }, null, 2);
-
-function sanitiseCombinedReportJson(value) {
-    if (typeof value !== "string") {
-        return EMPTY_COMBINED_REPORT_JSON;
-    }
-    const trimmed = value.trim();
-    if (!trimmed) {
-        return EMPTY_COMBINED_REPORT_JSON;
-    }
-    try {
-        const parsed = JSON.parse(trimmed);
-        const summary = Array.isArray(parsed?.summary)
-            ? parsed.summary.filter((entry) => isPlainObject(entry)).map((entry) => clonePlainValue(entry))
-            : [];
-        const issues = Array.isArray(parsed?.issues)
-            ? parsed.issues.filter((entry) => isPlainObject(entry)).map((entry) => clonePlainValue(entry))
-            : [];
-        return JSON.stringify({ summary, issues }, null, 2);
-    } catch (error) {
-        console.warn("[reports] Failed to sanitise combined report JSON", error);
-        return EMPTY_COMBINED_REPORT_JSON;
-    }
-}
-
-function sanitiseIssuesJson(value) {
-    if (typeof value !== "string") {
-        return EMPTY_ISSUES_JSON;
-    }
-    const trimmed = value.trim();
-    if (!trimmed) {
-        return EMPTY_ISSUES_JSON;
-    }
-    try {
-        const parsed = JSON.parse(trimmed);
-        const issues = Array.isArray(parsed?.issues)
-            ? parsed.issues.filter((entry) => isPlainObject(entry)).map((entry) => clonePlainValue(entry))
-            : [];
-        return JSON.stringify({ issues }, null, 2);
-    } catch (error) {
-        console.warn("[reports] Failed to sanitise issues JSON", error);
-        return EMPTY_ISSUES_JSON;
-    }
-}
-
-function buildFallbackCombinedReport(errorMessage, generatedAt) {
-    const trimmedMessage = typeof errorMessage === "string" ? errorMessage.trim() : "";
-    const baseMessage = trimmedMessage
-        ? `AI 審查流程執行失敗：${trimmedMessage}`
-        : "AI 審查流程執行失敗。";
-    const summary = [
-        {
-            source: "static_analyzer",
-            label: "靜態分析器",
-            total_issues: 0,
-            status: "skipped",
-            generated_at: generatedAt
-        },
-        {
-            source: "dml_prompt",
-            label: "AI審查",
-            total_issues: 0,
-            status: "failed",
-            message: baseMessage,
-            generated_at: generatedAt
-        },
-        {
-            source: "combined",
-            label: "聚合報告",
-            total_issues: 0,
-            status: "failed",
-            message: baseMessage,
-            generated_at: generatedAt
-        }
-    ].map((entry) => clonePlainValue(entry));
-
-    return { summary, issues: [] };
 }
 
 function mapReportRow(row) {
@@ -453,9 +435,13 @@ async function upsertReport({
     const safeReport = typeof report === "string" ? report : "";
     const safeConversationId = typeof conversationId === "string" ? conversationId : "";
     const safeUserId = typeof userId === "string" ? userId : "";
-    const safeCombinedJson = typeof combinedReportJson === "string" ? combinedReportJson : "";
-    const safeStaticJson = typeof staticReportJson === "string" ? staticReportJson : "";
-    const safeAiJson = typeof aiReportJson === "string" ? aiReportJson : "";
+    const safeCombinedJson = sanitiseCombinedReportJson(
+        typeof combinedReportJson === "string" ? combinedReportJson : ""
+    );
+    const safeStaticJson = sanitiseIssuesJson(
+        typeof staticReportJson === "string" ? staticReportJson : ""
+    );
+    const safeAiJson = sanitiseIssuesJson(typeof aiReportJson === "string" ? aiReportJson : "");
 
     logReportPersistenceStage("upsertReport.input", {
         projectId,
@@ -782,7 +768,7 @@ app.post("/api/reports/dify", async (req, res, next) => {
         if (shouldFallback && projectId && path) {
             const fallbackGeneratedAt = new Date().toISOString();
             const fallbackCombined = buildFallbackCombinedReport(errorMessage, fallbackGeneratedAt);
-            const combinedJson = JSON.stringify(fallbackCombined, null, 2);
+            const combinedJson = JSON.stringify(fallbackCombined);
             const savedAtIso = new Date().toISOString();
 
             try {

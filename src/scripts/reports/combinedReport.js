@@ -6,50 +6,8 @@ import {
     remapIssuesToSource
 } from "./shared.js";
 
-const SHOULD_LOG_ISSUES = Boolean(
-    typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV
-);
-
-function logClientIssuesJson(label, issues) {
-    if (!SHOULD_LOG_ISSUES) return;
-    if (typeof console === "undefined" || typeof console.log !== "function") {
-        return;
-    }
-    let serialised = "";
-    try {
-        serialised = JSON.stringify({ issues: Array.isArray(issues) ? issues : [] }, null, 2);
-    } catch (error) {
-        try {
-            serialised = JSON.stringify({ issues: Array.isArray(issues) ? issues : [] });
-        } catch (_innerError) {
-            serialised = "{\"issues\":[]}";
-        }
-    }
-    console.log(`[report] ${label}: ${serialised}`);
-}
-
-/**
- * Parse issues from a serialised JSON payload.
- *
- * @param {string | null | undefined} json - Serialised JSON string containing an issues array.
- * @returns {Array<any>} Extracted issues.
- */
-function parseIssuesFromJson(json) {
-    if (typeof json !== "string") {
-        return [];
-    }
-    const trimmed = json.trim();
-    if (!trimmed) {
-        return [];
-    }
-    try {
-        const parsed = JSON.parse(trimmed);
-        const issues = Array.isArray(parsed?.issues) ? parsed.issues : [];
-        return issues.filter((issue) => issue !== null && issue !== undefined);
-    } catch (error) {
-        console.warn("[report] Failed to parse issues JSON", error);
-        return [];
-    }
+if (typeof globalThis !== "undefined" && typeof globalThis.logSqlPayloadStage !== "function") {
+    globalThis.logSqlPayloadStage = () => {};
 }
 
 /**
@@ -650,8 +608,6 @@ export function buildCombinedReportPayload(state) {
     const aggregatedIssues = collectAggregatedIssues(state);
     const summaryRecords = buildAggregatedSummaryRecords(state, staticIssues, aiIssues, aggregatedIssues);
 
-    logClientIssuesJson("static.issues.json", staticIssues);
-    logClientIssuesJson("ai.issues.json", aiIssues);
 
     const cloneIssues = (issues) =>
         (Array.isArray(issues) ? issues : []).map((issue) =>
@@ -666,7 +622,6 @@ export function buildCombinedReportPayload(state) {
           )
         : [];
 
-    logClientIssuesJson("combined.issues.json", combinedIssueList);
 
     return {
         summary: cloneSummaryRecords,
