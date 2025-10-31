@@ -205,7 +205,7 @@ const reportPanelConfig = computed(() => {
     const projectIssueGetter = showIssueBadge ? getProjectIssueCount : null;
 
     return {
-        panelTitle: viewMode === "reports" ? "代碼審查" : "Project Files",
+        panelTitle: viewMode === "reports" ? "代碼審查" : "專案檔案",
         showProjectActions,
         showIssueBadge,
         showFileActions,
@@ -3305,7 +3305,7 @@ onBeforeUnmount(() => {
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
                         <path d="M256,0C114.6,0,0,114.6,0,256s114.6,256,256,256s256-114.6,256-256S397.4,0,256,0z M405.3,277.3c0,11.8-9.5,21.3-21.3,21.3h-85.3V384c0,11.8-9.5,21.3-21.3,21.3h-42.7c-11.8,0-21.3-9.6-21.3-21.3v-85.3H128c-11.8,0-21.3-9.6-21.3-21.3v-42.7c0-11.8,9.5-21.3,21.3-21.3h85.3V128c0-11.8,9.5-21.3,21.3-21.3h42.7c11.8,0,21.3,9.6,21.3,21.3v85.3H384c11.8,0,21.3,9.6,21.3,21.3V277.3z" />
                     </svg>
-                    <p>Add Project</p>
+                    <p>新增專案</p>
                 </div>
             </div>
         </div>
@@ -3318,7 +3318,7 @@ onBeforeUnmount(() => {
                     :class="{ active: isProjectToolActive }"
                     @click="toggleProjectTool"
                     :aria-pressed="isProjectToolActive"
-                    title="Projects"
+                    title="專案列表"
                 >
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                         <rect x="3" y="5" width="18" height="14" rx="2" ry="2" fill="currentColor" opacity="0.18" />
@@ -4716,7 +4716,7 @@ body,
 .reportIssuesHeader h4 {
     margin: 0;
     font-size: 16px;
-    color: #f8fafc;
+    color: #0b1120;
 }
 
 .reportIssuesTotal {
@@ -4914,7 +4914,7 @@ body,
 }
 
 .reportIssueInlineRow--empty {
-    color: #cbd5f5;
+    color: #475569;
     font-style: italic;
 }
 
@@ -4948,7 +4948,7 @@ body,
 }
 
 .reportIssueInlineIndex {
-    color: #bfdbfe;
+    color: #1e3a8a;
 }
 
 .reportIssueInlineRule {
@@ -5019,7 +5019,7 @@ body,
 }
 
 .reportIssueInlineColumn {
-    color: #e2e8f0;
+    color: #1f2937;
 }
 
 .reportIssuesEmpty {
@@ -5249,7 +5249,8 @@ body,
 .codeLineNo {
     position: relative;
     flex: 0 0 auto;
-    width: 3.5ch;
+    width: 5ch;
+    min-width: 5ch;
     padding: 0 12px 0 0;
     text-align: right;
     color: #4b5563;
