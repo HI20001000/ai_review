@@ -620,10 +620,6 @@ const activeReportDetails = computed(() => {
 
 
 const hasStructuredReport = computed(() => Boolean(activeReportDetails.value));
-const summarySourceItems = computed(() => {
-    const sources = activeReportDetails.value?.sourceSummaries;
-    return Array.isArray(sources) ? sources : [];
-});
 const combinedSummaryItems = computed(() => {
     const items = activeReportDetails.value?.combinedSummaryDetails;
     return Array.isArray(items) ? items : [];
@@ -3442,53 +3438,6 @@ onBeforeUnmount(() => {
                                             class="reportSummaryGrid"
                                         >
                                             <div
-                                                v-if="summarySourceItems.length"
-                                                class="reportSummaryCard reportSummaryCard--span"
-                                            >
-                                                <span class="reportSummaryLabel">來源摘要</span>
-                                                <ul class="reportSummarySources">
-                                                    <li
-                                                        v-for="item in summarySourceItems"
-                                                        :key="item.key"
-                                                        class="reportSummarySource"
-                                                    >
-                                                        <div class="reportSummarySourceHeading">
-                                                            <span class="reportSummaryItemLabel">{{ item.label }}</span>
-                                                            <span
-                                                                v-if="item.status"
-                                                                class="reportSummarySourceStatus"
-                                                            >
-                                                                {{ item.status }}
-                                                            </span>
-                                                        </div>
-                                                        <p
-                                                            v-if="item.generatedAt"
-                                                            class="reportSummarySourceTimestamp"
-                                                        >
-                                                            產生於 {{ item.generatedAt }}
-                                                        </p>
-                                                        <ul
-                                                            v-if="item.metrics?.length"
-                                                            class="reportSummarySourceMetrics"
-                                                        >
-                                                            <li
-                                                                v-for="metric in item.metrics"
-                                                                :key="`${item.key}-${metric.label}`"
-                                                            >
-                                                                <span class="reportSummaryItemLabel">{{ metric.label }}</span>
-                                                                <span class="reportSummaryItemValue">{{ metric.value }}</span>
-                                                            </li>
-                                                        </ul>
-                                                        <p
-                                                            v-if="item.errorMessage"
-                                                            class="reportSummarySourceError"
-                                                        >
-                                                            {{ item.errorMessage }}
-                                                        </p>
-                                                    </li>
-                                                </ul>
-                                            </div>
-                                            <div
                                                 v-if="combinedSummaryItems.length"
                                                 class="reportSummaryCard reportSummaryCard--span"
                                             >
@@ -3628,8 +3577,11 @@ onBeforeUnmount(() => {
                                                             ）
                                                         </span>
                                                     </summary>
-                                                    <pre class="reportDmlSql codeScroll themed-scrollbar">
-                                                        {{ segment.sql }}
+                                                    <pre
+                                                        v-if="segment.text || segment.sql"
+                                                        class="reportDmlSql codeScroll themed-scrollbar"
+                                                    >
+                                                        {{ segment.text || segment.sql }}
                                                     </pre>
                                                     <pre
                                                         v-if="segment.analysis"
@@ -4503,68 +4455,6 @@ body,
 
 .reportSummaryItemValue {
     color: #cbd5f5;
-}
-
-.reportSummarySources {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.reportSummarySource {
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 6px;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    background: rgba(30, 41, 59, 0.32);
-}
-
-.reportSummarySourceHeading {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
-.reportSummarySourceStatus {
-    font-size: 12px;
-    font-weight: 600;
-    color: #38bdf8;
-    text-transform: uppercase;
-}
-
-.reportSummarySourceTimestamp {
-    margin: 0;
-    font-size: 12px;
-    color: #94a3b8;
-}
-
-.reportSummarySourceMetrics {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 16px;
-    font-size: 13px;
-    color: #e2e8f0;
-    word-break: break-word;
-}
-
-.reportSummarySourceMetrics li {
-    display: flex;
-    gap: 6px;
-}
-
-.reportSummarySourceError {
-    margin: 0;
-    font-size: 12px;
-    color: #f87171;
 }
 
 .reportStaticSection {
@@ -5622,29 +5512,24 @@ body,
     color: #475569;
 }
 
+.page--light .reportSummaryList {
+    color: #1f2937;
+}
+
+.page--light .reportSummaryItemLabel {
+    color: #0f172a;
+}
+
+.page--light .reportSummaryText {
+    color: #1f2937;
+}
+
 .page--light .reportSummaryValue {
     color: #0f172a;
 }
 
 .page--light .reportSummaryItemValue {
     color: #1d4ed8;
-}
-
-.page--light .reportSummarySource {
-    background: #f8fafc;
-    border-color: #e2e8f0;
-}
-
-.page--light .reportSummarySourceTimestamp {
-    color: #64748b;
-}
-
-.page--light .reportSummarySourceMetrics {
-    color: #1f2937;
-}
-
-.page--light .reportSummarySourceError {
-    color: #dc2626;
 }
 
 .page--light .reportStaticSection,
