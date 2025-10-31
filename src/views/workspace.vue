@@ -3256,7 +3256,7 @@ onBeforeUnmount(() => {
 
 
 <template>
-    <div class="page">
+    <div class="page page--light">
         <div class="topBar">
             <div class="topBar_left">
                 <h1 class="topBar_title">
@@ -5428,6 +5428,364 @@ body,
     color: #e5e7eb;
     border-color: #4b5563;
 }
+
+/* Light theme overrides */
+.page--light {
+    background-color: #f8fafc;
+    color: #1f2937;
+}
+
+.page--light .topBar {
+    background: linear-gradient(90deg, #ffffff, #f1f5f9);
+    border-bottom: 1px solid #cbd5f5;
+    box-shadow: 0 2px 6px rgba(148, 163, 184, 0.35);
+    color: #0f172a;
+}
+
+.page--light .topBar_iconBtn {
+    background: #ffffff;
+    border-color: #cbd5f5;
+    color: #1f2937;
+}
+
+.page--light .topBar_iconBtn:hover:not(:disabled) {
+    background: #e2e8f0;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.page--light .topBar_iconBtn.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(14, 165, 233, 0.18));
+    color: #1d4ed8;
+}
+
+.page--light .topBar_addProject {
+    background-color: #2563eb;
+    box-shadow: 0 4px 12px rgba(148, 163, 184, 0.35);
+}
+
+.page--light .topBar_addProject:hover {
+    background-color: #1d4ed8;
+}
+
+.page--light .mainContent {
+    background-color: #f8fafc;
+}
+
+.page--light .workSpace {
+    background: #ffffff;
+    border-color: #e2e8f0;
+}
+
+.page--light .toolColumn {
+    background: #e2e8f0;
+    border-right: 1px solid #cbd5f5;
+}
+
+.page--light .toolColumn_btn {
+    background: #ffffff;
+    border-color: #cbd5f5;
+    color: #1f2937;
+}
+
+.page--light .toolColumn_btn:hover {
+    background: #e2e8f0;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.page--light .toolColumn_btn.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(14, 165, 233, 0.18));
+    color: #1d4ed8;
+}
+
+.page--light .panelHeader {
+    color: #475569;
+}
+
+.page--light .reportViewerContent {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .reportViewerProcessingOverlay {
+    background: rgba(148, 163, 184, 0.35);
+}
+
+.page--light .reportViewerProcessingText {
+    color: #1f2937;
+}
+
+.page--light .reportViewerPlaceholder {
+    color: #64748b;
+}
+
+.page--light .reportTabs {
+    gap: 10px;
+}
+
+.page--light .reportTab {
+    background: #e2e8f0;
+    border-color: #cbd5f5;
+    color: #1f2937;
+}
+
+.page--light .reportTab.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(14, 165, 233, 0.18));
+    border-color: rgba(59, 130, 246, 0.45);
+    color: #1d4ed8;
+}
+
+.page--light .reportTitle {
+    color: #0f172a;
+}
+
+.page--light .reportViewerTimestamp {
+    color: #64748b;
+}
+
+.page--light .reportBody {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .reportStructuredToggleButton {
+    background: #e2e8f0;
+    border-color: #cbd5f5;
+    color: #1f2937;
+}
+
+.page--light .reportStructuredToggleButton.active {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(14, 165, 233, 0.2));
+    color: #1d4ed8;
+}
+
+.page--light .reportJsonPreviewHeading {
+    color: #1d4ed8;
+}
+
+.page--light .reportJsonPreview {
+    background: #f8fafc;
+    border-color: #cbd5f5;
+    color: #1f2937;
+}
+
+.page--light .reportExportButton {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #ffffff;
+}
+
+.page--light .reportExportButton:hover:not(:disabled) {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+    color: #ffffff;
+}
+
+.page--light .reportExportButton:disabled {
+    background: #e2e8f0;
+    border-color: #cbd5f5;
+    color: #94a3b8;
+}
+
+.page--light .reportSummaryCard {
+    background: #f1f5f9;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .reportSummaryLabel {
+    color: #475569;
+}
+
+.page--light .reportSummaryValue {
+    color: #0f172a;
+}
+
+.page--light .reportSummaryItemValue {
+    color: #1d4ed8;
+}
+
+.page--light .reportSummarySource {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+}
+
+.page--light .reportSummarySourceTimestamp {
+    color: #64748b;
+}
+
+.page--light .reportSummarySourceMetrics {
+    color: #1f2937;
+}
+
+.page--light .reportSummarySourceError {
+    color: #dc2626;
+}
+
+.page--light .reportStaticSection,
+.page--light .reportDmlSection {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .reportStaticHeader h4,
+.page--light .reportDmlHeader h4 {
+    color: #0f172a;
+}
+
+.page--light .reportStaticEngine,
+.page--light .reportDmlTimestamp,
+.page--light .reportDmlEmpty {
+    color: #64748b;
+}
+
+.page--light .reportStaticBlock h5 {
+    color: #1f2937;
+}
+
+.page--light .reportStaticItemValue {
+    color: #1d4ed8;
+}
+
+.page--light .reportDmlStatus {
+    color: #1d4ed8;
+}
+
+.page--light .reportDmlSegment {
+    background: #f1f5f9;
+    border-color: #e2e8f0;
+}
+
+.page--light .reportDmlSegment summary {
+    color: #1f2937;
+}
+
+.page--light .reportDmlSegment pre {
+    background: #ffffff;
+    color: #1f2937;
+}
+
+.page--light .reportDmlSql {
+    background: rgba(59, 130, 246, 0.12);
+    color: #1d4ed8;
+}
+
+.page--light .reportDmlAnalysis {
+    background: rgba(14, 165, 233, 0.12);
+    color: #0f172a;
+}
+
+.page--light .reportDmlSummary {
+    background: #f1f5f9;
+    color: #1f2937;
+}
+
+.page--light .reportErrorPanel {
+    background: rgba(248, 113, 113, 0.12);
+    border-color: rgba(248, 113, 113, 0.35);
+    color: #b91c1c;
+}
+
+.page--light .reportErrorHint {
+    color: #b91c1c;
+}
+
+.page--light .reportChunks {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .reportChunkTitle,
+.page--light .reportChunkIssueMeta,
+.page--light .reportChunkEmpty {
+    color: #64748b;
+}
+
+.page--light .reportChunkIssueMessage {
+    color: #0f172a;
+}
+
+.page--light .reportChunkIssueContext {
+    color: #1d4ed8;
+}
+
+.page--light .reportChunkBody {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .pvName {
+    color: #0f172a;
+}
+
+.page--light .pvMeta {
+    color: #64748b;
+}
+
+.page--light .pvBox {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+.page--light .codeScroll {
+    background: #f8fafc;
+    color: #1f2937;
+}
+
+.page--light .codeLineNo {
+    color: #94a3b8;
+}
+
+.page--light .codeSelectionHighlight {
+    background: rgba(59, 130, 246, 0.18);
+    color: #1d4ed8;
+}
+
+.page--light .modalBackdrop {
+    background: rgba(148, 163, 184, 0.35);
+}
+
+.page--light .modalCard {
+    background: #ffffff;
+    color: #1f2937;
+    border-color: #e2e8f0;
+    box-shadow: 0 16px 32px rgba(148, 163, 184, 0.4);
+}
+
+.page--light .dropZone {
+    border-color: #cbd5f5;
+    background: #f8fafc;
+    color: #64748b;
+}
+
+.page--light .dropZone:hover {
+    background: #e2e8f0;
+}
+
+.page--light .btn {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #ffffff;
+}
+
+.page--light .btn.ghost {
+    background: transparent;
+    color: #1d4ed8;
+}
+
+.page--light .btn.outline {
+    background: transparent;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
 </style>
 
 
