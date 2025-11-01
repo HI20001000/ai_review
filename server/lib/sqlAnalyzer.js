@@ -1007,20 +1007,40 @@ function buildStaticReportSnapshot(rawReport, { fallbackReport = null, fallbackE
             ? fallbackReport
             : null;
 
-    const finalStaticReport = staticReportObject || fallbackReportObject || {};
+    const staticBase = staticReportObject ? cloneValue(staticReportObject) : {};
+    const fallbackBase = fallbackReportObject ? cloneValue(fallbackReportObject) : null;
+
+    const finalStaticReport = fallbackBase
+        ? {
+              ...staticBase,
+              ...fallbackBase,
+              summary:
+                  (fallbackBase.summary && typeof fallbackBase.summary === "object"
+                      ? fallbackBase.summary
+                      : staticBase.summary) || {},
+              issues: Array.isArray(fallbackBase.issues) ? fallbackBase.issues : staticBase.issues,
+              metadata:
+                  (fallbackBase.metadata && typeof fallbackBase.metadata === "object"
+                      ? fallbackBase.metadata
+                      : staticBase.metadata) || {}
+          }
+        : staticBase;
+
     const staticSummary = normaliseStaticSummary(finalStaticReport.summary, fallbackExtension);
 
-    const staticIssuesRaw = Array.isArray(staticReportObject?.issues)
-        ? staticReportObject.issues
-        : Array.isArray(finalStaticReport.issues)
+    const staticIssuesRaw = Array.isArray(finalStaticReport.issues)
         ? finalStaticReport.issues
+        : Array.isArray(staticReportObject?.issues)
+        ? staticReportObject.issues
         : [];
     const staticIssues = cloneIssueListForPersistence(staticIssuesRaw);
 
     const staticMetadata = normaliseStaticMetadata(
-        (staticReportObject?.metadata && typeof staticReportObject.metadata === "object"
+        (finalStaticReport.metadata && typeof finalStaticReport.metadata === "object"
+            ? finalStaticReport.metadata
+            : staticReportObject?.metadata && typeof staticReportObject.metadata === "object"
             ? staticReportObject.metadata
-            : finalStaticReport.metadata) || {}
+            : {})
     );
 
     const payload = {
@@ -1030,7 +1050,7 @@ function buildStaticReportSnapshot(rawReport, { fallbackReport = null, fallbackE
         metadata: staticMetadata
     };
 
-    if (staticReportObject && staticReportObject !== finalStaticReport) {
+    if (staticReportObject) {
         payload.original = cloneValue(staticReportObject);
     }
 
@@ -1438,7 +1458,12 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     });
     logSqlPayloadStage("static.parsedReport", staticSnapshot.parsed);
 
+    const staticSummary = cloneValue(staticSnapshot.summary);
+
     const staticReportPayload = cloneValue(staticSnapshot.payload);
+    staticReportPayload.summary = cloneValue(staticSummary);
+    staticReportPayload.issues = cloneIssueListForPersistence(staticSnapshot.issues);
+    staticReportPayload.metadata = cloneValue(staticSnapshot.metadata);
     if (parsedDifyReport) {
         staticReportPayload.enrichment = cloneValue(parsedDifyReport);
     }
