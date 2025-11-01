@@ -249,6 +249,43 @@ export function collectIssuesForSource(state, sourceKeys) {
  */
 export function collectAggregatedIssues(state) {
     if (!state) return [];
+
+    const combinedIssues = (() => {
+        if (typeof state.combinedReportJson !== "string") {
+            return [];
+        }
+        const trimmed = state.combinedReportJson.trim();
+        if (!trimmed) {
+            return [];
+        }
+        try {
+            const parsed = JSON.parse(trimmed);
+            const issues = Array.isArray(parsed?.issues) ? parsed.issues : [];
+            if (!issues.length) {
+                return [];
+            }
+            return issues.map((issue) => {
+                if (issue && typeof issue === "object" && !Array.isArray(issue)) {
+                    const hasSource = Boolean(
+                        issue.source || issue.analysis_source || issue.analysisSource || issue.from
+                    );
+                    if (hasSource) {
+                        return issue;
+                    }
+                    return { ...issue, source: "combined" };
+                }
+                return issue;
+            });
+        } catch (error) {
+            console.warn("[reports] Failed to parse combined report JSON issues", error);
+            return [];
+        }
+    })();
+
+    if (combinedIssues.length) {
+        return dedupeIssues(combinedIssues);
+    }
+
     const staticIssues = collectIssuesForSource(state, ["static_analyzer"]);
     const aiIssues = collectIssuesForSource(state, ["dml_prompt"]);
     const difyIssues = collectIssuesForSource(state, ["dify_workflow"]);
@@ -709,7 +746,12 @@ export function buildCombinedReportJsonExport(state) {
 }
 
 function normaliseDetailSeverity(detail) {
-    const candidates = [detail?.severityLabel, detail?.severity];
+    const arrayCandidate = Array.isArray(detail?.severity_levels)
+        ? detail.severity_levels.find((value) => typeof value === "string" && value.trim())
+        : Array.isArray(detail?.severityLevels)
+        ? detail.severityLevels.find((value) => typeof value === "string" && value.trim())
+        : null;
+    const candidates = [detail?.severityLabel, detail?.severity_label, detail?.severity, arrayCandidate];
     for (const candidate of candidates) {
         if (typeof candidate === "string" && candidate.trim()) {
             return candidate.trim();
@@ -736,10 +778,31 @@ export function buildIssueDistributions(issues, options = {}) {
             if (!detail || typeof detail !== "object") return;
             const severityLabel = normaliseDetailSeverity(detail) || "未標示";
             increment(severityCounts, severityLabel);
-            const ruleId = typeof detail.ruleId === "string" ? detail.ruleId.trim() : "";
-            if (ruleId) {
-                increment(ruleCounts, ruleId);
+            const ruleCandidates = [];
+            if (typeof detail.ruleId === "string") {
+                ruleCandidates.push(detail.ruleId.trim());
             }
+            if (typeof detail.rule_id === "string") {
+                ruleCandidates.push(detail.rule_id.trim());
+            }
+            if (Array.isArray(detail.ruleIds)) {
+                ruleCandidates.push(
+                    ...detail.ruleIds.map((value) => (typeof value === "string" ? value.trim() : ""))
+                );
+            }
+            if (Array.isArray(detail.rule_ids)) {
+                ruleCandidates.push(
+                    ...detail.rule_ids.map((value) => (typeof value === "string" ? value.trim() : ""))
+                );
+            }
+            if (typeof detail.rule === "string") {
+                ruleCandidates.push(detail.rule.trim());
+            }
+            const uniqueRules = Array.from(new Set(ruleCandidates.filter((value) => Boolean(value))));
+            if (!uniqueRules.length) {
+                return;
+            }
+            uniqueRules.forEach((ruleId) => increment(ruleCounts, ruleId));
         });
     });
 
