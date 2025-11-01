@@ -996,6 +996,86 @@ function parseStaticReport(rawReport) {
     return null;
 }
 
+function buildStaticReportSnapshot(rawReport, { fallbackReport = null, fallbackExtension = ".sql" } = {}) {
+    const parsedStaticReport = parseStaticReport(rawReport);
+    const staticReportObject =
+        parsedStaticReport && typeof parsedStaticReport === "object" && !Array.isArray(parsedStaticReport)
+            ? parsedStaticReport
+            : null;
+    const fallbackReportObject =
+        fallbackReport && typeof fallbackReport === "object" && !Array.isArray(fallbackReport)
+            ? fallbackReport
+            : null;
+
+    const staticBase = staticReportObject ? cloneValue(staticReportObject) : {};
+    const fallbackBase = fallbackReportObject ? cloneValue(fallbackReportObject) : null;
+
+    const finalStaticReport = fallbackBase
+        ? {
+              ...staticBase,
+              ...fallbackBase,
+              summary:
+                  (fallbackBase.summary && typeof fallbackBase.summary === "object"
+                      ? fallbackBase.summary
+                      : staticBase.summary) || {},
+              issues: Array.isArray(fallbackBase.issues) ? fallbackBase.issues : staticBase.issues,
+              metadata:
+                  (fallbackBase.metadata && typeof fallbackBase.metadata === "object"
+                      ? fallbackBase.metadata
+                      : staticBase.metadata) || {}
+          }
+        : staticBase;
+
+    const staticSummary = normaliseStaticSummary(finalStaticReport.summary, fallbackExtension);
+
+    const staticIssuesRaw = Array.isArray(finalStaticReport.issues)
+        ? finalStaticReport.issues
+        : Array.isArray(staticReportObject?.issues)
+        ? staticReportObject.issues
+        : [];
+    const staticIssues = cloneIssueListForPersistence(staticIssuesRaw);
+
+    const staticMetadata = normaliseStaticMetadata(
+        (finalStaticReport.metadata && typeof finalStaticReport.metadata === "object"
+            ? finalStaticReport.metadata
+            : staticReportObject?.metadata && typeof staticReportObject.metadata === "object"
+            ? staticReportObject.metadata
+            : {})
+    );
+
+    const payload = {
+        ...cloneValue(finalStaticReport),
+        summary: staticSummary,
+        issues: staticIssues,
+        metadata: staticMetadata
+    };
+
+    if (staticReportObject) {
+        payload.original = cloneValue(staticReportObject);
+    }
+
+    let serialised = typeof rawReport === "string" ? rawReport : "";
+    try {
+        serialised = JSON.stringify(payload, null, 2);
+    } catch (error) {
+        try {
+            serialised = JSON.stringify(payload);
+        } catch (_nestedError) {
+            serialised = typeof rawReport === "string" ? rawReport : "";
+        }
+    }
+
+    return {
+        payload,
+        summary: staticSummary,
+        issues: staticIssues,
+        metadata: staticMetadata,
+        parsed: staticReportObject,
+        final: finalStaticReport,
+        serialised
+    };
+}
+
 function normaliseStaticMetadata(metadata) {
     const base = metadata && typeof metadata === "object" ? { ...metadata } : {};
     if (!base.analysis_source) {
@@ -1269,7 +1349,9 @@ export async function analyseSqlToReport(sqlText, options = {}) {
     const resolvedProjectName = projectName || projectId || "sql-report";
     const resolvedUserId = typeof userId === "string" && userId.trim() ? userId.trim() : undefined;
     const analysisFilePath = path ? `${path}.analysis.json` : "analysis.json";
-    const segments = partitionContent(trimmedReport);
+    const staticSnapshot = buildStaticReportSnapshot(trimmedReport);
+    const difyContent = staticSnapshot.serialised || trimmedReport;
+    const segments = partitionContent(difyContent);
     const summary = getDifyConfigSummary();
 
     let dmlPrompt = null;
@@ -1324,20 +1406,20 @@ export async function analyseSqlToReport(sqlText, options = {}) {
         `[sql+dify] Enriching SQL analysis project=${projectId || resolvedProjectName} path=${path || analysisFilePath} ` +
             `segments=${segments.length} maxSegmentChars=${summary.maxSegmentChars}`
     );
-    if (trimmedReport) {
-        console.log("[sql+dify] staticReportJson.request content=", trimmedReport);
+    if (difyContent) {
+        console.log("[sql+dify] staticReportJson.request content=", difyContent);
     }
 
     try {
         const difyRaw = await requestDifyJsonEnrichment({
             projectName: resolvedProjectName,
             filePath: analysisFilePath,
-            content: trimmedReport,
+            content: difyContent,
             userId: resolvedUserId,
             segments,
             files
         });
-        const dify = normaliseDifyOutput(difyRaw, trimmedReport);
+        const dify = normaliseDifyOutput(difyRaw, difyContent);
         if (typeof dify?.report === "string" && dify.report.trim()) {
             console.log("[sql+dify] staticReportJson.response content=", dify.report);
         }
@@ -1366,37 +1448,34 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         : [rawReport || content || ""];
     logSqlPayloadStage("segments.normalised", segments);
 
-    const parsedStaticReport = parseStaticReport(rawReport);
-    logSqlPayloadStage("static.parsedReport", parsedStaticReport);
-
     const parsedDify = parseStaticReport(difyReport);
     logSqlPayloadStage("dify.parsedReport", parsedDify);
-
     const parsedDifyReport = parsedDify && typeof parsedDify === "object" ? parsedDify : null;
-    const finalStaticReport = parsedDifyReport || parsedStaticReport || {};
 
-    const staticSummary = normaliseStaticSummary(finalStaticReport.summary, ".sql");
-    const staticIssuesRaw = Array.isArray(finalStaticReport.issues) ? finalStaticReport.issues : [];
-    const staticIssuesForPersistence = cloneIssueListForPersistence(staticIssuesRaw);
-    const staticIssuesWithSource = staticIssuesForPersistence.map((issue) =>
-        annotateIssueSource(issue, "static_analyzer")
-    );
-    const staticMetadata = normaliseStaticMetadata(
-        finalStaticReport.metadata || parsedStaticReport?.metadata
-    );
-    const staticReportPayload = {
-        ...cloneValue(finalStaticReport),
-        summary: staticSummary,
-        issues: staticIssuesForPersistence,
-        metadata: staticMetadata
-    };
+    const staticSnapshot = buildStaticReportSnapshot(rawReport, {
+        fallbackReport: parsedDifyReport,
+        fallbackExtension: ".sql"
+    });
+    logSqlPayloadStage("static.parsedReport", staticSnapshot.parsed);
+
+    const staticSummary = cloneValue(staticSnapshot.summary);
+
+    const staticReportPayload = cloneValue(staticSnapshot.payload);
+    staticReportPayload.summary = cloneValue(staticSummary);
+    staticReportPayload.issues = cloneIssueListForPersistence(staticSnapshot.issues);
+    staticReportPayload.metadata = cloneValue(staticSnapshot.metadata);
     if (parsedDifyReport) {
         staticReportPayload.enrichment = cloneValue(parsedDifyReport);
     }
-    if (parsedStaticReport && parsedStaticReport !== finalStaticReport) {
-        staticReportPayload.original = cloneValue(parsedStaticReport);
+    if (staticSnapshot.parsed && staticSnapshot.parsed !== staticSnapshot.final) {
+        staticReportPayload.original = cloneValue(staticSnapshot.parsed);
     }
     logSqlPayloadStage("static.reportPayload", staticReportPayload);
+
+    const staticIssuesForPersistence = cloneIssueListForPersistence(staticSnapshot.issues);
+    const staticIssuesWithSource = staticIssuesForPersistence.map((issue) =>
+        annotateIssueSource(issue, "static_analyzer")
+    );
 
     const dmlSegments = Array.isArray(dml?.segments)
         ? dml.segments.map((segment, index) => {
