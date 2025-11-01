@@ -385,25 +385,6 @@ const activeReportDetails = computed(() => {
             ? combinedSummaryRecord
             : null) || globalSummary;
 
-    const combinedSummaryText = pickString(
-        combinedSummarySource?.message,
-        typeof combinedSummarySource?.summary === "string" ? combinedSummarySource.summary : "",
-        combinedSummarySource?.note,
-        typeof combinedSummarySource === "string" ? combinedSummarySource : ""
-    );
-
-    const combinedSummaryByRule =
-        (combinedSummarySource?.by_rule && typeof combinedSummarySource.by_rule === "object"
-            ? combinedSummarySource.by_rule
-            : null) ||
-        (combinedSummarySource?.byRule && typeof combinedSummarySource.byRule === "object"
-            ? combinedSummarySource.byRule
-            : null);
-
-    const combinedDistributions = buildIssueDistributions(aggregatedIssues, {
-        summaryByRule: combinedSummaryByRule
-    });
-
     let combinedTotalIssues = null;
     if (combinedSummarySource && typeof combinedSummarySource === "object") {
         const combinedTotalCandidate = Number(
@@ -442,7 +423,7 @@ const activeReportDetails = computed(() => {
         omitKeys: ["sources", "by_rule", "byRule", "source", "label"]
     });
 
-    const combinedSummaryText = pickString(
+    const combinedSummaryTextValue = pickString(
         combinedSummarySource?.message,
         typeof combinedSummarySource?.summary === "string" ? combinedSummarySource.summary : "",
         combinedSummarySource?.note,
@@ -686,7 +667,7 @@ const activeReportDetails = computed(() => {
         sourceSummaries,
         combinedSummary: combinedSummarySource,
         combinedSummaryDetails,
-        combinedSummaryText,
+        combinedSummaryText: combinedSummaryTextValue,
         combinedSeverityBreakdown: combinedDistributions.severityBreakdown,
         combinedRuleBreakdown: combinedDistributions.ruleBreakdown,
         combinedTotalIssues: Number.isFinite(combinedTotalIssues)
