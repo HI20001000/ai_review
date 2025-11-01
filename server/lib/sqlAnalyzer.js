@@ -1324,6 +1324,9 @@ export async function analyseSqlToReport(sqlText, options = {}) {
         `[sql+dify] Enriching SQL analysis project=${projectId || resolvedProjectName} path=${path || analysisFilePath} ` +
             `segments=${segments.length} maxSegmentChars=${summary.maxSegmentChars}`
     );
+    if (trimmedReport) {
+        console.log("[sql+dify] staticReportJson.request content=", trimmedReport);
+    }
 
     try {
         const difyRaw = await requestDifyJsonEnrichment({
@@ -1335,6 +1338,9 @@ export async function analyseSqlToReport(sqlText, options = {}) {
             files
         });
         const dify = normaliseDifyOutput(difyRaw, trimmedReport);
+        if (typeof dify?.report === "string" && dify.report.trim()) {
+            console.log("[sql+dify] staticReportJson.response content=", dify.report);
+        }
         return { analysis, dify, difyError: null, dml: { segments: dmlSegments, dify: dmlPrompt }, dmlError };
     } catch (error) {
         const message = error?.message || String(error);
