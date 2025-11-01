@@ -1,4 +1,5 @@
 import express from "express";
+import { createHash } from "node:crypto";
 import pool from "./lib/db.js";
 import { ensureSchema } from "./lib/ensureSchema.js";
 import { getDifyConfigSummary, partitionContent, requestDifyReport } from "./lib/difyClient.js";
@@ -66,6 +67,13 @@ function mapNodeRow(row) {
         mime: row.mime || "",
         isBig: Boolean(row.is_big)
     };
+}
+
+function computeNodeKey(projectId, path) {
+    const safeProjectId = typeof projectId === "string" ? projectId : "";
+    const safePath = typeof path === "string" ? path : "";
+    const composite = `${safeProjectId}:${safePath}`;
+    return createHash("sha256").update(composite).digest("hex");
 }
 
 function safeParseArray(jsonText, { fallback = [] } = {}) {
@@ -597,7 +605,21 @@ async function insertNodes(connection, projectId, nodes) {
     if (!nodes.length) return;
     const chunkSize = Number(process.env.NODE_INSERT_BATCH || "400");
     for (let i = 0; i < nodes.length; i += chunkSize) {
-        const chunk = nodes.slice(i, i + chunkSize);
+        const chunk = nodes.slice(i, i + chunkSize).map((node) => {
+            const path = typeof node?.path === "string" ? node.path : "";
+            const type = node?.type === "dir" ? "dir" : "file";
+            return {
+                key: computeNodeKey(projectId, path),
+                type,
+                name: typeof node?.name === "string" ? node.name : "",
+                path,
+                parent: typeof node?.parent === "string" ? node.parent : "",
+                size: Number(node?.size) || 0,
+                lastModified: Number(node?.lastModified) || 0,
+                mime: typeof node?.mime === "string" ? node.mime : "",
+                isBig: Boolean(node?.isBig)
+            };
+        });
         const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(",");
         const values = chunk.flatMap((node) => [
             node.key,
@@ -605,10 +627,10 @@ async function insertNodes(connection, projectId, nodes) {
             node.type,
             node.name,
             node.path,
-            node.parent || "",
-            Number(node.size) || 0,
-            Number(node.lastModified) || 0,
-            node.mime || "",
+            node.parent,
+            node.size,
+            node.lastModified,
+            node.mime,
             node.isBig ? 1 : 0
         ]);
         await connection.query(
