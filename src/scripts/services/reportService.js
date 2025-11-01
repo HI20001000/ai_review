@@ -156,11 +156,17 @@ export async function generateReportViaDify(payload) {
 export async function fetchProjectReports(projectId) {
     if (!projectId) return [];
     const encodedId = encodeURIComponent(projectId);
-    const response = await getJson(`/projects/${encodedId}/reports`);
-    if (Array.isArray(response)) {
+    let response;
+    try {
+        response = await getJson(`/projects/${encodedId}/reports`);
+    } catch (error) {
+        console.warn("[reports] Failed to fetch project reports", error);
+        return [];
+    }
+    if (Array.isArray(response) && response.length) {
         return response;
     }
-    if (Array.isArray(response?.reports)) {
+    if (Array.isArray(response?.reports) && response.reports.length) {
         return response.reports;
     }
     return [];
