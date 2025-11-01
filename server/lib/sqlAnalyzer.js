@@ -1360,19 +1360,31 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         : [rawReport || content || ""];
     logSqlPayloadStage("segments.normalised", segments);
 
-    const parsedStaticReport = parseStaticReport(rawReport) || {};
+    const parsedStaticReport = parseStaticReport(rawReport);
     logSqlPayloadStage("static.parsedReport", parsedStaticReport);
-    const staticSummary = normaliseStaticSummary(parsedStaticReport.summary, ".sql");
-    const staticIssues = Array.isArray(parsedStaticReport.issues) ? parsedStaticReport.issues : [];
+
+    const parsedDify = parseStaticReport(difyReport);
+    logSqlPayloadStage("dify.parsedReport", parsedDify);
+
+    const parsedDifyReport = parsedDify && typeof parsedDify === "object" ? parsedDify : null;
+    const finalStaticReport = parsedDifyReport || parsedStaticReport || {};
+
+    const staticSummary = normaliseStaticSummary(finalStaticReport.summary, ".sql");
+    const staticIssues = Array.isArray(finalStaticReport.issues) ? finalStaticReport.issues : [];
     const staticIssuesWithSource = staticIssues.map((issue) => annotateIssueSource(issue, "static_analyzer"));
-    const staticMetadata = normaliseStaticMetadata(parsedStaticReport.metadata);
+    const staticMetadata = normaliseStaticMetadata(
+        finalStaticReport.metadata || parsedStaticReport?.metadata
+    );
     const staticIssuesForPersistence = cloneIssueListForPersistence(staticIssues);
     const staticReportPayload = {
-        ...parsedStaticReport,
+        ...cloneValue(finalStaticReport),
         summary: staticSummary,
         issues: staticIssuesForPersistence,
         metadata: staticMetadata
     };
+    if (parsedStaticReport && parsedStaticReport !== finalStaticReport) {
+        staticReportPayload.original = cloneValue(parsedStaticReport);
+    }
     logSqlPayloadStage("static.reportPayload", staticReportPayload);
 
     const dmlSegments = Array.isArray(dml?.segments)
@@ -1454,14 +1466,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     logSqlPayloadStage("dml.reportPayload", dmlReportPayload);
 
     let finalReport = difyReport && difyReport.trim() ? difyReport : rawReport;
-    let parsedDify;
-    if (finalReport && finalReport.trim()) {
-        try {
-            parsedDify = JSON.parse(finalReport);
-        } catch (error) {
-            parsedDify = null;
-        }
-    }
 
     const difyIssuesRaw =
         parsedDify && typeof parsedDify === "object" && Array.isArray(parsedDify.issues) ? parsedDify.issues : [];
@@ -1492,10 +1496,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     ]);
 
     dmlReportPayload.issues = cloneIssueListForPersistence(aiIssuesForPersistence);
-
-    if (parsedDify && typeof parsedDify === "object") {
-        staticReportPayload.enrichment = parsedDify;
-    }
 
     const generatedAt = dify?.generatedAt || new Date().toISOString();
     const combinedSummaryRecords = [
