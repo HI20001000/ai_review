@@ -1372,17 +1372,23 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const parsedDify = parseStaticReport(difyReport);
     logSqlPayloadStage("dify.parsedReport", parsedDify);
 
+    const staticReportObject =
+        parsedStaticReport && typeof parsedStaticReport === "object" ? parsedStaticReport : null;
     const parsedDifyReport = parsedDify && typeof parsedDify === "object" ? parsedDify : null;
-    const finalStaticReport = parsedDifyReport || parsedStaticReport || {};
+    const finalStaticReport = staticReportObject || parsedDifyReport || {};
 
     const staticSummary = normaliseStaticSummary(finalStaticReport.summary, ".sql");
-    const staticIssuesRaw = Array.isArray(finalStaticReport.issues) ? finalStaticReport.issues : [];
+    const staticIssuesRaw = Array.isArray(staticReportObject?.issues)
+        ? staticReportObject.issues
+        : Array.isArray(finalStaticReport.issues)
+        ? finalStaticReport.issues
+        : [];
     const staticIssuesForPersistence = cloneIssueListForPersistence(staticIssuesRaw);
     const staticIssuesWithSource = staticIssuesForPersistence.map((issue) =>
         annotateIssueSource(issue, "static_analyzer")
     );
     const staticMetadata = normaliseStaticMetadata(
-        finalStaticReport.metadata || parsedStaticReport?.metadata
+        staticReportObject?.metadata || finalStaticReport.metadata
     );
     const staticReportPayload = {
         ...cloneValue(finalStaticReport),
