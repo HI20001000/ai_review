@@ -4830,6 +4830,8 @@ body,
 .reportIssuesRow .reportRowContent.codeScroll {
     display: flex;
     flex-direction: column;
+    overflow: visible;
+    max-height: none;
 }
 
 .reportIssuesRow .codeEditor {
