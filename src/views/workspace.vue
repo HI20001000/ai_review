@@ -164,7 +164,7 @@ const reportExportState = reactive({
     static: false,
     ai: false
 });
-const isDmlReportExpanded = ref(true);
+const isDmlReportExpanded = ref(false);
 
 const handleToggleDmlSection = (event) => {
     if (event && typeof event.target?.open === "boolean") {
