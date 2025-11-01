@@ -180,9 +180,9 @@ const statusText = computed(() => props.connection?.message || DEFAULT_STATUS_ME
 const statusStyle = computed(() => {
     const base = { color: "var(--panel-muted)" };
     const state = props.connection?.status || "checking";
-    if (state === "ready") return { ...base, color: "#86efac" };
-    if (state === "error") return { ...base, color: "#fca5a5" };
-    if (state === "checking") return { ...base, color: "#fde68a" };
+    if (state === "ready") return { ...base, color: "#22c55e" };
+    if (state === "error") return { ...base, color: "#ef4444" };
+    if (state === "checking") return { ...base, color: "#f59e0b" };
     return base;
 });
 const controlsDisabled = computed(() => props.disabled || props.loading);
@@ -382,13 +382,23 @@ function renderMessageContent(msg) {
 
 <style scoped>
 .chatFloating {
+    --chat-bg: #fdfdfc;
+    --chat-bg-alt: #f7f9fc;
+    --chat-border: rgba(148, 163, 184, 0.45);
+    --chat-border-strong: rgba(100, 116, 139, 0.65);
+    --chat-heading: #1f2937;
+    --chat-muted: #64748b;
+    --chat-accent: #2563eb;
+    --chat-accent-soft: rgba(37, 99, 235, 0.1);
+    --chat-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+    --chat-chip-bg: rgba(148, 163, 184, 0.16);
     position: fixed;
     z-index: 40;
-    background: var(--panel-surface);
-    border: 1px solid var(--panel-border);
+    background: var(--chat-bg);
+    border: 1px solid var(--chat-border);
     border-radius: 14px;
-    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
-    color: var(--panel-heading);
+    box-shadow: var(--chat-shadow);
+    color: var(--chat-heading);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -398,8 +408,8 @@ function renderMessageContent(msg) {
 
 .chatFloating__header {
     padding: 10px 12px;
-    background: var(--panel-surface-alt);
-    border-bottom: 1px solid var(--panel-border);
+    background: var(--chat-bg-alt);
+    border-bottom: 1px solid var(--chat-border);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -414,7 +424,7 @@ function renderMessageContent(msg) {
 
 .chatFloating__title {
     font-weight: 600;
-    color: var(--panel-heading);
+    color: var(--chat-heading);
     letter-spacing: 0.01em;
 }
 
@@ -428,9 +438,9 @@ function renderMessageContent(msg) {
     width: 32px;
     height: 32px;
     border-radius: 8px;
-    border: 1px solid var(--panel-border);
-    background: var(--panel-surface);
-    color: var(--panel-muted);
+    border: 1px solid var(--chat-border);
+    background: var(--chat-bg);
+    color: var(--chat-muted);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -446,9 +456,9 @@ function renderMessageContent(msg) {
 }
 
 .chatFloating__iconBtn:hover:not(:disabled) {
-    background: var(--panel-accent-soft);
-    border-color: var(--panel-border-strong);
-    color: var(--panel-heading);
+    background: var(--chat-accent-soft);
+    border-color: var(--chat-border-strong);
+    color: var(--chat-heading);
 }
 
 .chatFloating__iconBtn:disabled {
@@ -469,10 +479,10 @@ function renderMessageContent(msg) {
 .chatWindow {
     display: flex;
     flex-direction: column;
-    background: var(--panel-surface);
-    border: 1px solid var(--panel-border);
+    background: var(--chat-bg);
+    border: 1px solid var(--chat-border);
     border-radius: 12px;
-    color: var(--panel-heading);
+    color: var(--chat-heading);
     height: 100%;
     min-height: 0;
     overflow: hidden;
@@ -480,8 +490,8 @@ function renderMessageContent(msg) {
 
 .chatWindow__context {
     padding: 12px 14px 6px;
-    border-bottom: 1px solid var(--panel-border);
-    background: var(--panel-surface-alt);
+    border-bottom: 1px solid var(--chat-border);
+    background: var(--chat-bg-alt);
 }
 
 .chatWindow__contextHeader {
@@ -499,8 +509,8 @@ function renderMessageContent(msg) {
 .chatWindow__btn {
     padding: 4px 10px;
     border-radius: 6px;
-    border: 1px solid var(--panel-accent);
-    background: var(--panel-accent);
+    border: 1px solid var(--chat-accent);
+    background: var(--chat-accent);
     color: #fff;
     font-size: 12px;
     cursor: pointer;
@@ -509,8 +519,8 @@ function renderMessageContent(msg) {
 
 .chatWindow__btn.ghost {
     background: transparent;
-    border-color: var(--panel-border);
-    color: var(--panel-muted);
+    border-color: var(--chat-border);
+    color: var(--chat-muted);
 }
 
 .chatWindow__btn:disabled {
@@ -528,12 +538,12 @@ function renderMessageContent(msg) {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: var(--panel-accent-soft);
-    border: 1px solid var(--panel-border);
+    background: var(--chat-chip-bg);
+    border: 1px solid var(--chat-border);
     border-radius: 999px;
     padding: 4px 10px;
     font-size: 12px;
-    color: var(--panel-heading);
+    color: var(--chat-heading);
 }
 
 .chatWindow__chipType {
@@ -551,7 +561,7 @@ function renderMessageContent(msg) {
 
 .chatWindow__chipsPlaceholder {
     font-size: 12px;
-    color: var(--panel-muted);
+    color: var(--chat-muted);
     margin: 0;
 }
 
@@ -562,22 +572,22 @@ function renderMessageContent(msg) {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    background: var(--panel-surface);
+    background: var(--chat-bg);
 }
 
 .chatWindow__messagesEmpty {
     margin: auto;
     text-align: center;
     font-size: 13px;
-    color: var(--panel-muted);
+    color: var(--chat-muted);
 }
 
 .chatWindow__message {
     padding: 10px 12px;
     border-radius: 10px;
-    border: 1px solid var(--panel-border);
-    background: var(--panel-surface-alt);
-    color: var(--panel-heading);
+    border: 1px solid var(--chat-border);
+    background: var(--chat-bg-alt);
+    color: var(--chat-heading);
 }
 
 .chatWindow__message.is-user {
@@ -589,7 +599,7 @@ function renderMessageContent(msg) {
 .chatWindow__message.is-pending {
     opacity: 0.85;
     border-style: dashed;
-    color: var(--panel-muted);
+    color: var(--chat-muted);
 }
 
 .chatWindow__message.is-error {
@@ -602,7 +612,7 @@ function renderMessageContent(msg) {
     border-style: dashed;
     border-color: rgba(37, 99, 235, 0.28);
     background: rgba(37, 99, 235, 0.12);
-    color: var(--panel-muted);
+    color: var(--chat-muted);
 }
 
 .chatWindow__messageMeta {
@@ -612,7 +622,7 @@ function renderMessageContent(msg) {
     align-items: flex-start;
     gap: 2px;
     margin-bottom: 6px;
-    color: var(--panel-muted);
+    color: var(--chat-muted);
 }
 
 .chatWindow__messageMeta.is-user {
@@ -622,7 +632,7 @@ function renderMessageContent(msg) {
 
 .chatWindow__messageAuthor {
     font-weight: 600;
-    color: var(--panel-heading);
+    color: var(--chat-heading);
 }
 
 .chatWindow__messageTime {
@@ -634,7 +644,7 @@ function renderMessageContent(msg) {
     font-size: 13px;
     line-height: 1.6;
     display: block;
-    color: var(--panel-heading);
+    color: var(--chat-heading);
 }
 
 .chatWindow__messageBody > *:last-child {
@@ -665,8 +675,8 @@ function renderMessageContent(msg) {
 
 .chatWindow__messageBody pre {
     margin: 0 0 0.75em;
-    background: var(--panel-surface-alt);
-    border: 1px solid var(--panel-border);
+    background: var(--chat-bg-alt);
+    border: 1px solid var(--chat-border);
     border-radius: 8px;
     padding: 10px 12px;
     overflow-x: auto;
@@ -682,44 +692,44 @@ function renderMessageContent(msg) {
 }
 
 .chatWindow__messageBody a {
-    color: var(--panel-accent);
+    color: var(--chat-accent);
     text-decoration: underline;
 }
 
 .chatWindow__messageBody hr {
     border: none;
-    border-top: 1px solid var(--panel-border);
+    border-top: 1px solid var(--chat-border);
     margin: 0.75em 0;
 }
 
 .chatWindow__messageBody blockquote {
     margin: 0 0 0.75em;
     padding-left: 0.9em;
-    border-left: 3px solid var(--panel-border);
-    color: var(--panel-muted);
+    border-left: 3px solid var(--chat-border);
+    color: var(--chat-muted);
 }
 
 .chatWindow__footer {
     padding: 12px 14px;
-    border-top: 1px solid var(--panel-border);
-    background: var(--panel-surface-alt);
+    border-top: 1px solid var(--chat-border);
+    background: var(--chat-bg-alt);
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
 .chatWindow__input {
-    background: var(--panel-surface);
-    border: 1px solid var(--panel-border);
+    background: var(--chat-bg);
+    border: 1px solid var(--chat-border);
     border-radius: 8px;
-    color: var(--panel-heading);
+    color: var(--chat-heading);
     padding: 8px 10px;
     min-height: 90px;
     resize: none;
 }
 
 .chatWindow__input:focus {
-    outline: 2px solid var(--panel-accent);
+    outline: 2px solid var(--chat-accent);
     outline-offset: 0;
 }
 
@@ -731,14 +741,14 @@ function renderMessageContent(msg) {
 
 .chatWindow__status {
     font-size: 11px;
-    color: var(--panel-muted);
+    color: var(--chat-muted);
 }
 
 .chatWindow__send {
     padding: 6px 14px;
     border-radius: 8px;
     border: none;
-    background: var(--panel-accent);
+    background: var(--chat-accent);
     color: #fff;
     cursor: pointer;
     font-weight: 600;
