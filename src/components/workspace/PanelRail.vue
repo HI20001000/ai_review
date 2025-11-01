@@ -207,11 +207,13 @@ function handlePointerDown(event) {
     padding: 16px;
     min-height: 0;
     height: 100%;
+    max-height: 100%;
     background: var(--panel-surface);
     border: 1px solid var(--panel-border);
     border-radius: 12px;
     box-sizing: border-box;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
     position: relative;
     box-shadow: 0 24px 44px rgba(148, 163, 184, 0.28);
 }
