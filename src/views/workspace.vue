@@ -4686,13 +4686,14 @@ body,
     display: flex;
     flex-direction: column;
     gap: 12px;
-    flex: 0 0 auto;
+    flex: 1 1 auto;
     min-height: 0;
     align-self: stretch;
 }
 
 .reportIssuesSection--empty {
     padding-top: 12px;
+    flex: 0 0 auto;
 }
 
 
@@ -4721,6 +4722,7 @@ body,
     border-radius: 8px;
     padding: 12px;
     background: rgba(15, 23, 42, 0.02);
+    overflow: auto;
 }
 
 .reportIssuesHeader h4 {
