@@ -1658,7 +1658,7 @@ const chatWindowStyle = computed(() => ({
     top: `${chatWindowState.y}px`
 }));
 
-const isChatToggleDisabled = computed(() => isChatLocked.value && !isChatWindowOpen.value);
+const isChatToggleDisabled = computed(() => isChatLocked.value && isChatWindowOpen.value);
 
 function escapeHtml(value) {
     return String(value)
