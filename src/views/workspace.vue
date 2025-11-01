@@ -3929,10 +3929,11 @@ body,
 }
 
 .page {
-    min-height: 100vh;
+    height: 100vh;
     display: flex;
     flex-direction: column;
     background-color: #1e1e1e;
+    overflow: hidden;
 }
 
 /* 頂欄 */
@@ -4062,7 +4063,9 @@ body,
     box-sizing: border-box;
     column-gap: 16px;
     row-gap: 16px;
-    overflow: visible;
+    height: calc(100vh - 60px);
+    max-height: calc(100vh - 60px);
+    overflow: hidden;
 }
 
 .workSpace {
@@ -4077,6 +4080,9 @@ body,
     border-radius: 0;
     padding: 16px;
     box-sizing: border-box;
+    height: 100%;
+    max-height: 100%;
+    overflow-y: auto;
 }
 
 .workSpace--reports {
@@ -4096,6 +4102,8 @@ body,
     gap: 12px;
     padding: 16px 10px;
     box-sizing: border-box;
+    max-height: 100%;
+    overflow-y: auto;
 }
 
 .toolColumn_btn {
@@ -4188,7 +4196,7 @@ body,
     box-sizing: border-box;
     min-width: 0;
     position: relative;
-    overflow: visible;
+    overflow: auto;
 }
 
 .reportViewerContent--loading > :not(.reportViewerProcessingOverlay) {
@@ -4915,8 +4923,7 @@ body,
 .reportIssuesRow .reportRowContent.codeScroll {
     display: flex;
     flex-direction: column;
-    overflow: visible;
-    max-height: none;
+    overflow: auto;
 }
 
 .reportIssuesRow .codeEditor {
@@ -5292,22 +5299,17 @@ body,
     border: 1px solid #2f2f2f;
     padding: 12px;
     display: flex;
-    overflow: visible;
-}
-
-.pvBox:not(.codeBox) {
-    overflow: visible;
+    overflow: auto;
 }
 
 .pvBox.codeBox {
     padding: 12px;
-    overflow: visible;
+    overflow: auto;
 }
 
 .pvBox.codeBox.reportIssuesBox,
 .pvBox.codeBox.reportIssuesBox .codeScroll {
-    overflow: visible;
-    max-height: none;
+    overflow: auto;
 }
 
 .codeScroll {
@@ -5318,8 +5320,8 @@ body,
     color: #1f2937;
     background: #f8fafc;
     cursor: text;
-    overflow: visible;
-    max-height: none;
+    overflow: auto;
+    max-height: 100%;
 }
 
 .reportBody.codeScroll,
