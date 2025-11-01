@@ -200,6 +200,19 @@ function serialiseIssuesJson(issues) {
     }
 }
 
+function buildIssuesOnlyEnrichment(report, fallbackIssues = []) {
+    if (report && typeof report === "object" && !Array.isArray(report)) {
+        const issues = Array.isArray(report.issues)
+            ? cloneIssueListForPersistence(report.issues)
+            : [];
+        return { issues };
+    }
+    if (Array.isArray(fallbackIssues) && fallbackIssues.length) {
+        return { issues: cloneIssueListForPersistence(fallbackIssues) };
+    }
+    return null;
+}
+
 function normaliseFallbackSource(issue) {
     if (!issue || typeof issue !== "object") {
         return "";
@@ -1010,21 +1023,26 @@ function buildStaticReportSnapshot(rawReport, { fallbackReport = null, fallbackE
     const staticBase = staticReportObject ? cloneValue(staticReportObject) : {};
     const fallbackBase = fallbackReportObject ? cloneValue(fallbackReportObject) : null;
 
-    const finalStaticReport = fallbackBase
-        ? {
-              ...staticBase,
-              ...fallbackBase,
-              summary:
-                  (fallbackBase.summary && typeof fallbackBase.summary === "object"
-                      ? fallbackBase.summary
-                      : staticBase.summary) || {},
-              issues: Array.isArray(fallbackBase.issues) ? fallbackBase.issues : staticBase.issues,
-              metadata:
-                  (fallbackBase.metadata && typeof fallbackBase.metadata === "object"
-                      ? fallbackBase.metadata
-                      : staticBase.metadata) || {}
-          }
-        : staticBase;
+    const finalStaticReport = { ...staticBase };
+    if (fallbackBase) {
+        if (Array.isArray(fallbackBase.issues)) {
+            finalStaticReport.issues = fallbackBase.issues;
+        }
+        if (
+            (!finalStaticReport.summary || typeof finalStaticReport.summary !== "object") &&
+            fallbackBase.summary &&
+            typeof fallbackBase.summary === "object"
+        ) {
+            finalStaticReport.summary = fallbackBase.summary;
+        }
+        if (
+            (!finalStaticReport.metadata || typeof finalStaticReport.metadata !== "object") &&
+            fallbackBase.metadata &&
+            typeof fallbackBase.metadata === "object"
+        ) {
+            finalStaticReport.metadata = fallbackBase.metadata;
+        }
+    }
 
     const staticSummary = normaliseStaticSummary(finalStaticReport.summary, fallbackExtension);
 
@@ -1452,8 +1470,16 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     logSqlPayloadStage("dify.parsedReport", parsedDify);
     const parsedDifyReport = parsedDify && typeof parsedDify === "object" ? parsedDify : null;
 
+    const difyIssuesFromReport = Array.isArray(parsedDifyReport?.issues) ? parsedDifyReport.issues : [];
+    const difyIssuesDirect = Array.isArray(dify?.issues) ? dify.issues : [];
+    const difyIssuesPreferredRaw = difyIssuesFromReport.length ? difyIssuesFromReport : difyIssuesDirect;
+    const difyIssuesSanitised = cloneIssueListForPersistence(difyIssuesPreferredRaw);
+
+    const fallbackReportForSnapshot =
+        parsedDifyReport || (difyIssuesSanitised.length ? { issues: difyIssuesSanitised } : null);
+
     const staticSnapshot = buildStaticReportSnapshot(rawReport, {
-        fallbackReport: parsedDifyReport,
+        fallbackReport: fallbackReportForSnapshot,
         fallbackExtension: ".sql"
     });
     logSqlPayloadStage("static.parsedReport", staticSnapshot.parsed);
@@ -1462,17 +1488,23 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
 
     const staticReportPayload = cloneValue(staticSnapshot.payload);
     staticReportPayload.summary = cloneValue(staticSummary);
-    staticReportPayload.issues = cloneIssueListForPersistence(staticSnapshot.issues);
     staticReportPayload.metadata = cloneValue(staticSnapshot.metadata);
-    if (parsedDifyReport) {
-        staticReportPayload.enrichment = cloneValue(parsedDifyReport);
+
+    const difyStaticIssues = difyIssuesSanitised;
+    const snapshotIssues = cloneIssueListForPersistence(staticSnapshot.issues);
+    const preferredStaticIssues = difyStaticIssues.length ? difyStaticIssues : snapshotIssues;
+
+    staticReportPayload.issues = cloneIssueListForPersistence(preferredStaticIssues);
+    const enrichmentIssues = buildIssuesOnlyEnrichment(parsedDifyReport, difyIssuesSanitised);
+    if (enrichmentIssues) {
+        staticReportPayload.enrichment = enrichmentIssues;
     }
     if (staticSnapshot.parsed && staticSnapshot.parsed !== staticSnapshot.final) {
         staticReportPayload.original = cloneValue(staticSnapshot.parsed);
     }
     logSqlPayloadStage("static.reportPayload", staticReportPayload);
 
-    const staticIssuesForPersistence = cloneIssueListForPersistence(staticSnapshot.issues);
+    const staticIssuesForPersistence = cloneIssueListForPersistence(preferredStaticIssues);
     const staticIssuesWithSource = staticIssuesForPersistence.map((issue) =>
         annotateIssueSource(issue, "static_analyzer")
     );
@@ -1557,12 +1589,11 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
 
     let finalReport = difyReport && difyReport.trim() ? difyReport : rawReport;
 
-    const difyIssuesRaw =
-        parsedDify && typeof parsedDify === "object" && Array.isArray(parsedDify.issues) ? parsedDify.issues : [];
+    const difyIssuesRaw = difyIssuesSanitised;
     const difyIssuesWithSource = difyIssuesRaw.map((issue) => annotateIssueSource(issue, "dify_workflow"));
     const combinedIssues = [...staticIssuesWithSource, ...difyIssuesWithSource, ...dmlIssuesWithSource];
-    const difySummary = parsedDify && typeof parsedDify === "object"
-        ? normaliseDifySummary(parsedDify, difyIssuesRaw.length)
+    const difySummary = parsedDifyReport
+        ? normaliseDifySummary(parsedDifyReport, difyIssuesRaw.length)
         : null;
     logSqlPayloadStage("dify.summary", difySummary);
     logSqlPayloadStage("issues.combined", combinedIssues);
@@ -1675,6 +1706,12 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
             raw: parsedDify,
             report: difyReport
         };
+    } else if (difyIssuesRaw.length) {
+        finalPayload.reports.dify_workflow = {
+            type: "dify_workflow",
+            issues: cloneIssueListForPersistence(difyIssuesRaw),
+            metadata: { analysis_source: "dify_workflow" }
+        };
     }
 
     const aiChunkSummaries = cloneValue(dmlChunks);
@@ -1720,7 +1757,9 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
         if (parsedDify && typeof parsedDify === "object") {
             analysisPayload.difyReport = parsedDify;
             analysisPayload.difySummary = difySummary;
-            analysisPayload.difyIssues = difyIssuesRaw;
+        }
+        if (!analysisPayload.difyIssues && difyIssuesRaw.length) {
+            analysisPayload.difyIssues = cloneIssueListForPersistence(difyIssuesRaw);
         }
         if (dmlErrorMessage) {
             analysisPayload.dmlErrorMessage = dmlErrorMessage;

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, useSlots } from "vue";
 import ReportPanel from "../reports/ReportPanel.vue";
+import TreeNode from "./TreeNode.vue";
 
 const props = defineProps({
     styleWidth: {
@@ -89,7 +90,19 @@ const treeHeaderLabel = computed(() => {
     return isProjectsMode.value ? "專案檔案" : "代碼審查";
 });
 
-const showReportTree = computed(() => Boolean(reportPanelProps.value));
+const showReportTree = computed(() => isReportsMode.value && Boolean(reportPanelProps.value));
+
+function forwardOpenNode(node) {
+    if (typeof props.openNode === "function") {
+        props.openNode(node);
+    }
+}
+
+function forwardSelectNode(path) {
+    if (typeof props.selectTreeNode === "function") {
+        props.selectTreeNode(path);
+    }
+}
 
 function configHasTitle(config) {
     return Boolean(config && typeof config === "object" && config.panelTitle);
@@ -170,10 +183,31 @@ function handlePointerDown(event) {
                         檔案樹已折疊，點擊專案可再次展開。
                     </div>
                     <div v-else>
-                        <div v-if="showReportTree" class="reportPanelWrapper">
-                            <ReportPanel v-bind="reportPanelProps" />
-                        </div>
-                        <div v-else class="emptyTree">尚未載入任何報告專案。</div>
+                        <template v-if="isProjectsMode">
+                            <div v-if="isLoadingTree" class="loading">載入檔案樹…</div>
+                            <ul
+                                v-else-if="tree && tree.length"
+                                class="treeRoot themed-scrollbar"
+                                role="tree"
+                                aria-label="專案檔案"
+                            >
+                                <TreeNode
+                                    v-for="node in tree"
+                                    :key="node.path"
+                                    :node="node"
+                                    :active-path="activeTreePath"
+                                    @open="forwardOpenNode"
+                                    @select="forwardSelectNode"
+                                />
+                            </ul>
+                            <p v-else class="emptyTree">尚未載入任何檔案，請先匯入專案。</p>
+                        </template>
+                        <template v-else>
+                            <div v-if="showReportTree" class="reportPanelWrapper">
+                                <ReportPanel v-bind="reportPanelProps" />
+                            </div>
+                            <div v-else class="emptyTree">尚未載入任何報告專案。</div>
+                        </template>
                     </div>
                 </div>
             </template>
