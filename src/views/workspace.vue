@@ -4336,7 +4336,7 @@ body,
 }
 
 .reportStructured > * {
-    min-height: 0;
+    align-self: stretch;
 }
 
 .reportStructuredPrimary {
@@ -4398,6 +4398,8 @@ body,
     width: 100%;
     max-width: 100%;
     box-sizing: border-box;
+    flex: 0 0 auto;
+    min-height: auto;
 }
 
 .reportJsonPreviewDetails {
@@ -4493,6 +4495,8 @@ body,
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 12px;
     width: 100%;
+    flex: 0 0 auto;
+    min-height: auto;
 }
 
 .reportSummaryCard {
