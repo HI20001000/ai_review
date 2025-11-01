@@ -330,16 +330,70 @@ const activeReportDetails = computed(() => {
     const dmlReport = reports?.dml_prompt || reports?.dmlPrompt || null;
 
     const aggregatedPayload = isPlainObject(parsed) ? parsed : null;
+    const parseAggregatedReportsCandidate = (candidate) => {
+        if (!candidate) {
+            return null;
+        }
+        if (typeof candidate === "string") {
+            const trimmed = candidate.trim();
+            if (!trimmed) {
+                return null;
+            }
+            try {
+                const parsedCandidate = JSON.parse(trimmed);
+                return parsedCandidate && typeof parsedCandidate === "object" ? parsedCandidate : null;
+            } catch (error) {
+                console.warn("[Report] Failed to parse aggregated report payload", error);
+                return null;
+            }
+        }
+        if (typeof candidate === "object") {
+            return candidate;
+        }
+        return null;
+    };
+
+    const aggregatedReportsSources = [];
+    if (report.state?.analysis?.aggregatedReports) {
+        aggregatedReportsSources.push(report.state.analysis.aggregatedReports);
+    }
+    if (aggregatedPayload?.aggregated_reports) {
+        aggregatedReportsSources.push(aggregatedPayload.aggregated_reports);
+    }
+    if (aggregatedPayload?.aggregatedReports) {
+        aggregatedReportsSources.push(aggregatedPayload.aggregatedReports);
+    }
+    const combinedReportJson = normaliseJsonContent(report.state?.combinedReportJson);
+    if (combinedReportJson) {
+        aggregatedReportsSources.push(combinedReportJson);
+    }
+
+    let aggregatedReports = null;
+    for (const candidate of aggregatedReportsSources) {
+        const resolved = parseAggregatedReportsCandidate(candidate);
+        if (resolved) {
+            aggregatedReports = resolved;
+            break;
+        }
+    }
+
     const { staticIssues, aiIssues, aggregatedIssues: derivedAggregatedIssues } =
         activeReportIssueSources.value;
-    let aggregatedIssues = Array.isArray(aggregatedPayload?.issues)
+    let aggregatedIssues = Array.isArray(aggregatedReports?.issues)
+        ? aggregatedReports.issues
+        : Array.isArray(aggregatedPayload?.issues)
         ? aggregatedPayload.issues
         : derivedAggregatedIssues;
     if (!Array.isArray(aggregatedIssues)) {
         aggregatedIssues = [];
     }
 
-    let summaryRecords = Array.isArray(aggregatedPayload?.summary) ? aggregatedPayload.summary : null;
+    let summaryRecords = Array.isArray(aggregatedReports?.summary)
+        ? aggregatedReports.summary
+        : null;
+    if (!Array.isArray(summaryRecords) || !summaryRecords.length) {
+        summaryRecords = Array.isArray(aggregatedPayload?.summary) ? aggregatedPayload.summary : null;
+    }
     if (!Array.isArray(summaryRecords) || !summaryRecords.length) {
         summaryRecords = buildAggregatedSummaryRecords(
             report.state,
@@ -662,7 +716,10 @@ const activeReportDetails = computed(() => {
             : null,
         aggregatedIssues,
         staticReport,
-        dmlReport: dmlDetails
+        dmlReport: dmlDetails,
+        aggregatedReports: aggregatedReports && typeof aggregatedReports === "object" ? aggregatedReports : null,
+        aggregatedSummaryRecords: Array.isArray(aggregatedReports?.summary) ? aggregatedReports.summary : null,
+        combinedSummaryByRule
     };
 });
 
@@ -673,6 +730,27 @@ const ruleBreakdownItems = computed(() => {
     const combined = details?.combinedRuleBreakdown;
     if (Array.isArray(combined) && combined.length) {
         return combined;
+    }
+    const aggregatedByRule = details?.combinedSummaryByRule;
+    if (aggregatedByRule && typeof aggregatedByRule === "object") {
+        const fallbackItems = Object.entries(aggregatedByRule)
+            .map(([rawLabel, rawCount]) => {
+                const count = Number(rawCount);
+                if (!Number.isFinite(count) || count <= 0) {
+                    return null;
+                }
+                const labelValue =
+                    typeof rawLabel === "string"
+                        ? rawLabel.trim()
+                        : String(rawLabel ?? "").trim();
+                const label = labelValue || "未分類";
+                return { label, count };
+            })
+            .filter((entry) => entry !== null);
+        if (fallbackItems.length) {
+            fallbackItems.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+            return fallbackItems;
+        }
     }
     const items = details?.ruleBreakdown;
     return Array.isArray(items) ? items : [];
@@ -932,7 +1010,12 @@ const activeReportSourceLines = computed(() => {
 const reportIssueLines = computed(() => {
     const details = activeReportDetails.value;
     const sourceLines = activeReportSourceLines.value;
-    const issues = Array.isArray(details?.issues) ? details.issues : [];
+    const aggregated = Array.isArray(details?.aggregatedIssues) ? details.aggregatedIssues : [];
+    const issues = aggregated.length
+        ? aggregated
+        : Array.isArray(details?.issues)
+        ? details.issues
+        : [];
 
     let maxLine = sourceLines.length;
     const issuesByLine = new Map();
