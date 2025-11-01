@@ -4905,8 +4905,8 @@ body,
 }
 
 .reportRowContent.codeScroll {
-    overflow: auto;
-    max-height: 100%;
+    overflow: visible;
+    max-height: none;
 }
 
 .reportRowNotice {
