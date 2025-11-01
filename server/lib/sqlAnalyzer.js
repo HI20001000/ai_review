@@ -1363,6 +1363,9 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const parsedStaticReport = parseStaticReport(rawReport);
     logSqlPayloadStage("static.parsedReport", parsedStaticReport);
 
+    const parsedDify = parseStaticReport(difyReport);
+    logSqlPayloadStage("dify.parsedReport", parsedDify);
+
     const parsedDifyReport = parsedDify && typeof parsedDify === "object" ? parsedDify : null;
     const finalStaticReport = parsedDifyReport || parsedStaticReport || {};
 
@@ -1463,14 +1466,6 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     logSqlPayloadStage("dml.reportPayload", dmlReportPayload);
 
     let finalReport = difyReport && difyReport.trim() ? difyReport : rawReport;
-    let parsedDify;
-    if (finalReport && finalReport.trim()) {
-        try {
-            parsedDify = JSON.parse(finalReport);
-        } catch (error) {
-            parsedDify = null;
-        }
-    }
 
     const difyIssuesRaw =
         parsedDify && typeof parsedDify === "object" && Array.isArray(parsedDify.issues) ? parsedDify.issues : [];
