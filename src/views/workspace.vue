@@ -385,19 +385,6 @@ const activeReportDetails = computed(() => {
             ? combinedSummaryRecord
             : null) || globalSummary;
 
-    let combinedTotalIssues = null;
-    if (combinedSummarySource && typeof combinedSummarySource === "object") {
-        const combinedTotalCandidate = Number(
-            combinedSummarySource.total_issues ?? combinedSummarySource.totalIssues
-        );
-        if (Number.isFinite(combinedTotalCandidate)) {
-            combinedTotalIssues = combinedTotalCandidate;
-        }
-    }
-    if (!Number.isFinite(combinedTotalIssues)) {
-        combinedTotalIssues = aggregatedIssues.length;
-    }
-
     const normaliseKey = (value) => (typeof value === "string" ? value.toLowerCase() : "");
     const pickString = (...candidates) => {
         for (const candidate of candidates) {
@@ -442,17 +429,17 @@ const activeReportDetails = computed(() => {
         summaryByRule: combinedSummaryByRule
     });
 
-    let combinedTotalIssues = null;
+    let combinedTotalIssueCount = null;
     if (combinedSummarySource && typeof combinedSummarySource === "object") {
         const combinedTotalCandidate = Number(
             combinedSummarySource.total_issues ?? combinedSummarySource.totalIssues
         );
         if (Number.isFinite(combinedTotalCandidate)) {
-            combinedTotalIssues = combinedTotalCandidate;
+            combinedTotalIssueCount = combinedTotalCandidate;
         }
     }
-    if (!Number.isFinite(combinedTotalIssues)) {
-        combinedTotalIssues = aggregatedIssues.length;
+    if (!Number.isFinite(combinedTotalIssueCount)) {
+        combinedTotalIssueCount = aggregatedIssues.length;
     }
 
     const buildSourceMetrics = (...sources) => {
@@ -670,8 +657,8 @@ const activeReportDetails = computed(() => {
         combinedSummaryText: combinedSummaryTextValue,
         combinedSeverityBreakdown: combinedDistributions.severityBreakdown,
         combinedRuleBreakdown: combinedDistributions.ruleBreakdown,
-        combinedTotalIssues: Number.isFinite(combinedTotalIssues)
-            ? Number(combinedTotalIssues)
+        combinedTotalIssues: Number.isFinite(combinedTotalIssueCount)
+            ? Number(combinedTotalIssueCount)
             : null,
         aggregatedIssues,
         staticReport,
