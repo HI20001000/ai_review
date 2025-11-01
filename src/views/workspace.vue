@@ -4027,7 +4027,7 @@ body,
 .mainContent {
     display: flex;
     flex-direction: row;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: stretch;
     flex: 1 1 auto;
     min-height: 0;
@@ -4035,7 +4035,7 @@ body,
     padding: 0;
     width: 100%;
     box-sizing: border-box;
-    column-gap: 0;
+    column-gap: 16px;
     row-gap: 16px;
     overflow: visible;
 }
@@ -4116,6 +4116,7 @@ body,
 
 .mainContent > * {
     min-height: 0;
+    min-width: 0;
 }
 
 @media (max-width: 900px) {
