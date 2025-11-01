@@ -4724,6 +4724,7 @@ body,
     border-radius: 8px;
     padding: 12px;
     background: rgba(15, 23, 42, 0.02);
+    overflow: auto;
 }
 
 .reportIssuesHeader h4 {
