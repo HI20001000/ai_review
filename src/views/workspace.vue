@@ -385,6 +385,19 @@ const activeReportDetails = computed(() => {
             ? combinedSummaryRecord
             : null) || globalSummary;
 
+    let combinedTotalIssues = null;
+    if (combinedSummarySource && typeof combinedSummarySource === "object") {
+        const combinedTotalCandidate = Number(
+            combinedSummarySource.total_issues ?? combinedSummarySource.totalIssues
+        );
+        if (Number.isFinite(combinedTotalCandidate)) {
+            combinedTotalIssues = combinedTotalCandidate;
+        }
+    }
+    if (!Number.isFinite(combinedTotalIssues)) {
+        combinedTotalIssues = aggregatedIssues.length;
+    }
+
     const normaliseKey = (value) => (typeof value === "string" ? value.toLowerCase() : "");
     const pickString = (...candidates) => {
         for (const candidate of candidates) {
