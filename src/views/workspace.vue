@@ -384,9 +384,6 @@ const activeReportDetails = computed(() => {
         (combinedSummaryRecord && typeof combinedSummaryRecord === "object"
             ? combinedSummaryRecord
             : null) || globalSummary;
-    const combinedSummaryDetails = buildSummaryDetailList(combinedSummarySource, {
-        omitKeys: ["sources", "by_rule", "byRule", "source", "label"]
-    });
 
     const combinedSummaryText = pickString(
         combinedSummarySource?.message,
@@ -440,6 +437,43 @@ const activeReportDetails = computed(() => {
         }
         return null;
     };
+
+    const combinedSummaryDetails = buildSummaryDetailList(combinedSummarySource, {
+        omitKeys: ["sources", "by_rule", "byRule", "source", "label"]
+    });
+
+    const combinedSummaryText = pickString(
+        combinedSummarySource?.message,
+        typeof combinedSummarySource?.summary === "string" ? combinedSummarySource.summary : "",
+        combinedSummarySource?.note,
+        typeof combinedSummarySource === "string" ? combinedSummarySource : ""
+    );
+
+    const combinedSummaryByRule =
+        (combinedSummarySource?.by_rule && typeof combinedSummarySource.by_rule === "object"
+            ? combinedSummarySource.by_rule
+            : null) ||
+        (combinedSummarySource?.byRule && typeof combinedSummarySource.byRule === "object"
+            ? combinedSummarySource.byRule
+            : null);
+
+    const combinedDistributions = buildIssueDistributions(aggregatedIssues, {
+        summaryByRule: combinedSummaryByRule
+    });
+
+    let combinedTotalIssues = null;
+    if (combinedSummarySource && typeof combinedSummarySource === "object") {
+        const combinedTotalCandidate = Number(
+            combinedSummarySource.total_issues ?? combinedSummarySource.totalIssues
+        );
+        if (Number.isFinite(combinedTotalCandidate)) {
+            combinedTotalIssues = combinedTotalCandidate;
+        }
+    }
+    if (!Number.isFinite(combinedTotalIssues)) {
+        combinedTotalIssues = aggregatedIssues.length;
+    }
+
     const buildSourceMetrics = (...sources) => {
         const metrics = [];
         const seen = new Set();
@@ -1561,9 +1595,10 @@ watch(activeReport, (report) => {
 const middlePaneStyle = computed(() => {
     const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
     const width = hasActiveTool ? middlePaneWidth.value : 0;
+    const widthValue = `${width}px`;
     return {
-        flex: `0 1 ${width}px`,
-        width: `${width}px`,
+        flex: hasActiveTool ? `0 0 ${widthValue}` : "0 0 0px",
+        width: widthValue,
         maxWidth: "100%"
     };
 });
