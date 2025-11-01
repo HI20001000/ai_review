@@ -1475,8 +1475,16 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
 
     const staticReportPayload = cloneValue(staticSnapshot.payload);
     staticReportPayload.summary = cloneValue(staticSummary);
-    staticReportPayload.issues = cloneIssueListForPersistence(staticSnapshot.issues);
     staticReportPayload.metadata = cloneValue(staticSnapshot.metadata);
+
+    const difyStaticIssues =
+        parsedDifyReport && Array.isArray(parsedDifyReport.issues)
+            ? cloneIssueListForPersistence(parsedDifyReport.issues)
+            : [];
+    const snapshotIssues = cloneIssueListForPersistence(staticSnapshot.issues);
+    const preferredStaticIssues = difyStaticIssues.length ? difyStaticIssues : snapshotIssues;
+
+    staticReportPayload.issues = cloneIssueListForPersistence(preferredStaticIssues);
     if (parsedDifyReport) {
         const enrichmentIssues = buildIssuesOnlyEnrichment(parsedDifyReport);
         if (enrichmentIssues) {
@@ -1488,7 +1496,7 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     }
     logSqlPayloadStage("static.reportPayload", staticReportPayload);
 
-    const staticIssuesForPersistence = cloneIssueListForPersistence(staticSnapshot.issues);
+    const staticIssuesForPersistence = cloneIssueListForPersistence(preferredStaticIssues);
     const staticIssuesWithSource = staticIssuesForPersistence.map((issue) =>
         annotateIssueSource(issue, "static_analyzer")
     );
