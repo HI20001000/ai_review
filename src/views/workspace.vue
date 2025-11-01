@@ -4684,6 +4684,56 @@ body,
     padding: 16px;
 }
 
+.reportDmlSummaryToggle {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    gap: 8px;
+    list-style: none;
+    margin: -16px -16px 0;
+    padding: 16px;
+    box-sizing: border-box;
+    border-radius: 6px;
+    transition: background 0.2s ease;
+    color: #e2e8f0;
+    font-weight: 600;
+}
+
+.reportDmlSummaryToggle::-webkit-details-marker {
+    display: none;
+}
+
+.reportDmlSummaryToggle::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border: 1px solid currentColor;
+    border-left: 0;
+    border-top: 0;
+    transform: rotate(45deg);
+    margin-left: auto;
+    transition: transform 0.2s ease;
+}
+
+.reportDmlDetails[open] .reportDmlSummaryToggle::after {
+    transform: rotate(225deg);
+}
+
+.reportDmlDetails:not([open]) .reportDmlSummaryToggle {
+    background: rgba(148, 163, 184, 0.12);
+}
+
+.reportDmlDetails:not([open]) .reportDmlSummaryToggle:hover,
+.reportDmlDetails[open] .reportDmlSummaryToggle:hover {
+    background: rgba(148, 163, 184, 0.18);
+}
+
+.reportDmlContent {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
 .reportDmlHeader {
     display: flex;
     flex-wrap: wrap;
@@ -4809,6 +4859,7 @@ body,
     border-radius: 8px;
     padding: 12px;
     background: rgba(15, 23, 42, 0.02);
+    overflow: auto;
 }
 
 .reportIssuesHeader h4 {
