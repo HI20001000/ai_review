@@ -392,6 +392,9 @@ function renderMessageContent(msg) {
     --chat-accent-soft: rgba(37, 99, 235, 0.1);
     --chat-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
     --chat-chip-bg: rgba(148, 163, 184, 0.16);
+    --scrollbar-track: var(--chat-bg);
+    --scrollbar-thumb: rgba(148, 163, 184, 0.55);
+    --scrollbar-thumb-hover: rgba(148, 163, 184, 0.7);
     position: fixed;
     z-index: 40;
     background: var(--chat-bg);
