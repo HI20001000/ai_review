@@ -4104,6 +4104,11 @@ body,
     box-sizing: border-box;
     max-height: 100%;
     overflow-y: auto;
+    scrollbar-width: none;
+}
+
+.toolColumn::-webkit-scrollbar {
+    display: none;
 }
 
 .toolColumn_btn {
@@ -4819,7 +4824,7 @@ body,
     border-radius: 8px;
     padding: 12px;
     background: rgba(15, 23, 42, 0.02);
-    overflow: auto;
+    overflow: visible;
 }
 
 .reportIssuesHeader h4 {
@@ -4923,7 +4928,7 @@ body,
 .reportIssuesRow .reportRowContent.codeScroll {
     display: flex;
     flex-direction: column;
-    overflow: auto;
+    overflow: visible;
 }
 
 .reportIssuesRow .codeEditor {
