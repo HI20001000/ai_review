@@ -4819,8 +4819,8 @@ body,
 }
 
 .reportIssuesContent {
-    flex: 1 1 auto;
-    min-height: 0;
+    flex: 0 0 auto;
+    min-height: auto;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -4861,13 +4861,13 @@ body,
 }
 
 .reportRow {
-    flex: 1 1 auto;
-    min-height: 0;
+    flex: 0 0 auto;
+    min-height: auto;
     border-radius: 6px;
     background: #1b1b1b;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .reportRowActions {
@@ -4933,6 +4933,7 @@ body,
     display: flex;
     flex-direction: column;
     overflow: visible;
+    max-height: none;
 }
 
 .reportIssuesRow .codeEditor {
