@@ -178,7 +178,7 @@ const resizeCursorStyle = computed(() => (resizeCursor.value ? { cursor: resizeC
 
 const statusText = computed(() => props.connection?.message || DEFAULT_STATUS_MESSAGE);
 const statusStyle = computed(() => {
-    const base = { color: "#64748b" };
+    const base = { color: "var(--panel-muted)" };
     const state = props.connection?.status || "checking";
     if (state === "ready") return { ...base, color: "#22c55e" };
     if (state === "error") return { ...base, color: "#ef4444" };
