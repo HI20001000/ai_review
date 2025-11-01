@@ -1485,8 +1485,9 @@ const middlePaneStyle = computed(() => {
     const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
     const width = hasActiveTool ? middlePaneWidth.value : 0;
     return {
-        flex: `0 0 ${width}px`,
-        width: `${width}px`
+        flex: `0 1 ${width}px`,
+        width: `${width}px`,
+        maxWidth: "100%"
     };
 });
 
@@ -3904,7 +3905,6 @@ body,
 
 .page {
     min-height: 100vh;
-    height: 100vh;
     display: flex;
     flex-direction: column;
     background-color: #1e1e1e;
@@ -4027,26 +4027,28 @@ body,
 .mainContent {
     display: flex;
     flex-direction: row;
+    flex-wrap: wrap;
     align-items: stretch;
     flex: 1 1 auto;
     min-height: 0;
     background-color: #1e1e1e;
     padding: 0;
-    height: calc(100vh - 60px);
-    max-height: calc(100vh - 60px);
-    overflow: hidden;
+    width: 100%;
+    box-sizing: border-box;
+    column-gap: 0;
+    row-gap: 16px;
+    overflow: visible;
 }
 
 .workSpace {
-    flex: 1 1 auto;
+    flex: 1 1 640px;
     display: flex;
     flex-direction: column;
     gap: 16px;
     min-height: 0;
-    height: 100%;
-    max-height: 100%;
     min-width: 0;
-    overflow: hidden;
+    width: 100%;
+    max-width: 100%;
     background: #191919;
     border: 1px solid #323232;
     border-radius: 0;
@@ -4155,7 +4157,6 @@ body,
     flex-direction: column;
     gap: 12px;
     min-height: 0;
-    overflow: auto;
     background: #191919;
     border: 1px solid #323232;
     border-radius: 0;
@@ -4163,6 +4164,7 @@ body,
     box-sizing: border-box;
     min-width: 0;
     position: relative;
+    overflow: visible;
 }
 
 .reportViewerContent--loading > :not(.reportViewerProcessingOverlay) {
@@ -4286,8 +4288,6 @@ body,
     line-height: 1.45;
     white-space: pre-wrap;
     word-break: break-word;
-    overflow: auto;
-    max-height: 100%;
 }
 
 .reportStructured {
@@ -4417,9 +4417,9 @@ body,
     color: #e2e8f0;
     font-size: 12px;
     max-width: 100%;
-    overflow-x: auto;
     line-height: 1.45;
-    white-space: pre;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .reportExportButton {
@@ -4812,8 +4812,8 @@ body,
 }
 
 .reportRowContent.codeScroll {
-    overflow: auto;
-    max-height: 100%;
+    overflow: visible;
+    max-height: none;
 }
 
 .reportRowNotice {
@@ -5172,7 +5172,6 @@ body,
     line-height: 1.45;
     white-space: pre-wrap;
     word-break: break-word;
-    overflow: auto;
 }
 
 .reportViewerPlaceholder {
@@ -5207,17 +5206,17 @@ body,
     border-radius: 6px;
     border: 1px solid #2f2f2f;
     padding: 12px;
-    overflow: hidden;
     display: flex;
+    overflow: visible;
 }
 
 .pvBox:not(.codeBox) {
-    overflow: auto;
+    overflow: visible;
 }
 
 .pvBox.codeBox {
     padding: 12px;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .pvBox.codeBox.reportIssuesBox,
@@ -5228,14 +5227,14 @@ body,
 
 .codeScroll {
     flex: 1 1 auto;
-    overflow: auto;
-    max-height: 100%;
     font-family: Consolas, "Courier New", monospace;
     font-size: 13px;
     line-height: 1.45;
     color: #1f2937;
     background: #f8fafc;
     cursor: text;
+    overflow: visible;
+    max-height: none;
 }
 
 .reportBody.codeScroll,
