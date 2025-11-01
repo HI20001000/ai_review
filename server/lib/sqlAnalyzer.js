@@ -1370,18 +1370,23 @@ export function buildSqlReportPayload({ analysis, content, dify, difyError, dml,
     const finalStaticReport = parsedDifyReport || parsedStaticReport || {};
 
     const staticSummary = normaliseStaticSummary(finalStaticReport.summary, ".sql");
-    const staticIssues = Array.isArray(finalStaticReport.issues) ? finalStaticReport.issues : [];
-    const staticIssuesWithSource = staticIssues.map((issue) => annotateIssueSource(issue, "static_analyzer"));
+    const staticIssuesRaw = Array.isArray(finalStaticReport.issues) ? finalStaticReport.issues : [];
+    const staticIssuesForPersistence = cloneIssueListForPersistence(staticIssuesRaw);
+    const staticIssuesWithSource = staticIssuesForPersistence.map((issue) =>
+        annotateIssueSource(issue, "static_analyzer")
+    );
     const staticMetadata = normaliseStaticMetadata(
         finalStaticReport.metadata || parsedStaticReport?.metadata
     );
-    const staticIssuesForPersistence = cloneIssueListForPersistence(staticIssues);
     const staticReportPayload = {
         ...cloneValue(finalStaticReport),
         summary: staticSummary,
         issues: staticIssuesForPersistence,
         metadata: staticMetadata
     };
+    if (parsedDifyReport) {
+        staticReportPayload.enrichment = cloneValue(parsedDifyReport);
+    }
     if (parsedStaticReport && parsedStaticReport !== finalStaticReport) {
         staticReportPayload.original = cloneValue(parsedStaticReport);
     }
