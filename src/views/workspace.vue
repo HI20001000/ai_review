@@ -164,6 +164,13 @@ const reportExportState = reactive({
     static: false,
     ai: false
 });
+const isDmlReportExpanded = ref(true);
+
+const handleToggleDmlSection = (event) => {
+    if (event && typeof event.target?.open === "boolean") {
+        isDmlReportExpanded.value = event.target.open;
+    }
+};
 const isProjectToolActive = computed(() => activeRailTool.value === "projects");
 const isReportToolActive = computed(() => activeRailTool.value === "reports");
 const shouldPrepareReportTrees = computed(
@@ -1485,8 +1492,9 @@ const middlePaneStyle = computed(() => {
     const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
     const width = hasActiveTool ? middlePaneWidth.value : 0;
     return {
-        flex: `0 0 ${width}px`,
-        width: `${width}px`
+        flex: `0 1 ${width}px`,
+        width: `${width}px`,
+        maxWidth: "100%"
     };
 });
 
@@ -3576,50 +3584,68 @@ onBeforeUnmount(() => {
                                             v-if="structuredReportViewMode === 'dml' && dmlReportDetails"
                                             class="reportDmlSection"
                                         >
-                                            <div class="reportDmlHeader">
-                                                <h4>AI審查</h4>
-                                                <span v-if="dmlReportDetails.status" class="reportDmlStatus">
-                                                    {{ dmlReportDetails.status }}
-                                                </span>
-                                                <span v-if="dmlReportDetails.generatedAt" class="reportDmlTimestamp">
-                                                    產生於 {{ dmlReportDetails.generatedAt }}
-                                                </span>
-                                            </div>
-                                            <p v-if="dmlReportDetails.error" class="reportDmlError">
-                                                {{ dmlReportDetails.error }}
-                                            </p>
-                                            <div v-if="hasDmlSegments" class="reportDmlSegments">
-                                                <details
-                                                    v-for="segment in dmlSegments"
-                                                    :key="segment.key"
-                                                    class="reportDmlSegment"
-                                                >
-                                                    <summary>
-                                                        第 {{ segment.index }} 段
-                                                        <span v-if="segment.startLine">
-                                                            （第 {{ segment.startLine }} 行起
-                                                            <span v-if="segment.endLine">，至第 {{ segment.endLine }} 行止</span>
-                                                            ）
+                                            <details
+                                                class="reportDmlDetails"
+                                                :open="isDmlReportExpanded"
+                                                @toggle="handleToggleDmlSection"
+                                            >
+                                                <summary class="reportDmlSummaryToggle">
+                                                    <div class="reportDmlHeader">
+                                                        <h4>AI審查</h4>
+                                                        <span
+                                                            v-if="dmlReportDetails.status"
+                                                            class="reportDmlStatus"
+                                                        >
+                                                            {{ dmlReportDetails.status }}
                                                         </span>
-                                                    </summary>
+                                                        <span
+                                                            v-if="dmlReportDetails.generatedAt"
+                                                            class="reportDmlTimestamp"
+                                                        >
+                                                            產生於 {{ dmlReportDetails.generatedAt }}
+                                                        </span>
+                                                    </div>
+                                                </summary>
+                                                <div class="reportDmlContent">
+                                                    <p v-if="dmlReportDetails.error" class="reportDmlError">
+                                                        {{ dmlReportDetails.error }}
+                                                    </p>
+                                                    <div v-if="hasDmlSegments" class="reportDmlSegments">
+                                                        <details
+                                                            v-for="segment in dmlSegments"
+                                                            :key="segment.key"
+                                                            class="reportDmlSegment"
+                                                        >
+                                                            <summary>
+                                                                第 {{ segment.index }} 段
+                                                                <span v-if="segment.startLine">
+                                                                    （第 {{ segment.startLine }} 行起
+                                                                    <span v-if="segment.endLine"
+                                                                        >，至第 {{ segment.endLine }} 行止</span
+                                                                    >
+                                                                    ）
+                                                                </span>
+                                                            </summary>
+                                                            <pre
+                                                                v-if="segment.text || segment.sql"
+                                                                class="reportDmlSql codeScroll themed-scrollbar"
+                                                                v-text="segment.text || segment.sql"
+                                                            ></pre>
+                                                            <pre
+                                                                v-if="segment.analysis"
+                                                                class="reportDmlAnalysis codeScroll themed-scrollbar"
+                                                                v-text="segment.analysis"
+                                                            ></pre>
+                                                        </details>
+                                                    </div>
+                                                    <p v-else class="reportDmlEmpty">尚未取得 AI審查拆分結果。</p>
                                                     <pre
-                                                        v-if="segment.text || segment.sql"
-                                                        class="reportDmlSql codeScroll themed-scrollbar"
-                                                        v-text="segment.text || segment.sql"
+                                                        v-if="dmlReportDetails.reportText"
+                                                        class="reportDmlSummary codeScroll themed-scrollbar"
+                                                        v-text="dmlReportDetails.reportText"
                                                     ></pre>
-                                                    <pre
-                                                        v-if="segment.analysis"
-                                                        class="reportDmlAnalysis codeScroll themed-scrollbar"
-                                                        v-text="segment.analysis"
-                                                    ></pre>
-                                                </details>
-                                            </div>
-                                            <p v-else class="reportDmlEmpty">尚未取得 AI審查拆分結果。</p>
-                                            <pre
-                                                v-if="dmlReportDetails.reportText"
-                                                class="reportDmlSummary codeScroll themed-scrollbar"
-                                                v-text="dmlReportDetails.reportText"
-                                            ></pre>
+                                                </div>
+                                            </details>
                                         </section>
                                         <section
                                             v-if="structuredReportJsonPreview"
@@ -3904,7 +3930,6 @@ body,
 
 .page {
     min-height: 100vh;
-    height: 100vh;
     display: flex;
     flex-direction: column;
     background-color: #1e1e1e;
@@ -4027,26 +4052,26 @@ body,
 .mainContent {
     display: flex;
     flex-direction: row;
+    flex-wrap: nowrap;
     align-items: stretch;
     flex: 1 1 auto;
     min-height: 0;
     background-color: #1e1e1e;
     padding: 0;
-    height: calc(100vh - 60px);
-    max-height: calc(100vh - 60px);
-    overflow: hidden;
+    width: 100%;
+    box-sizing: border-box;
+    column-gap: 16px;
+    row-gap: 16px;
+    overflow: visible;
 }
 
 .workSpace {
-    flex: 1 1 auto;
+    flex: 1 1 480px;
     display: flex;
     flex-direction: column;
     gap: 16px;
     min-height: 0;
-    height: 100%;
-    max-height: 100%;
     min-width: 0;
-    overflow: hidden;
     background: #191919;
     border: 1px solid #323232;
     border-radius: 0;
@@ -4116,6 +4141,7 @@ body,
 
 .mainContent > * {
     min-height: 0;
+    min-width: 0;
 }
 
 @media (max-width: 900px) {
@@ -4155,7 +4181,6 @@ body,
     flex-direction: column;
     gap: 12px;
     min-height: 0;
-    overflow: auto;
     background: #191919;
     border: 1px solid #323232;
     border-radius: 0;
@@ -4163,6 +4188,7 @@ body,
     box-sizing: border-box;
     min-width: 0;
     position: relative;
+    overflow: visible;
 }
 
 .reportViewerContent--loading > :not(.reportViewerProcessingOverlay) {
@@ -4286,15 +4312,17 @@ body,
     line-height: 1.45;
     white-space: pre-wrap;
     word-break: break-word;
-    overflow: auto;
-    max-height: 100%;
 }
 
 .reportStructured {
-    display: grid;
-    grid-auto-flow: row;
-    row-gap: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
     flex: 1 1 auto;
+    min-height: 0;
+}
+
+.reportStructured > * {
     min-height: 0;
 }
 
@@ -4413,9 +4441,9 @@ body,
     color: #e2e8f0;
     font-size: 12px;
     max-width: 100%;
-    overflow-x: auto;
     line-height: 1.45;
-    white-space: pre;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .reportExportButton {
@@ -4590,10 +4618,63 @@ body,
 
 .reportDmlSection {
     margin-top: 24px;
+}
+
+.reportDmlDetails {
     padding: 16px;
     border: 1px solid rgba(148, 163, 184, 0.18);
     border-radius: 8px;
     background: rgba(15, 23, 42, 0.4);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.reportDmlSummaryToggle {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    gap: 8px;
+    list-style: none;
+    margin: -16px -16px 0;
+    padding: 16px;
+    box-sizing: border-box;
+    border-radius: 6px;
+    transition: background 0.2s ease;
+    color: #e2e8f0;
+    font-weight: 600;
+}
+
+.reportDmlSummaryToggle::-webkit-details-marker {
+    display: none;
+}
+
+.reportDmlSummaryToggle::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border: 1px solid currentColor;
+    border-left: 0;
+    border-top: 0;
+    transform: rotate(45deg);
+    margin-left: auto;
+    transition: transform 0.2s ease;
+}
+
+.reportDmlDetails[open] .reportDmlSummaryToggle::after {
+    transform: rotate(225deg);
+}
+
+.reportDmlDetails:not([open]) .reportDmlSummaryToggle {
+    background: rgba(148, 163, 184, 0.12);
+}
+
+.reportDmlDetails:not([open]) .reportDmlSummaryToggle:hover,
+.reportDmlDetails[open] .reportDmlSummaryToggle:hover {
+    background: rgba(148, 163, 184, 0.18);
+}
+
+.reportDmlContent {
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -4604,6 +4685,8 @@ body,
     flex-wrap: wrap;
     align-items: baseline;
     gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .reportDmlHeader h4 {
@@ -4686,13 +4769,14 @@ body,
     display: flex;
     flex-direction: column;
     gap: 12px;
-    flex: 0 0 auto;
+    flex: 1 1 auto;
     min-height: 0;
     align-self: stretch;
 }
 
 .reportIssuesSection--empty {
     padding-top: 12px;
+    flex: 0 0 auto;
 }
 
 
@@ -4806,8 +4890,8 @@ body,
 }
 
 .reportRowContent.codeScroll {
-    overflow: auto;
-    max-height: 100%;
+    overflow: visible;
+    max-height: none;
 }
 
 .reportRowNotice {
@@ -4824,6 +4908,8 @@ body,
 .reportIssuesRow .reportRowContent.codeScroll {
     display: flex;
     flex-direction: column;
+    overflow: visible;
+    max-height: none;
 }
 
 .reportIssuesRow .codeEditor {
@@ -5164,7 +5250,6 @@ body,
     line-height: 1.45;
     white-space: pre-wrap;
     word-break: break-word;
-    overflow: auto;
 }
 
 .reportViewerPlaceholder {
@@ -5199,17 +5284,17 @@ body,
     border-radius: 6px;
     border: 1px solid #2f2f2f;
     padding: 12px;
-    overflow: hidden;
     display: flex;
+    overflow: visible;
 }
 
 .pvBox:not(.codeBox) {
-    overflow: auto;
+    overflow: visible;
 }
 
 .pvBox.codeBox {
     padding: 12px;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .pvBox.codeBox.reportIssuesBox,
@@ -5220,14 +5305,14 @@ body,
 
 .codeScroll {
     flex: 1 1 auto;
-    overflow: auto;
-    max-height: 100%;
     font-family: Consolas, "Courier New", monospace;
     font-size: 13px;
     line-height: 1.45;
     color: #1f2937;
     background: #f8fafc;
     cursor: text;
+    overflow: visible;
+    max-height: none;
 }
 
 .reportBody.codeScroll,
@@ -5612,7 +5697,7 @@ body,
 }
 
 .page--light .reportStaticSection,
-.page--light .reportDmlSection {
+.page--light .reportDmlDetails {
     background: #f8fafc;
     border-color: #e2e8f0;
     color: #1f2937;
@@ -5643,6 +5728,19 @@ body,
 
 .page--light .reportDmlStatus {
     color: #1d4ed8;
+}
+
+.page--light .reportDmlSummaryToggle {
+    color: #0f172a;
+}
+
+.page--light .reportDmlDetails:not([open]) .reportDmlSummaryToggle {
+    background: rgba(148, 163, 184, 0.24);
+}
+
+.page--light .reportDmlDetails:not([open]) .reportDmlSummaryToggle:hover,
+.page--light .reportDmlDetails[open] .reportDmlSummaryToggle:hover {
+    background: rgba(148, 163, 184, 0.32);
 }
 
 .page--light .reportDmlSegment {
