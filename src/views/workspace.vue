@@ -384,9 +384,6 @@ const activeReportDetails = computed(() => {
         (combinedSummaryRecord && typeof combinedSummaryRecord === "object"
             ? combinedSummaryRecord
             : null) || globalSummary;
-    const combinedSummaryDetails = buildSummaryDetailList(combinedSummarySource, {
-        omitKeys: ["sources", "by_rule", "byRule", "source", "label"]
-    });
 
     const normaliseKey = (value) => (typeof value === "string" ? value.toLowerCase() : "");
     const pickString = (...candidates) => {
@@ -408,6 +405,43 @@ const activeReportDetails = computed(() => {
         }
         return null;
     };
+
+    const combinedSummaryDetails = buildSummaryDetailList(combinedSummarySource, {
+        omitKeys: ["sources", "by_rule", "byRule", "source", "label"]
+    });
+
+    const combinedSummaryTextValue = pickString(
+        combinedSummarySource?.message,
+        typeof combinedSummarySource?.summary === "string" ? combinedSummarySource.summary : "",
+        combinedSummarySource?.note,
+        typeof combinedSummarySource === "string" ? combinedSummarySource : ""
+    );
+
+    const combinedSummaryByRule =
+        (combinedSummarySource?.by_rule && typeof combinedSummarySource.by_rule === "object"
+            ? combinedSummarySource.by_rule
+            : null) ||
+        (combinedSummarySource?.byRule && typeof combinedSummarySource.byRule === "object"
+            ? combinedSummarySource.byRule
+            : null);
+
+    const combinedDistributions = buildIssueDistributions(aggregatedIssues, {
+        summaryByRule: combinedSummaryByRule
+    });
+
+    let combinedTotalIssues = null;
+    if (combinedSummarySource && typeof combinedSummarySource === "object") {
+        const combinedTotalCandidate = Number(
+            combinedSummarySource.total_issues ?? combinedSummarySource.totalIssues
+        );
+        if (Number.isFinite(combinedTotalCandidate)) {
+            combinedTotalIssues = combinedTotalCandidate;
+        }
+    }
+    if (!Number.isFinite(combinedTotalIssues)) {
+        combinedTotalIssues = aggregatedIssues.length;
+    }
+
     const buildSourceMetrics = (...sources) => {
         const metrics = [];
         const seen = new Set();
@@ -620,6 +654,13 @@ const activeReportDetails = computed(() => {
         sourceSummaries,
         combinedSummary: combinedSummarySource,
         combinedSummaryDetails,
+        combinedSummaryText: combinedSummaryTextValue,
+        combinedSeverityBreakdown: combinedDistributions.severityBreakdown,
+        combinedRuleBreakdown: combinedDistributions.ruleBreakdown,
+        combinedTotalIssues: Number.isFinite(combinedTotalIssues)
+            ? Number(combinedTotalIssues)
+            : null,
+        aggregatedIssues,
         staticReport,
         dmlReport: dmlDetails
     };
@@ -628,23 +669,48 @@ const activeReportDetails = computed(() => {
 
 const hasStructuredReport = computed(() => Boolean(activeReportDetails.value));
 const ruleBreakdownItems = computed(() => {
-    const items = activeReportDetails.value?.ruleBreakdown;
+    const details = activeReportDetails.value;
+    const combined = details?.combinedRuleBreakdown;
+    if (Array.isArray(combined) && combined.length) {
+        return combined;
+    }
+    const items = details?.ruleBreakdown;
     return Array.isArray(items) ? items : [];
 });
 const severityBreakdownItems = computed(() => {
-    const items = activeReportDetails.value?.severityBreakdown;
+    const details = activeReportDetails.value;
+    const combined = details?.combinedSeverityBreakdown;
+    if (Array.isArray(combined) && combined.length) {
+        return combined;
+    }
+    const items = details?.severityBreakdown;
     return Array.isArray(items) ? items : [];
 });
 const activeReportSummaryText = computed(() => {
-    const text = activeReportDetails.value?.summaryText;
+    const text =
+        activeReportDetails.value?.combinedSummaryText || activeReportDetails.value?.summaryText;
     return typeof text === "string" ? text : "";
 });
 const shouldShowNoIssueSummary = computed(() => {
     const details = activeReportDetails.value;
-    return Boolean(details) && !activeReportSummaryText.value && details.totalIssues === 0;
+    if (!details || activeReportSummaryText.value) {
+        return false;
+    }
+    if (Number.isFinite(details?.combinedTotalIssues)) {
+        return Number(details.combinedTotalIssues) === 0;
+    }
+    return details?.totalIssues === 0;
 });
 const activeReportTotalIssuesDisplay = computed(() => {
-    const value = activeReportDetails.value?.totalIssues;
+    const details = activeReportDetails.value;
+    if (!details) {
+        return "—";
+    }
+    const combinedValue = details.combinedTotalIssues;
+    if (Number.isFinite(combinedValue)) {
+        return String(Number(combinedValue));
+    }
+    const value = details.totalIssues;
     if (value === null || value === undefined) {
         return "—";
     }
@@ -1261,8 +1327,14 @@ const shouldShowReportIssuesSection = computed(
 const activeReportIssueCount = computed(() => {
     const details = activeReportDetails.value;
     if (!details) return null;
+    if (Number.isFinite(details.combinedTotalIssues)) {
+        return Number(details.combinedTotalIssues);
+    }
     if (Number.isFinite(details.totalIssues)) return Number(details.totalIssues);
     const list = Array.isArray(details.issues) ? details.issues : [];
+    if (Array.isArray(details.aggregatedIssues) && details.aggregatedIssues.length) {
+        return details.aggregatedIssues.length;
+    }
     return list.length;
 });
 
@@ -1491,9 +1563,10 @@ watch(activeReport, (report) => {
 const middlePaneStyle = computed(() => {
     const hasActiveTool = isProjectToolActive.value || isReportToolActive.value;
     const width = hasActiveTool ? middlePaneWidth.value : 0;
+    const widthValue = `${width}px`;
     return {
-        flex: `0 1 ${width}px`,
-        width: `${width}px`,
+        flex: hasActiveTool ? `0 0 ${widthValue}` : "0 0 0px",
+        width: widthValue,
         maxWidth: "100%"
     };
 });
