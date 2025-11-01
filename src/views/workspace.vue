@@ -1010,12 +1010,9 @@ const activeReportSourceLines = computed(() => {
 const reportIssueLines = computed(() => {
     const details = activeReportDetails.value;
     const sourceLines = activeReportSourceLines.value;
+    const normalised = Array.isArray(details?.issues) ? details.issues : [];
     const aggregated = Array.isArray(details?.aggregatedIssues) ? details.aggregatedIssues : [];
-    const issues = aggregated.length
-        ? aggregated
-        : Array.isArray(details?.issues)
-        ? details.issues
-        : [];
+    const issues = normalised.length ? normalised : aggregated.length ? aggregated : [];
 
     let maxLine = sourceLines.length;
     const issuesByLine = new Map();
