@@ -4616,18 +4616,72 @@ body,
     color: #cbd5f5;
 }
 
+
 .reportDmlSection {
     margin-top: 24px;
 }
 
 .reportDmlDetails {
-    padding: 16px;
     border: 1px solid rgba(148, 163, 184, 0.18);
     border-radius: 8px;
     background: rgba(15, 23, 42, 0.4);
+    overflow: hidden;
+}
+
+.reportDmlSummaryToggle {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    gap: 8px;
+    list-style: none;
+    margin: 0;
+    padding: 16px;
+    box-sizing: border-box;
+    transition: background 0.2s ease;
+    color: #e2e8f0;
+    font-weight: 600;
+    border-radius: 8px;
+}
+
+.reportDmlSummaryToggle::-webkit-details-marker {
+    display: none;
+}
+
+.reportDmlSummaryToggle::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border: 1px solid currentColor;
+    border-left: 0;
+    border-top: 0;
+    transform: rotate(45deg);
+    margin-left: auto;
+    transition: transform 0.2s ease;
+}
+
+.reportDmlDetails[open] .reportDmlSummaryToggle::after {
+    transform: rotate(225deg);
+}
+
+.reportDmlDetails:not([open]) .reportDmlSummaryToggle {
+    background: rgba(148, 163, 184, 0.12);
+}
+
+.reportDmlDetails:not([open]) .reportDmlSummaryToggle:hover,
+.reportDmlDetails[open] .reportDmlSummaryToggle:hover {
+    background: rgba(148, 163, 184, 0.18);
+}
+
+.reportDmlDetails[open] .reportDmlSummaryToggle {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 8px 8px 0 0;
+}
+
+.reportDmlContent {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    padding: 16px;
 }
 
 .reportDmlSummaryToggle {
