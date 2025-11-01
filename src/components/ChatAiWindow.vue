@@ -5,7 +5,7 @@
         :style="[floatingStyle, resizeCursorStyle]"
         role="dialog"
         aria-modal="false"
-        aria-label="Chat AI"
+        aria-label="AI 聊天視窗"
         @pointerdown.capture="handleResizePointerDown"
         @pointermove="handleResizePointerMove"
         @pointerleave="clearResizeHover"
@@ -17,12 +17,12 @@
             @pointerdown="emit('drag-start', $event)"
             @mousedown="emit('drag-start', $event)"
         >
-            <div class="chatFloating__title">Chat AI</div>
+            <div class="chatFloating__title">AI 聊天</div>
             <div class="chatFloating__actions">
                 <button
                     type="button"
                     class="chatFloating__iconBtn"
-                    title="Close"
+                    title="關閉"
                     @click="emit('close')"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
@@ -36,7 +36,7 @@
             <div class="chatWindow">
                 <section class="chatWindow__context">
                     <div class="chatWindow__contextHeader">
-                        <span>Context</span>
+                        <span>上下文</span>
                         <div class="chatWindow__contextBtns">
                             <button
                                 type="button"
@@ -44,7 +44,7 @@
                                 :disabled="controlsDisabled"
                                 @click="emit('add-active')"
                             >
-                                Add active file
+                                加入目前檔案
                             </button>
                             <button
                                 type="button"
@@ -52,7 +52,7 @@
                                 :disabled="controlsDisabled"
                                 @click="emit('add-selection')"
                             >
-                                Add selection
+                                加入選取範圍
                             </button>
                             <button
                                 type="button"
@@ -60,7 +60,7 @@
                                 :disabled="clearDisabled"
                                 @click="emit('clear-context')"
                             >
-                                Clear
+                                清除
                             </button>
                         </div>
                     </div>
@@ -83,7 +83,7 @@
                                 </button>
                             </span>
                         </template>
-                        <p v-else class="chatWindow__chipsPlaceholder">No context yet. Select a file and press "Add active file".</p>
+                        <p v-else class="chatWindow__chipsPlaceholder">尚未加入上下文。請選擇檔案並按「加入目前檔案」。</p>
                     </div>
                 </section>
 
@@ -102,13 +102,13 @@
                                 class="chatWindow__messageMeta"
                                 :class="{ 'is-user': msg.role === 'user' }"
                             >
-                                <span class="chatWindow__messageAuthor">{{ msg.role === 'assistant' ? 'AI' : 'User' }}</span>
+                                <span class="chatWindow__messageAuthor">{{ msg.role === 'assistant' ? 'AI' : '使用者' }}</span>
                                 <span class="chatWindow__messageTime">{{ formatTime(msg.timestamp) }}</span>
                             </header>
                             <div class="chatWindow__messageBody" v-html="renderMessageContent(msg)"></div>
                         </article>
                     </template>
-                    <div v-else class="chatWindow__messagesEmpty">No messages yet. Start typing!</div>
+                    <div v-else class="chatWindow__messagesEmpty">尚無訊息，開始輸入吧！</div>
                 </section>
 
                 <footer class="chatWindow__footer">
@@ -117,7 +117,7 @@
                         v-model="draft"
                         class="chatWindow__input"
                         :disabled="disabled"
-                        placeholder="Type a message, Shift+Enter for newline"
+                        placeholder="輸入訊息，Shift+Enter 換行"
                         @keydown.enter.exact.prevent="send"
                         @keydown.enter.shift.stop
                     ></textarea>
@@ -130,7 +130,7 @@
                             :aria-busy="loading ? 'true' : 'false'"
                             @click="send"
                         >
-                            Send
+                            送出
                         </button>
                     </div>
                 </footer>
@@ -178,7 +178,7 @@ const resizeCursorStyle = computed(() => (resizeCursor.value ? { cursor: resizeC
 
 const statusText = computed(() => props.connection?.message || DEFAULT_STATUS_MESSAGE);
 const statusStyle = computed(() => {
-    const base = { color: "#64748b" };
+    const base = { color: "var(--panel-muted)" };
     const state = props.connection?.status || "checking";
     if (state === "ready") return { ...base, color: "#86efac" };
     if (state === "error") return { ...base, color: "#fca5a5" };
@@ -225,7 +225,7 @@ function chipTitle(item) {
         if (Number.isFinite(lineCount) && lineCount > 0) {
             parts.push(`共 ${lineCount} 行`);
         }
-        return parts.join(" | ") || item.label || "Snippet";
+        return parts.join(" | ") || item.label || "程式片段";
     }
     return item.path || item.label;
 }
@@ -384,10 +384,11 @@ function renderMessageContent(msg) {
 .chatFloating {
     position: fixed;
     z-index: 40;
-    background: #1f1f1f;
-    border: 1px solid #2f2f2f;
+    background: var(--panel-surface);
+    border: 1px solid var(--panel-border);
     border-radius: 14px;
-    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+    color: var(--panel-heading);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -397,7 +398,8 @@ function renderMessageContent(msg) {
 
 .chatFloating__header {
     padding: 10px 12px;
-    background: #262626;
+    background: var(--panel-surface-alt);
+    border-bottom: 1px solid var(--panel-border);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -412,7 +414,7 @@ function renderMessageContent(msg) {
 
 .chatFloating__title {
     font-weight: 600;
-    color: #e2e8f0;
+    color: var(--panel-heading);
     letter-spacing: 0.01em;
 }
 
@@ -426,14 +428,14 @@ function renderMessageContent(msg) {
     width: 32px;
     height: 32px;
     border-radius: 8px;
-    border: 1px solid #2f2f2f;
-    background: #1f2937;
-    color: #94a3b8;
+    border: 1px solid var(--panel-border);
+    background: var(--panel-surface);
+    color: var(--panel-muted);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: background 0.2s ease, color 0.2s ease;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
     padding: 0;
 }
 
@@ -444,8 +446,9 @@ function renderMessageContent(msg) {
 }
 
 .chatFloating__iconBtn:hover:not(:disabled) {
-    background: #2f3746;
-    color: #f8fafc;
+    background: var(--panel-accent-soft);
+    border-color: var(--panel-border-strong);
+    color: var(--panel-heading);
 }
 
 .chatFloating__iconBtn:disabled {
@@ -466,10 +469,10 @@ function renderMessageContent(msg) {
 .chatWindow {
     display: flex;
     flex-direction: column;
-    background: #1f1f1f;
-    border: 1px solid #2f2f2f;
+    background: var(--panel-surface);
+    border: 1px solid var(--panel-border);
     border-radius: 12px;
-    color: #e2e8f0;
+    color: var(--panel-heading);
     height: 100%;
     min-height: 0;
     overflow: hidden;
@@ -477,8 +480,8 @@ function renderMessageContent(msg) {
 
 .chatWindow__context {
     padding: 12px 14px 6px;
-    border-bottom: 1px solid #2f2f2f;
-    background: #262626;
+    border-bottom: 1px solid var(--panel-border);
+    background: var(--panel-surface-alt);
 }
 
 .chatWindow__contextHeader {
@@ -494,23 +497,24 @@ function renderMessageContent(msg) {
 }
 
 .chatWindow__btn {
-    padding: 4px 8px;
+    padding: 4px 10px;
     border-radius: 6px;
-    border: 1px solid #3b82f6;
-    background: #2563eb;
+    border: 1px solid var(--panel-accent);
+    background: var(--panel-accent);
     color: #fff;
     font-size: 12px;
     cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .chatWindow__btn.ghost {
     background: transparent;
-    border-color: #475569;
-    color: #94a3b8;
+    border-color: var(--panel-border);
+    color: var(--panel-muted);
 }
 
 .chatWindow__btn:disabled {
-    opacity: 0.4;
+    opacity: 0.45;
     cursor: not-allowed;
 }
 
@@ -524,11 +528,12 @@ function renderMessageContent(msg) {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(148, 163, 184, 0.15);
-    border: 1px solid rgba(148, 163, 184, 0.25);
+    background: var(--panel-accent-soft);
+    border: 1px solid var(--panel-border);
     border-radius: 999px;
-    padding: 4px 8px;
+    padding: 4px 10px;
     font-size: 12px;
+    color: var(--panel-heading);
 }
 
 .chatWindow__chipType {
@@ -540,13 +545,13 @@ function renderMessageContent(msg) {
 .chatWindow__chipRemove {
     border: none;
     background: transparent;
-    color: #fca5a5;
+    color: rgba(239, 68, 68, 0.9);
     cursor: pointer;
 }
 
 .chatWindow__chipsPlaceholder {
     font-size: 12px;
-    color: #94a3b8;
+    color: var(--panel-muted);
     margin: 0;
 }
 
@@ -557,46 +562,47 @@ function renderMessageContent(msg) {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    background: #1f1f1f;
+    background: var(--panel-surface);
 }
 
 .chatWindow__messagesEmpty {
     margin: auto;
     text-align: center;
     font-size: 13px;
-    color: #94a3b8;
+    color: var(--panel-muted);
 }
 
 .chatWindow__message {
     padding: 10px 12px;
     border-radius: 10px;
-    border: 1px solid rgba(148, 163, 184, 0.25);
-    background: rgba(148, 163, 184, 0.12);
+    border: 1px solid var(--panel-border);
+    background: var(--panel-surface-alt);
+    color: var(--panel-heading);
 }
 
 .chatWindow__message.is-user {
     align-self: flex-end;
-    background: rgba(20, 184, 166, 0.18);
-    border-color: rgba(20, 184, 166, 0.35);
+    background: rgba(37, 99, 235, 0.12);
+    border-color: rgba(37, 99, 235, 0.28);
 }
 
 .chatWindow__message.is-pending {
-    opacity: 0.75;
+    opacity: 0.85;
     border-style: dashed;
-    color: #cbd5f5;
+    color: var(--panel-muted);
 }
 
 .chatWindow__message.is-error {
-    border-color: rgba(248, 113, 113, 0.45);
-    background: rgba(248, 113, 113, 0.16);
-    color: #fecaca;
+    border-color: rgba(239, 68, 68, 0.35);
+    background: rgba(239, 68, 68, 0.12);
+    color: #b91c1c;
 }
 
 .chatWindow__message.is-info {
     border-style: dashed;
-    border-color: rgba(147, 197, 253, 0.45);
-    background: rgba(147, 197, 253, 0.12);
-    color: #bfdbfe;
+    border-color: rgba(37, 99, 235, 0.28);
+    background: rgba(37, 99, 235, 0.12);
+    color: var(--panel-muted);
 }
 
 .chatWindow__messageMeta {
@@ -606,7 +612,7 @@ function renderMessageContent(msg) {
     align-items: flex-start;
     gap: 2px;
     margin-bottom: 6px;
-    opacity: 0.7;
+    color: var(--panel-muted);
 }
 
 .chatWindow__messageMeta.is-user {
@@ -616,17 +622,19 @@ function renderMessageContent(msg) {
 
 .chatWindow__messageAuthor {
     font-weight: 600;
+    color: var(--panel-heading);
 }
 
 .chatWindow__messageTime {
     font-size: 10px;
-    opacity: 0.75;
+    opacity: 0.8;
 }
 
 .chatWindow__messageBody {
     font-size: 13px;
     line-height: 1.6;
     display: block;
+    color: var(--panel-heading);
 }
 
 .chatWindow__messageBody > *:last-child {
@@ -649,7 +657,7 @@ function renderMessageContent(msg) {
 
 .chatWindow__messageBody code {
     font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    background: rgba(148, 163, 184, 0.18);
+    background: rgba(15, 23, 42, 0.08);
     border-radius: 4px;
     padding: 0.1em 0.4em;
     font-size: 0.92em;
@@ -657,8 +665,8 @@ function renderMessageContent(msg) {
 
 .chatWindow__messageBody pre {
     margin: 0 0 0.75em;
-    background: #0f172a;
-    border: 1px solid rgba(148, 163, 184, 0.25);
+    background: var(--panel-surface-alt);
+    border: 1px solid var(--panel-border);
     border-radius: 8px;
     padding: 10px 12px;
     overflow-x: auto;
@@ -674,44 +682,45 @@ function renderMessageContent(msg) {
 }
 
 .chatWindow__messageBody a {
-    color: #60a5fa;
+    color: var(--panel-accent);
     text-decoration: underline;
 }
 
 .chatWindow__messageBody hr {
     border: none;
-    border-top: 1px solid rgba(148, 163, 184, 0.3);
+    border-top: 1px solid var(--panel-border);
     margin: 0.75em 0;
 }
 
 .chatWindow__messageBody blockquote {
     margin: 0 0 0.75em;
     padding-left: 0.9em;
-    border-left: 3px solid rgba(148, 163, 184, 0.35);
-    color: #cbd5f5;
+    border-left: 3px solid var(--panel-border);
+    color: var(--panel-muted);
 }
 
 .chatWindow__footer {
     padding: 12px 14px;
-    border-top: 1px solid #2f2f2f;
-    background: #262626;
+    border-top: 1px solid var(--panel-border);
+    background: var(--panel-surface-alt);
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
 .chatWindow__input {
-    background: #141414;
-    border: 1px solid #333;
+    background: var(--panel-surface);
+    border: 1px solid var(--panel-border);
     border-radius: 8px;
-    color: #e2e8f0;
+    color: var(--panel-heading);
     padding: 8px 10px;
     min-height: 90px;
     resize: none;
 }
 
 .chatWindow__input:focus {
-    outline: 1px solid #3b82f6;
+    outline: 2px solid var(--panel-accent);
+    outline-offset: 0;
 }
 
 .chatWindow__footerActions {
@@ -722,20 +731,26 @@ function renderMessageContent(msg) {
 
 .chatWindow__status {
     font-size: 11px;
+    color: var(--panel-muted);
 }
 
 .chatWindow__send {
     padding: 6px 14px;
     border-radius: 8px;
     border: none;
-    background: #3b82f6;
-    color: white;
+    background: var(--panel-accent);
+    color: #fff;
     cursor: pointer;
     font-weight: 600;
+    transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+.chatWindow__send:hover:not(:disabled) {
+    filter: brightness(1.05);
 }
 
 .chatWindow__send:disabled {
-    opacity: 0.4;
+    opacity: 0.45;
     cursor: not-allowed;
 }
 </style>

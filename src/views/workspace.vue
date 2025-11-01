@@ -3948,7 +3948,7 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template v-else>
-                    <div class="pvPlaceholder">Select a file to see its preview here.</div>
+                    <div class="pvPlaceholder">請選擇檔案以在此預覽。</div>
                 </template>
             </section>
         </div>
