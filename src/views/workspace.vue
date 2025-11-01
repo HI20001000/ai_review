@@ -4041,14 +4041,12 @@ body,
 }
 
 .workSpace {
-    flex: 1 1 640px;
+    flex: 1 1 480px;
     display: flex;
     flex-direction: column;
     gap: 16px;
     min-height: 0;
     min-width: 0;
-    width: 100%;
-    max-width: 100%;
     background: #191919;
     border: 1px solid #323232;
     border-radius: 0;
