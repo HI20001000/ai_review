@@ -3591,7 +3591,7 @@ onBeforeUnmount(() => {
                                             >
                                                 <summary class="reportDmlSummaryToggle">
                                                     <div class="reportDmlHeader">
-                                                        <h4>AI審查</h4>
+                                                        <h4>區塊拆分</h4>
                                                         <span
                                                             v-if="dmlReportDetails.status"
                                                             class="reportDmlStatus"
@@ -4622,19 +4622,11 @@ body,
 }
 
 .reportDmlDetails {
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 8px;
-    background: transparent;
-    overflow: hidden;
-}
-
-.reportDmlDetails[open] {
-    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid #334155;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.65);
     color: #e2e8f0;
-}
-
-.reportDmlDetails:not([open]) {
-    border-color: transparent;
+    overflow: hidden;
 }
 
 .reportDmlSummaryToggle {
@@ -4650,7 +4642,7 @@ body,
     color: #bfdbfe;
     font-size: 13px;
     font-weight: 600;
-    border-radius: 8px;
+    border-radius: 6px;
     background: transparent;
 }
 
@@ -4683,8 +4675,8 @@ body,
 }
 
 .reportDmlDetails[open] .reportDmlSummaryToggle {
-    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 8px 8px 0 0;
+    border-bottom: 1px solid rgba(59, 130, 246, 0.35);
+    border-radius: 6px 6px 0 0;
 }
 
 .reportDmlContent {
@@ -5712,7 +5704,7 @@ body,
 }
 
 .page--light .reportStaticSection,
-.page--light .reportDmlDetails[open] {
+.page--light .reportDmlDetails {
     background: #f8fafc;
     border-color: #e2e8f0;
     color: #1f2937;
@@ -5750,11 +5742,6 @@ body,
 
 .page--light .reportDmlSummaryToggle {
     color: #1d4ed8;
-}
-
-.page--light .reportDmlDetails:not([open]) {
-    border-color: transparent;
-    background: transparent;
 }
 
 .page--light .reportDmlDetails:not([open]) .reportDmlSummaryToggle:hover {
